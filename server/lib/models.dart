@@ -14,13 +14,13 @@ class CommitNode {
     required this.subject,
   });
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'parents': parents,
-    'refs': refs,
-    'author': author,
-    'date': date,
-    'subject': subject,
-  };
+        'id': id,
+        'parents': parents,
+        'refs': refs,
+        'author': author,
+        'date': date,
+        'subject': subject,
+      };
 }
 
 class Branch {
@@ -33,9 +33,12 @@ class Branch {
 class GraphResponse {
   final List<CommitNode> commits;
   final List<Branch> branches;
-  GraphResponse({required this.commits, required this.branches});
+  final Map<String, List<String>> chains;
+  GraphResponse(
+      {required this.commits, required this.branches, required this.chains});
   Map<String, dynamic> toJson() => {
-    'commits': commits.map((e) => e.toJson()).toList(),
-    'branches': branches.map((e) => e.toJson()).toList(),
-  };
+        'commits': commits.map((e) => e.toJson()).toList(),
+        'branches': branches.map((e) => e.toJson()).toList(),
+        'chains': chains,
+      };
 }
