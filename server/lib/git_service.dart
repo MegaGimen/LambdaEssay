@@ -52,7 +52,7 @@ Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
     return cached;
   }
   final branches = await getBranches(repoPath);
-  final chains = await getBranchChains(repoPath, branches);
+  final chains = await getBranchChains(repoPath, branches, limit: limit);
   final logArgs = [
     'log',
     '--all',
@@ -118,17 +118,22 @@ List<String> _parseRefs(String decoration) {
 }
 
 Future<Map<String, List<String>>> getBranchChains(
-    String repoPath, List<Branch> branches) async {
+    String repoPath, List<Branch> branches,
+    {int? limit}) async {
   final result = <String, List<String>>{};
   for (final b in branches) {
-    final lines = await _runGit([
+    final args = [
       'log',
-      '--first-parent',
+      '--topo-order',
       '--date=iso',
       '--encoding=UTF-8',
       '--pretty=format:%H',
       b.name,
-    ], repoPath);
+    ];
+    if (limit != null && limit > 0) {
+      args.add('--max-count=$limit');
+    }
+    final lines = await _runGit(args, repoPath);
     final ids = <String>[];
     for (final l in lines) {
       final s = l.trim();
