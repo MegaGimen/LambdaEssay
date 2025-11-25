@@ -103,8 +103,14 @@ class _GraphPageState extends State<GraphPage> {
     setState(() {
       loading = true;
       error = null;
+      data = null;
     });
     try {
+      await http.post(
+        Uri.parse('http://localhost:8080/reset'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'ts': DateTime.now().millisecondsSinceEpoch}),
+      );
       final resp = await http.post(
         Uri.parse('http://localhost:8080/graph'),
         headers: {'Content-Type': 'application/json'},
@@ -200,6 +206,23 @@ class _GraphViewState extends State<_GraphView> {
   Map<String, List<String>>? _pairBranches;
   Size? _canvasSize;
   static const Duration _rightPanDelay = Duration(milliseconds: 200);
+  @override
+  void didUpdateWidget(covariant _GraphView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.data, widget.data)) {
+      _branchColors = null;
+      _pairBranches = null;
+      _canvasSize = null;
+      _hovered = null;
+      _hoverPos = null;
+      _hoverEdge = null;
+      _tc.value = Matrix4.identity();
+      _rightPanActive = false;
+      _rightPanLast = null;
+      _rightPanStart = null;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     _branchColors ??= _assignBranchColors(widget.data.branches);
