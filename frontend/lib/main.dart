@@ -707,7 +707,9 @@ class _GraphViewState extends State<_GraphView> {
     final apy = p.dy - a.dy;
     final ab2 = abx * abx + aby * aby;
     double t = ab2 == 0 ? 0 : (apx * abx + apy * aby) / ab2;
-    if (t < 0) t = 0; else if (t > 1) t = 1;
+    if (t < 0)
+      t = 0;
+    else if (t > 1) t = 1;
     final cx = a.dx + t * abx;
     final cy = a.dy + t * aby;
     final dx = p.dx - cx;
