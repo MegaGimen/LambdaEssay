@@ -47,3 +47,4 @@ app.*.map.json
 /frontend/build
 
 *.dill
+frontend/build/b6862f53c5db0dffd80a6274ce6c73bd.cache.dill.track.dill
