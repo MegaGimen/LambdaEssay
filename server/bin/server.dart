@@ -45,6 +45,13 @@ Future<void> main(List<String> args) async {
     }));
   });
 
+  router.post('/reset', (Request req) async {
+    clearCache();
+    return _cors(Response.ok(jsonEncode({'status': 'reset'}), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  });
+
   router.options('/<ignored|.*>', _optionsHandler);
 
   router.post('/branches', (Request req) async {

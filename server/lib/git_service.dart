@@ -4,6 +4,10 @@ import 'models.dart';
 
 final Map<String, GraphResponse> _graphCache = <String, GraphResponse>{};
 
+void clearCache() {
+  _graphCache.clear();
+}
+
 Future<List<String>> _runGit(List<String> args, String repoPath) async {
   final fullArgs = [
     '-c',
