@@ -5,7 +5,6 @@ import 'package:shelf/shelf_io.dart';
 import 'package:shelf_router/shelf_router.dart';
 import 'package:path/path.dart' as p;
 import '../lib/git_service.dart';
-import '../lib/models.dart';
 
 Response _cors(Response r) {
   return r.change(headers: {
@@ -18,6 +17,23 @@ Response _cors(Response r) {
 
 Future<Response> _optionsHandler(Request req) async {
   return _cors(Response.ok(''));
+}
+
+String _sanitizePath(String? raw) {
+  var t = (raw ?? '').trim();
+  if (t.isEmpty) return '';
+  if ((t.startsWith('"') && t.endsWith('"')) ||
+      (t.startsWith('\'') && t.endsWith('\''))) {
+    t = t.substring(1, t.length - 1);
+  }
+  t = t.replaceAll(RegExp(r'[>]+$'), '').trim();
+  if (t.startsWith('file://')) {
+    try {
+      final uri = Uri.parse(t);
+      t = uri.toFilePath(windows: true);
+    } catch (_) {}
+  }
+  return t;
 }
 
 Future<void> main(List<String> args) async {
@@ -34,8 +50,8 @@ Future<void> main(List<String> args) async {
   router.post('/branches', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoPath = data['repoPath'] as String?;
-    if (repoPath == null || repoPath.isEmpty) {
+    final repoPath = _sanitizePath(data['repoPath'] as String?);
+    if (repoPath.isEmpty) {
       return _cors(Response(400,
           body: jsonEncode({'error': 'repoPath required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
@@ -68,9 +84,9 @@ Future<void> main(List<String> args) async {
   router.post('/graph', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoPath = data['repoPath'] as String?;
+    final repoPath = _sanitizePath(data['repoPath'] as String?);
     final limit = data['limit'] is int ? data['limit'] as int : null;
-    if (repoPath == null || repoPath.isEmpty) {
+    if (repoPath.isEmpty) {
       return _cors(Response(400,
           body: jsonEncode({'error': 'repoPath required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
