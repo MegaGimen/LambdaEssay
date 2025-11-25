@@ -658,7 +658,8 @@ class _GraphViewState extends State<_GraphView> {
       final px = laneP * laneWidth + laneWidth / 2;
       final py = rowP * rowHeight + rowHeight / 2;
       final dLane = (laneC - laneP).abs();
-      final bendBase = (dLane * 8.0).clamp(8.0, 24.0);
+      var bendBase = (dLane * 8.0).clamp(8.0, 24.0);
+      bendBase += _obstacleCount(child, parent, laneOf, rowOf) * 16.0;
       final dir = laneC <= laneP ? 1.0 : -1.0;
       final c1 = Offset(x + dir * bendBase, (y + py) / 2);
       final c2 = Offset(px - dir * bendBase, (y + py) / 2);
@@ -715,6 +716,29 @@ class _GraphViewState extends State<_GraphView> {
     final dx = p.dx - cx;
     final dy = p.dy - cy;
     return math.sqrt(dx * dx + dy * dy);
+  }
+
+  int _obstacleCount(String child, String parent, Map<String, int> laneOf,
+      Map<String, int> rowOf) {
+    final rc = rowOf[child]!;
+    final rp = rowOf[parent]!;
+    final lc = laneOf[child]!;
+    final lp = laneOf[parent]!;
+    final rmin = math.min(rc, rp);
+    final rmax = math.max(rc, rp);
+    final lmin = math.min(lc, lp);
+    final lmax = math.max(lc, lp);
+    var cnt = 0;
+    for (final e in rowOf.entries) {
+      final id = e.key;
+      if (id == child || id == parent) continue;
+      final r = e.value;
+      if (r <= rmin || r >= rmax) continue;
+      final l = laneOf[id];
+      if (l == null) continue;
+      if (l >= lmin && l <= lmax) cnt++;
+    }
+    return cnt;
   }
 }
 
@@ -831,7 +855,8 @@ class GraphPainter extends CustomPainter {
         // 将并行边按顺序左右分开，靠得很近
         final midY = (y + py) / 2;
         final dLane = (laneC - laneP).abs();
-        final bendBase = (dLane * 8.0).clamp(8.0, 24.0);
+        var bendBase = (dLane * 8.0).clamp(8.0, 24.0);
+        bendBase += _obstacleCount(child, parent, laneOf, rowOf) * 16.0;
         final dir = laneC <= laneP ? 1.0 : -1.0;
         final spread = (done - (total - 1) / 2.0) * 3.0; // -..0..+
         final path = Path();
@@ -860,6 +885,29 @@ class GraphPainter extends CustomPainter {
       textPainter.layout();
       textPainter.paint(canvas, Offset(x, y));
     }
+  }
+
+  int _obstacleCount(String child, String parent, Map<String, int> laneOf,
+      Map<String, int> rowOf) {
+    final rc = rowOf[child]!;
+    final rp = rowOf[parent]!;
+    final lc = laneOf[child]!;
+    final lp = laneOf[parent]!;
+    final rmin = math.min(rc, rp);
+    final rmax = math.max(rc, rp);
+    final lmin = math.min(lc, lp);
+    final lmax = math.max(lc, lp);
+    var cnt = 0;
+    for (final e in rowOf.entries) {
+      final id = e.key;
+      if (id == child || id == parent) continue;
+      final r = e.value;
+      if (r <= rmin || r >= rmax) continue;
+      final l = laneOf[id];
+      if (l == null) continue;
+      if (l >= lmin && l <= lmax) cnt++;
+    }
+    return cnt;
   }
 
   Color _colorOfCommit(String id, Map<String, Color> memo) {
