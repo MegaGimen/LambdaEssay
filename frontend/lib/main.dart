@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/gestures.dart';
@@ -51,6 +52,13 @@ class Branch {
   Branch({required this.name, required this.head});
   factory Branch.fromJson(Map<String, dynamic> j) =>
       Branch(name: j['name'], head: j['head']);
+}
+
+class EdgeInfo {
+  final String child;
+  final String parent;
+  final List<String> branches;
+  EdgeInfo({required this.child, required this.parent, required this.branches});
 }
 
 class GraphData {
@@ -189,11 +197,13 @@ class _GraphViewState extends State<_GraphView> {
   Offset? _rightPanLast;
   DateTime? _rightPanStart;
   Map<String, Color>? _branchColors;
+  Map<String, List<String>>? _pairBranches;
   Size? _canvasSize;
   static const Duration _rightPanDelay = Duration(milliseconds: 200);
   @override
   Widget build(BuildContext context) {
     _branchColors ??= _assignBranchColors(widget.data.branches);
+    _pairBranches ??= _buildPairBranches(widget.data);
     _canvasSize ??= _computeCanvasSize(widget.data);
     return Stack(
       children: [
@@ -201,15 +211,21 @@ class _GraphViewState extends State<_GraphView> {
           onHover: (d) {
             final scene = _toScene(d.localPosition);
             final hit = _hitTest(scene, widget.data);
+            EdgeInfo? ehit;
+            if (hit == null) {
+              ehit = _hitEdge(scene, widget.data);
+            }
             setState(() {
               _hovered = hit;
               _hoverPos = d.localPosition;
+              _hoverEdge = ehit;
             });
           },
           onExit: (_) {
             setState(() {
               _hovered = null;
               _hoverPos = null;
+              _hoverEdge = null;
             });
           },
           child: Listener(
@@ -268,7 +284,8 @@ class _GraphViewState extends State<_GraphView> {
                   width: _canvasSize!.width,
                   height: _canvasSize!.height,
                   child: CustomPaint(
-                    painter: GraphPainter(widget.data, _branchColors!),
+                    painter: GraphPainter(
+                        widget.data, _branchColors!, _hoverEdgeKey()),
                     size: _canvasSize!,
                   ),
                 ),
@@ -376,9 +393,61 @@ class _GraphViewState extends State<_GraphView> {
               ),
             ),
           ),
+        if (_hoverEdge != null && _hoverPos != null && _hovered == null)
+          Positioned(
+            left: _hoverPos!.dx + 12,
+            top: _hoverPos!.dy + 12,
+            child: Material(
+              elevation: 2,
+              color: Colors.transparent,
+              child: Container(
+                constraints: const BoxConstraints(maxWidth: 420),
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFAFAFA),
+                  borderRadius: BorderRadius.circular(6),
+                  boxShadow: const [
+                    BoxShadow(color: Color(0x33000000), blurRadius: 6)
+                  ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                        '${_hoverEdge!.child.substring(0, 7)} → ${_hoverEdge!.parent.substring(0, 7)}'),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: _hoverEdge!.branches
+                          .map((b) => Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: (_branchColors?[b] ??
+                                          const Color(0xFF9E9E9E))
+                                      .withOpacity(0.15),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                      color: _branchColors?[b] ??
+                                          const Color(0xFF9E9E9E)),
+                                ),
+                                child: Text(b,
+                                    style: const TextStyle(fontSize: 12)),
+                              ))
+                          .toList(),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
       ],
     );
   }
+
+  EdgeInfo? _hoverEdge;
 
   Offset _toScene(Offset p) {
     final inv = _tc.value.clone()..invert();
@@ -421,6 +490,28 @@ class _GraphViewState extends State<_GraphView> {
       map[branches[i].name] = palette[i % palette.length];
     }
     return map;
+  }
+
+  Map<String, List<String>> _buildPairBranches(GraphData data) {
+    final map = <String, List<String>>{};
+    for (final entry in data.chains.entries) {
+      final b = entry.key;
+      final ids = entry.value;
+      for (var i = 0; i + 1 < ids.length; i++) {
+        final child = ids[i];
+        final parent = ids[i + 1];
+        final key = '$child|$parent';
+        final list = map[key] ??= <String>[];
+        if (!list.contains(b)) list.add(b);
+      }
+    }
+    return map;
+  }
+
+  String? _hoverEdgeKey() {
+    final e = _hoverEdge;
+    if (e == null) return null;
+    return '${e.child}|${e.parent}';
   }
 
   bool _hasUnknownEdges() {
@@ -521,12 +612,115 @@ class _GraphViewState extends State<_GraphView> {
     }
     return lane;
   }
+
+  EdgeInfo? _hitEdge(Offset sceneP, GraphData data) {
+    const laneWidth = GraphPainter.laneWidth;
+    const rowHeight = GraphPainter.rowHeight;
+    final commits = data.commits;
+    final laneOf = <String, int>{};
+    final activeLaneHead = <int, String>{};
+    final rowOf = <String, int>{};
+    for (var i = 0; i < commits.length; i++) {
+      final c = commits[i];
+      rowOf[c.id] = i;
+      int? laneCandidate;
+      for (final e in activeLaneHead.entries) {
+        if (c.parents.contains(e.value)) {
+          laneCandidate = e.key;
+          break;
+        }
+      }
+      final lane = laneCandidate ?? _firstFreeLane(activeLaneHead);
+      laneOf[c.id] = lane;
+      activeLaneHead[lane] = c.id;
+      for (final e in activeLaneHead.entries.toList()) {
+        if (c.parents.contains(e.value) && e.key != lane) {
+          activeLaneHead.remove(e.key);
+        }
+      }
+    }
+    if (_pairBranches == null) return null;
+    double best = double.infinity;
+    EdgeInfo? bestInfo;
+    for (final entry in _pairBranches!.entries) {
+      final key = entry.key;
+      final sp = key.split('|');
+      if (sp.length != 2) continue;
+      final child = sp[0];
+      final parent = sp[1];
+      if (!rowOf.containsKey(child) || !rowOf.containsKey(parent)) continue;
+      final rowC = rowOf[child]!;
+      final laneC = laneOf[child]!;
+      final x = laneC * laneWidth + laneWidth / 2;
+      final y = rowC * rowHeight + rowHeight / 2;
+      final rowP = rowOf[parent]!;
+      final laneP = laneOf[parent]!;
+      final px = laneP * laneWidth + laneWidth / 2;
+      final py = rowP * rowHeight + rowHeight / 2;
+      final dLane = (laneC - laneP).abs();
+      final bendBase = (dLane * 8.0).clamp(8.0, 24.0);
+      final dir = laneC <= laneP ? 1.0 : -1.0;
+      final c1 = Offset(x + dir * bendBase, (y + py) / 2);
+      final c2 = Offset(px - dir * bendBase, (y + py) / 2);
+      final d = _distToCubic(sceneP, Offset(x, y), c1, c2, Offset(px, py));
+      if (d < best) {
+        best = d;
+        bestInfo =
+            EdgeInfo(child: child, parent: parent, branches: entry.value);
+      }
+    }
+    if (bestInfo != null && best <= 8.0) return bestInfo;
+    return null;
+  }
+
+  double _distToCubic(Offset p, Offset a, Offset c1, Offset c2, Offset b) {
+    const steps = 24;
+    Offset prev = a;
+    double minD = double.infinity;
+    for (var i = 1; i <= steps; i++) {
+      final t = i / steps;
+      final pt = _cubicPoint(a, c1, c2, b, t);
+      final d = _distPointToSegment(p, prev, pt);
+      if (d < minD) minD = d;
+      prev = pt;
+    }
+    return minD;
+  }
+
+  Offset _cubicPoint(Offset a, Offset c1, Offset c2, Offset b, double t) {
+    final mt = 1 - t;
+    final x = mt * mt * mt * a.dx +
+        3 * mt * mt * t * c1.dx +
+        3 * mt * t * t * c2.dx +
+        t * t * t * b.dx;
+    final y = mt * mt * mt * a.dy +
+        3 * mt * mt * t * c1.dy +
+        3 * mt * t * t * c2.dy +
+        t * t * t * b.dy;
+    return Offset(x, y);
+  }
+
+  double _distPointToSegment(Offset p, Offset a, Offset b) {
+    final abx = b.dx - a.dx;
+    final aby = b.dy - a.dy;
+    final apx = p.dx - a.dx;
+    final apy = p.dy - a.dy;
+    final ab2 = abx * abx + aby * aby;
+    double t = ab2 == 0 ? 0 : (apx * abx + apy * aby) / ab2;
+    if (t < 0) t = 0; else if (t > 1) t = 1;
+    final cx = a.dx + t * abx;
+    final cy = a.dy + t * aby;
+    final dx = p.dx - cx;
+    final dy = p.dy - cy;
+    return math.sqrt(dx * dx + dy * dy);
+  }
 }
 
 class GraphPainter extends CustomPainter {
   final GraphData data;
   final Map<String, Color> branchColors;
-  GraphPainter(this.data, this.branchColors);
+  final String? hoverPairKey;
+  GraphPainter(this.data, this.branchColors, this.hoverPairKey);
   static const double laneWidth = 80;
   static const double rowHeight = 50;
   static const double nodeRadius = 6;
@@ -643,6 +837,8 @@ class GraphPainter extends CustomPainter {
         path.cubicTo(x + dir * (bendBase + spread), midY,
             px - dir * (bendBase + spread), midY, px, py);
         paintEdge.color = bcolor;
+        paintEdge.strokeWidth =
+            (hoverPairKey != null && hoverPairKey == key) ? 3.0 : 2.0;
         canvas.drawPath(path, paintEdge);
       }
     }
