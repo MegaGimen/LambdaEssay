@@ -52,6 +52,7 @@ Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
     return cached;
   }
   final branches = await getBranches(repoPath);
+  final chains = await getBranchChains(repoPath, branches);
   final logArgs = [
     'log',
     '--all',
@@ -89,7 +90,8 @@ Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
       ),
     );
   }
-  final resp = GraphResponse(commits: commits, branches: branches);
+  final resp =
+      GraphResponse(commits: commits, branches: branches, chains: chains);
   _graphCache[key] = resp;
   return resp;
 }
@@ -113,4 +115,27 @@ List<String> _parseRefs(String decoration) {
     refs.add(cleaned);
   }
   return refs;
+}
+
+Future<Map<String, List<String>>> getBranchChains(
+    String repoPath, List<Branch> branches) async {
+  final result = <String, List<String>>{};
+  for (final b in branches) {
+    final lines = await _runGit([
+      'log',
+      '--first-parent',
+      '--date=iso',
+      '--encoding=UTF-8',
+      '--pretty=format:%H',
+      b.name,
+    ], repoPath);
+    final ids = <String>[];
+    for (final l in lines) {
+      final s = l.trim();
+      if (s.isEmpty) continue;
+      ids.add(s);
+    }
+    result[b.name] = ids;
+  }
+  return result;
 }

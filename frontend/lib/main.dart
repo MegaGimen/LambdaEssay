@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/gestures.dart';
 import 'package:http/http.dart' as http;
 
 void main() {
@@ -55,7 +56,9 @@ class Branch {
 class GraphData {
   final List<CommitNode> commits;
   final List<Branch> branches;
-  GraphData({required this.commits, required this.branches});
+  final Map<String, List<String>> chains;
+  GraphData(
+      {required this.commits, required this.branches, required this.chains});
   factory GraphData.fromJson(Map<String, dynamic> j) => GraphData(
         commits: ((j['commits'] as List).map(
           (e) => CommitNode.fromJson(e as Map<String, dynamic>),
@@ -63,6 +66,9 @@ class GraphData {
         branches: ((j['branches'] as List).map(
           (e) => Branch.fromJson(e as Map<String, dynamic>),
         )).toList(),
+        chains: (j['chains'] as Map<String, dynamic>).map(
+          (k, v) => MapEntry(k, (v as List).cast<String>()),
+        ),
       );
 }
 
@@ -179,8 +185,16 @@ class _GraphViewState extends State<_GraphView> {
   final TransformationController _tc = TransformationController();
   CommitNode? _hovered;
   Offset? _hoverPos;
+  bool _rightPanActive = false;
+  Offset? _rightPanLast;
+  DateTime? _rightPanStart;
+  Map<String, Color>? _branchColors;
+  Size? _canvasSize;
+  static const Duration _rightPanDelay = Duration(milliseconds: 200);
   @override
   Widget build(BuildContext context) {
+    _branchColors ??= _assignBranchColors(widget.data.branches);
+    _canvasSize ??= _computeCanvasSize(widget.data);
     return Stack(
       children: [
         MouseRegion(
@@ -198,28 +212,131 @@ class _GraphViewState extends State<_GraphView> {
               _hoverPos = null;
             });
           },
-          child: GestureDetector(
-            onTapUp: (d) {
-              final scene = _toScene(d.localPosition);
-              final hit = _hitTest(scene, widget.data);
-              if (hit != null) {
-                showDialog(
-                  context: context,
-                  builder: (_) => AlertDialog(
-                    title: Text(hit.subject),
-                    content: Text(
-                        'commit ${hit.id}\n${hit.author}\n${hit.date}\nparents: ${hit.parents.join(', ')}'),
-                  ),
-                );
+          child: Listener(
+            onPointerDown: (e) {
+              if (e.buttons & kSecondaryMouseButton != 0) {
+                _rightPanStart = DateTime.now();
+                _rightPanLast = e.localPosition;
+                _rightPanActive = false;
               }
             },
-            child: InteractiveViewer(
-              transformationController: _tc,
-              minScale: 0.2,
-              maxScale: 4,
-              child: CustomPaint(
-                painter: GraphPainter(widget.data),
-                size: Size.infinite,
+            onPointerMove: (e) {
+              if (e.buttons & kSecondaryMouseButton != 0 &&
+                  _rightPanLast != null) {
+                final now = DateTime.now();
+                if (!_rightPanActive &&
+                    _rightPanStart != null &&
+                    now.difference(_rightPanStart!) >= _rightPanDelay) {
+                  _rightPanActive = true;
+                }
+                if (_rightPanActive) {
+                  final delta = e.localPosition - _rightPanLast!;
+                  final m = _tc.value.clone();
+                  m.translate(delta.dx, delta.dy);
+                  _tc.value = m;
+                  _rightPanLast = e.localPosition;
+                }
+              }
+            },
+            onPointerUp: (e) {
+              _rightPanActive = false;
+              _rightPanLast = null;
+              _rightPanStart = null;
+            },
+            child: GestureDetector(
+              onTapUp: (d) {
+                final scene = _toScene(d.localPosition);
+                final hit = _hitTest(scene, widget.data);
+                if (hit != null) {
+                  showDialog(
+                    context: context,
+                    builder: (_) => AlertDialog(
+                      title: Text(hit.subject),
+                      content: Text(
+                          'commit ${hit.id}\n${hit.author}\n${hit.date}\nparents: ${hit.parents.join(', ')}'),
+                    ),
+                  );
+                }
+              },
+              child: InteractiveViewer(
+                transformationController: _tc,
+                minScale: 0.2,
+                maxScale: 4,
+                constrained: false,
+                boundaryMargin: const EdgeInsets.all(2000),
+                child: SizedBox(
+                  width: _canvasSize!.width,
+                  height: _canvasSize!.height,
+                  child: CustomPaint(
+                    painter: GraphPainter(widget.data, _branchColors!),
+                    size: _canvasSize!,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        Positioned(
+          right: 16,
+          top: 80,
+          child: Material(
+            elevation: 2,
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFDFDFD),
+                borderRadius: BorderRadius.circular(6),
+                boxShadow: const [
+                  BoxShadow(color: Color(0x22000000), blurRadius: 4)
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('分支图例',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 6),
+                  for (final b in widget.data.branches)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 12,
+                            height: 12,
+                            decoration: BoxDecoration(
+                              color: _branchColors![b.name]!,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(b.name),
+                        ],
+                      ),
+                    ),
+                  if (_hasUnknownEdges())
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: const [
+                          SizedBox(
+                            width: 12,
+                            height: 12,
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                  color: Color(0xFF9E9E9E),
+                                  shape: BoxShape.circle),
+                            ),
+                          ),
+                          SizedBox(width: 6),
+                          Text('其它'),
+                        ],
+                      ),
+                    ),
+                ],
               ),
             ),
           ),
@@ -266,6 +383,94 @@ class _GraphViewState extends State<_GraphView> {
   Offset _toScene(Offset p) {
     final inv = _tc.value.clone()..invert();
     return MatrixUtils.transformPoint(inv, p);
+  }
+
+  Size _computeCanvasSize(GraphData data) {
+    const laneWidth = GraphPainter.laneWidth;
+    const rowHeight = GraphPainter.rowHeight;
+    final commits = data.commits;
+    final activeLaneHead = <int, String>{};
+    var maxLane = 0;
+    for (var i = 0; i < commits.length; i++) {
+      final c = commits[i];
+      int? laneCandidate;
+      for (final e in activeLaneHead.entries) {
+        if (c.parents.contains(e.value)) {
+          laneCandidate = e.key;
+          break;
+        }
+      }
+      final lane = laneCandidate ?? _firstFreeLane(activeLaneHead);
+      activeLaneHead[lane] = c.id;
+      for (final e in activeLaneHead.entries.toList()) {
+        if (c.parents.contains(e.value) && e.key != lane) {
+          activeLaneHead.remove(e.key);
+        }
+      }
+      if (lane > maxLane) maxLane = lane;
+    }
+    final w = (maxLane + 1) * laneWidth + 400;
+    final h = commits.length * rowHeight + 400;
+    return Size(w.toDouble(), h.toDouble());
+  }
+
+  Map<String, Color> _assignBranchColors(List<Branch> branches) {
+    final palette = GraphPainter.lanePalette;
+    final map = <String, Color>{};
+    for (var i = 0; i < branches.length; i++) {
+      map[branches[i].name] = palette[i % palette.length];
+    }
+    return map;
+  }
+
+  bool _hasUnknownEdges() {
+    final names = widget.data.branches.map((b) => b.name).toSet();
+    final byId = {for (final c in widget.data.commits) c.id: c};
+    bool unknown = false;
+    for (final c in widget.data.commits) {
+      String? bn;
+      // direct ref
+      for (final r in c.refs) {
+        if (names.contains(r)) {
+          bn = r;
+          break;
+        }
+        if (r.startsWith('origin/')) {
+          final short = r.substring('origin/'.length);
+          if (names.contains(short)) {
+            bn = short;
+            break;
+          }
+        }
+      }
+      // walk first-parents up to 100 steps
+      var cur = c;
+      var steps = 0;
+      while (bn == null && cur.parents.isNotEmpty && steps < 100) {
+        final p = byId[cur.parents.first];
+        if (p == null) break;
+        for (final r in p.refs) {
+          if (names.contains(r)) {
+            bn = r;
+            break;
+          }
+          if (r.startsWith('origin/')) {
+            final short = r.substring('origin/'.length);
+            if (names.contains(short)) {
+              bn = short;
+              break;
+            }
+          }
+        }
+        cur = p;
+        steps++;
+      }
+      if (bn == null) {
+        unknown = true;
+        break;
+      }
+    }
+    return unknown;
   }
 
   CommitNode? _hitTest(Offset sceneP, GraphData data) {
@@ -320,7 +525,8 @@ class _GraphViewState extends State<_GraphView> {
 
 class GraphPainter extends CustomPainter {
   final GraphData data;
-  GraphPainter(this.data);
+  final Map<String, Color> branchColors;
+  GraphPainter(this.data, this.branchColors);
   static const double laneWidth = 80;
   static const double rowHeight = 50;
   static const double nodeRadius = 6;
@@ -343,10 +549,29 @@ class GraphPainter extends CustomPainter {
     final laneOf = <String, int>{};
     final activeLaneHead = <int, String>{};
     final rowOf = <String, int>{};
-    final paintNode = Paint();
+    final paintNode = Paint()..color = const Color(0xFF1976D2);
+    final paintBorder = Paint()
+      ..color = const Color(0xFF1976D2)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.5;
     final paintEdge = Paint()
       ..strokeWidth = 2
       ..style = PaintingStyle.stroke;
+    final byId = {for (final c in commits) c.id: c};
+    final colorMemo = _computeBranchColors(byId);
+    // 构造来自分支链的父->子关系，以及对每个边对的出现次数
+    final children = <String, List<String>>{}; // parent -> [child]
+    final pairCount = <String, int>{};
+    for (final entry in data.chains.entries) {
+      final ids = entry.value;
+      for (var i = 0; i + 1 < ids.length; i++) {
+        final child = ids[i];
+        final parent = ids[i + 1];
+        (children[parent] ??= <String>[]).add(child);
+        final key = '$child|$parent';
+        pairCount[key] = (pairCount[key] ?? 0) + 1;
+      }
+    }
 
     for (var i = 0; i < commits.length; i++) {
       final c = commits[i];
@@ -368,24 +593,56 @@ class GraphPainter extends CustomPainter {
       }
     }
 
+    // 绘制节点
     for (final c in commits) {
       final row = rowOf[c.id]!;
       final lane = laneOf[c.id]!;
       final x = lane * laneWidth + laneWidth / 2;
       final y = row * rowHeight + rowHeight / 2;
-      paintNode.color = lanePalette[lane % lanePalette.length];
-      canvas.drawCircle(Offset(x, y), nodeRadius, paintNode);
-      for (final p in c.parents) {
-        if (!rowOf.containsKey(p)) continue;
-        final pr = rowOf[p]!;
-        final pl = laneOf[p] ?? lane;
-        final px = pl * laneWidth + laneWidth / 2;
-        final py = pr * rowHeight + rowHeight / 2;
+      final childIds = children[c.id] ?? const <String>[];
+      final childColors =
+          childIds.map((id) => _colorOfCommit(id, colorMemo)).toSet();
+      final isSplit = childIds.length >= 2 && childColors.length >= 2;
+      final r = isSplit ? nodeRadius * 1.6 : nodeRadius;
+      canvas.drawCircle(Offset(x, y), r, paintNode);
+      if (isSplit) {
+        canvas.drawCircle(Offset(x, y), r, paintBorder);
+      }
+    }
+
+    // 绘制来自分支链的边，避免父列表造成的重边
+    final pairDrawn = <String, int>{};
+    for (final entry in data.chains.entries) {
+      final bname = entry.key;
+      final bcolor = branchColors[bname] ?? const Color(0xFF9E9E9E);
+      final ids = entry.value;
+      for (var i = 0; i + 1 < ids.length; i++) {
+        final child = ids[i];
+        final parent = ids[i + 1];
+        if (!rowOf.containsKey(child) || !rowOf.containsKey(parent)) continue;
+        final rowC = rowOf[child]!;
+        final laneC = laneOf[child]!;
+        final x = laneC * laneWidth + laneWidth / 2;
+        final y = rowC * rowHeight + rowHeight / 2;
+        final rowP = rowOf[parent]!;
+        final laneP = laneOf[parent]!;
+        final px = laneP * laneWidth + laneWidth / 2;
+        final py = rowP * rowHeight + rowHeight / 2;
+        final key = '$child|$parent';
+        final total = pairCount[key] ?? 1;
+        final done = pairDrawn[key] ?? 0;
+        pairDrawn[key] = done + 1;
+        // 将并行边按顺序左右分开，靠得很近
+        final midY = (y + py) / 2;
+        final dLane = (laneC - laneP).abs();
+        final bendBase = (dLane * 8.0).clamp(8.0, 24.0);
+        final dir = laneC <= laneP ? 1.0 : -1.0;
+        final spread = (done - (total - 1) / 2.0) * 3.0; // -..0..+
         final path = Path();
         path.moveTo(x, y);
-        final midY = (y + py) / 2;
-        path.cubicTo(x, midY, px, midY, px, py);
-        paintEdge.color = lanePalette[pl % lanePalette.length];
+        path.cubicTo(x + dir * (bendBase + spread), midY,
+            px - dir * (bendBase + spread), midY, px, py);
+        paintEdge.color = bcolor;
         canvas.drawPath(path, paintEdge);
       }
     }
@@ -405,6 +662,44 @@ class GraphPainter extends CustomPainter {
       textPainter.layout();
       textPainter.paint(canvas, Offset(x, y));
     }
+  }
+
+  Color _colorOfCommit(String id, Map<String, Color> memo) {
+    return memo[id] ?? const Color(0xFF9E9E9E);
+  }
+
+  String? _branchOfRefs(List<String> refs) {
+    final names = data.branches.map((b) => b.name).toSet();
+    for (final r in refs) {
+      if (names.contains(r)) return r;
+    }
+    return null;
+  }
+
+  Map<String, Color> _computeBranchColors(Map<String, CommitNode> byId) {
+    final memo = <String, Color>{};
+    // Branch priority: master first, then others by name
+    final ordered = List<Branch>.from(data.branches);
+    ordered.sort((a, b) {
+      int pa = a.name == 'master' ? 0 : 1;
+      int pb = b.name == 'master' ? 0 : 1;
+      if (pa != pb) return pa - pb;
+      return a.name.compareTo(b.name);
+    });
+    int idx = 0;
+    for (final b in ordered) {
+      final color =
+          branchColors[b.name] ?? lanePalette[idx % lanePalette.length];
+      idx++;
+      var cur = byId[b.head];
+      while (cur != null && memo[cur.id] == null) {
+        memo[cur.id] = color;
+        if (cur.parents.isEmpty) break;
+        final next = byId[cur.parents.first];
+        cur = next;
+      }
+    }
+    return memo;
   }
 
   int _chooseLane(CommitNode c, Map<int, String> activeLaneHead) {
