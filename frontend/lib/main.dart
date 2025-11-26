@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/gestures.dart';
 import 'package:http/http.dart' as http;
+import 'package:graphview/GraphView.dart';
 
 void main() {
   runApp(const GitGraphApp());
@@ -297,22 +298,30 @@ class _GraphViewState extends State<_GraphView> {
                   );
                 }
               },
-              child: InteractiveViewer(
-                transformationController: _tc,
-                minScale: 0.2,
-                maxScale: 4,
-                constrained: false,
-                boundaryMargin: const EdgeInsets.all(2000),
-                child: SizedBox(
-                  width: _canvasSize!.width,
-                  height: _canvasSize!.height,
-                  child: CustomPaint(
-                    painter: GraphPainter(
-                        widget.data, _branchColors!, _hoverEdgeKey()),
-                    size: _canvasSize!,
+              child: LayoutBuilder(builder: (context, constraints) {
+                return InteractiveViewer(
+                  transformationController: _tc,
+                  minScale: 0.2,
+                  maxScale: 4,
+                  constrained: true,
+                  boundaryMargin: EdgeInsets.zero,
+                  child: SizedBox(
+                    width: constraints.maxWidth,
+                    height: constraints.maxHeight,
+                    child: GraphView.builder(
+                      graph: _buildGraphGV(
+                          widget.data, _branchColors!, _pairBranches!),
+                      algorithm: SugiyamaAlgorithm(SugiyamaConfiguration()),
+                      builder: (Node node) {
+                        final id = node.key?.value as String;
+                        final c =
+                            widget.data.commits.firstWhere((e) => e.id == id);
+                        return _nodeWidgetGV(c);
+                      },
+                    ),
                   ),
-                ),
-              ),
+                );
+              }),
             ),
           ),
         ),
@@ -535,6 +544,62 @@ class _GraphViewState extends State<_GraphView> {
     final e = _hoverEdge;
     if (e == null) return null;
     return '${e.child}|${e.parent}';
+  }
+
+  Graph _buildGraphGV(GraphData data, Map<String, Color> branchColors,
+      Map<String, List<String>> pairBranches) {
+    final graph = Graph()..isTree = false;
+    final nodes = <String, Node>{};
+    for (final c in data.commits) {
+      nodes[c.id] = Node.Id(c.id);
+    }
+    for (final entry in pairBranches.entries) {
+      final sp = entry.key.split('|');
+      if (sp.length != 2) continue;
+      final child = sp[0];
+      final parent = sp[1];
+      final nChild = nodes[child];
+      final nParent = nodes[parent];
+      if (nChild == null || nParent == null) continue;
+      final branches = entry.value;
+      for (var i = 0; i < branches.length; i++) {
+        final bname = branches[i];
+        final color = branchColors[bname] ?? const Color(0xFF9E9E9E);
+        graph.addEdge(nChild, nParent,
+            paint: Paint()
+              ..color = color
+              ..strokeWidth = 2
+              ..style = PaintingStyle.stroke);
+      }
+    }
+    return graph;
+  }
+
+  Widget _nodeWidgetGV(CommitNode c) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: () {
+          showDialog(
+            context: context,
+            builder: (_) => AlertDialog(
+              title: Text(c.subject),
+              content: Text(
+                  'commit ${c.id}\n${c.author}\n${c.date}\nparents: ${c.parents.join(', ')}'),
+            ),
+          );
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: const Color(0xFFE3F2FD),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFF1976D2)),
+          ),
+          child: Text(c.id.substring(0, 7)),
+        ),
+      ),
+    );
   }
 
   bool _hasUnknownEdges() {
@@ -1009,4 +1074,33 @@ class GraphPainter extends CustomPainter {
   bool shouldRepaint(covariant GraphPainter oldDelegate) {
     return oldDelegate.data != data;
   }
+}
+
+Graph _buildGraphGV(GraphData data, Map<String, Color> branchColors,
+    Map<String, List<String>> pairBranches) {
+  final graph = Graph()..isTree = false;
+  final nodes = <String, Node>{};
+  for (final c in data.commits) {
+    nodes[c.id] = Node.Id(c.id);
+  }
+  for (final entry in pairBranches.entries) {
+    final sp = entry.key.split('|');
+    if (sp.length != 2) continue;
+    final child = sp[0];
+    final parent = sp[1];
+    final nChild = nodes[child];
+    final nParent = nodes[parent];
+    if (nChild == null || nParent == null) continue;
+    final branches = entry.value;
+    for (var i = 0; i < branches.length; i++) {
+      final bname = branches[i];
+      final color = branchColors[bname] ?? const Color(0xFF9E9E9E);
+      graph.addEdge(nChild, nParent,
+          paint: Paint()
+            ..color = color
+            ..strokeWidth = 2
+            ..style = PaintingStyle.stroke);
+    }
+  }
+  return graph;
 }
