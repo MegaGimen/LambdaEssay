@@ -208,6 +208,16 @@ class _GraphViewState extends State<_GraphView> {
   double _laneWidth = 120;
   double _rowHeight = 160;
   static const Duration _rightPanDelay = Duration(milliseconds: 200);
+
+  void _resetView() {
+    setState(() {
+      _tc.value = Matrix4.identity();
+      _hovered = null;
+      _hoverPos = null;
+      _hoverEdge = null;
+    });
+  }
+
   @override
   void didUpdateWidget(covariant _GraphView oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -336,6 +346,17 @@ class _GraphViewState extends State<_GraphView> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ElevatedButton.icon(
+                        onPressed: _resetView,
+                        icon: const Icon(Icons.home),
+                        label: const Text('返回主视角'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
                   const Text('间距调整',
                       style: TextStyle(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 6),
