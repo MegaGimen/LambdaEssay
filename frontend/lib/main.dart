@@ -207,6 +207,11 @@ class _GraphViewState extends State<_GraphView> {
   Map<String, List<String>>? _pairBranches;
   Size? _canvasSize;
   static const Duration _rightPanDelay = Duration(milliseconds: 200);
+  Widget? _graphBaked;
+  final GlobalKey _viewerKey = GlobalKey();
+  final Map<String, GlobalKey> _nodeKeysGV = {};
+  Map<String, Offset>? _nodeCenters;
+  bool _bakeScheduled = false;
   @override
   void didUpdateWidget(covariant _GraphView oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -214,6 +219,10 @@ class _GraphViewState extends State<_GraphView> {
       _branchColors = null;
       _pairBranches = null;
       _canvasSize = null;
+      _graphBaked = null;
+      _nodeCenters = null;
+      _nodeKeysGV.clear();
+      _bakeScheduled = false;
       _hovered = null;
       _hoverPos = null;
       _hoverEdge = null;
@@ -299,27 +308,74 @@ class _GraphViewState extends State<_GraphView> {
                 }
               },
               child: LayoutBuilder(builder: (context, constraints) {
+                _graphBaked ??= SizedBox(
+                  key: _viewerKey,
+                  width: constraints.maxWidth,
+                  height: constraints.maxHeight,
+                  child: GraphView.builder(
+                    key: const ValueKey('baked-graphview'),
+                    graph: _buildGraphGV(
+                        widget.data, _branchColors!, _pairBranches!),
+                    algorithm: SugiyamaAlgorithm(() {
+                      final cfg = SugiyamaConfiguration();
+                      cfg.nodeSeparation = 60;
+                      cfg.levelSeparation = 80;
+                      cfg.orientation =
+                          SugiyamaConfiguration.ORIENTATION_TOP_BOTTOM;
+                      return cfg;
+                    }()),
+                    builder: (Node node) {
+                      final id = node.key?.value as String;
+                      final c =
+                          widget.data.commits.firstWhere((e) => e.id == id);
+                      final k = _nodeKeysGV[id] ??= GlobalKey();
+                      return Container(
+                        key: k,
+                        width: 80,
+                        height: 26,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: const Color(0x00000000),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: const Color(0x00000000)),
+                        ),
+                        child: Text(c.id.substring(0, 7),
+                            style: const TextStyle(color: Colors.transparent)),
+                      );
+                    },
+                  ),
+                );
+                if (!_bakeScheduled) {
+                  _scheduleBake();
+                }
                 return InteractiveViewer(
                   transformationController: _tc,
                   minScale: 0.2,
                   maxScale: 4,
                   constrained: true,
                   boundaryMargin: EdgeInsets.zero,
-                  child: SizedBox(
-                    width: constraints.maxWidth,
-                    height: constraints.maxHeight,
-                    child: GraphView.builder(
-                      graph: _buildGraphGV(
-                          widget.data, _branchColors!, _pairBranches!),
-                      algorithm: SugiyamaAlgorithm(SugiyamaConfiguration()),
-                      builder: (Node node) {
-                        final id = node.key?.value as String;
-                        final c =
-                            widget.data.commits.firstWhere((e) => e.id == id);
-                        return _nodeWidgetGV(c);
-                      },
-                    ),
-                  ),
+                  child: Stack(children: [
+                    if (_nodeCenters != null)
+                      CustomPaint(
+                        size: Size(constraints.maxWidth, constraints.maxHeight),
+                        painter: BakedPainter(
+                          centers: _nodeCenters!,
+                          data: widget.data,
+                          branchColors: _branchColors!,
+                          pairs: _pairBranches!,
+                          hoverPairKey: _hoverEdgeKey(),
+                        ),
+                      ),
+                    Opacity(opacity: 0.0, child: _graphBaked!),
+                    if (_hoverEdge != null &&
+                        _hoverPos != null &&
+                        _hovered == null)
+                      Positioned(
+                        left: _hoverPos!.dx + 12,
+                        top: _hoverPos!.dy + 12,
+                        child: _edgeTooltip(),
+                      ),
+                  ]),
                 );
               }),
             ),
@@ -425,56 +481,7 @@ class _GraphViewState extends State<_GraphView> {
               ),
             ),
           ),
-        if (_hoverEdge != null && _hoverPos != null && _hovered == null)
-          Positioned(
-            left: _hoverPos!.dx + 12,
-            top: _hoverPos!.dy + 12,
-            child: Material(
-              elevation: 2,
-              color: Colors.transparent,
-              child: Container(
-                constraints: const BoxConstraints(maxWidth: 420),
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFAFAFA),
-                  borderRadius: BorderRadius.circular(6),
-                  boxShadow: const [
-                    BoxShadow(color: Color(0x33000000), blurRadius: 6)
-                  ],
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                        '${_hoverEdge!.child.substring(0, 7)} → ${_hoverEdge!.parent.substring(0, 7)}'),
-                    const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: _hoverEdge!.branches
-                          .map((b) => Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: (_branchColors?[b] ??
-                                          const Color(0xFF9E9E9E))
-                                      .withOpacity(0.15),
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(
-                                      color: _branchColors?[b] ??
-                                          const Color(0xFF9E9E9E)),
-                                ),
-                                child: Text(b,
-                                    style: const TextStyle(fontSize: 12)),
-                              ))
-                          .toList(),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
+        // edge tooltip moved inside InteractiveViewer Stack (_edgeTooltip)
       ],
     );
   }
@@ -544,6 +551,93 @@ class _GraphViewState extends State<_GraphView> {
     final e = _hoverEdge;
     if (e == null) return null;
     return '${e.child}|${e.parent}';
+  }
+
+  void _bakeNodeCenters() {
+    final baseCtx = _viewerKey.currentContext;
+    if (baseCtx == null) return;
+    final baseBox = baseCtx.findRenderObject() as RenderBox?;
+    if (baseBox == null) return;
+    final baseTopLeft = baseBox.localToGlobal(Offset.zero);
+    final centers = <String, Offset>{};
+    for (final c in widget.data.commits) {
+      final k = _nodeKeysGV[c.id];
+      final ctx = k?.currentContext;
+      if (ctx == null) continue;
+      final box = ctx.findRenderObject() as RenderBox?;
+      if (box == null) continue;
+      final tl = box.localToGlobal(Offset.zero);
+      final center = Offset(
+        tl.dx - baseTopLeft.dx + box.size.width / 2,
+        tl.dy - baseTopLeft.dy + box.size.height / 2,
+      );
+      centers[c.id] = center;
+    }
+    if (centers.isNotEmpty) {
+      setState(() {
+        _nodeCenters = centers;
+      });
+    }
+  }
+
+  void _scheduleBake() {
+    if (_bakeScheduled) return;
+    _bakeScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _bakeNodeCenters();
+      final got = _nodeCenters?.length ?? 0;
+      final need = (widget.data.commits.length * 0.8).floor();
+      if (got < need) {
+        _bakeScheduled = false;
+        _scheduleBake();
+      } else {
+        _bakeScheduled = false;
+      }
+    });
+  }
+
+  Widget _edgeTooltip() {
+    return Material(
+      elevation: 2,
+      color: Colors.transparent,
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 420),
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFAFAFA),
+          borderRadius: BorderRadius.circular(6),
+          boxShadow: const [BoxShadow(color: Color(0x33000000), blurRadius: 6)],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+                '${_hoverEdge!.child.substring(0, 7)} → ${_hoverEdge!.parent.substring(0, 7)}'),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: _hoverEdge!.branches
+                  .map((b) => Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: (_branchColors?[b] ?? const Color(0xFF9E9E9E))
+                              .withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                              color:
+                                  _branchColors?[b] ?? const Color(0xFF9E9E9E)),
+                        ),
+                        child: Text(b, style: const TextStyle(fontSize: 12)),
+                      ))
+                  .toList(),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Graph _buildGraphGV(GraphData data, Map<String, Color> branchColors,
@@ -702,6 +796,9 @@ class _GraphViewState extends State<_GraphView> {
   }
 
   EdgeInfo? _hitEdge(Offset sceneP, GraphData data) {
+    if (_nodeCenters != null) {
+      return _hitEdgeBaked(sceneP, data);
+    }
     const laneWidth = GraphPainter.laneWidth;
     const rowHeight = GraphPainter.rowHeight;
     final commits = data.commits;
@@ -756,6 +853,38 @@ class _GraphViewState extends State<_GraphView> {
         best = d;
         bestInfo =
             EdgeInfo(child: child, parent: parent, branches: entry.value);
+      }
+    }
+    if (bestInfo != null && best <= 8.0) return bestInfo;
+    return null;
+  }
+
+  EdgeInfo? _hitEdgeBaked(Offset sceneP, GraphData data) {
+    if (_pairBranches == null || _nodeCenters == null) return null;
+    double best = double.infinity;
+    EdgeInfo? bestInfo;
+    for (final entry in _pairBranches!.entries) {
+      final sp = entry.key.split('|');
+      if (sp.length != 2) continue;
+      final child = sp[0];
+      final parent = sp[1];
+      final a = _nodeCenters![child];
+      final b = _nodeCenters![parent];
+      if (a == null || b == null) continue;
+      final vx = b.dx - a.dx;
+      final vy = b.dy - a.dy;
+      final len = math.sqrt(vx * vx + vy * vy);
+      Offset n = len == 0 ? const Offset(0, 0) : Offset(-vy / len, vx / len);
+      final branches = entry.value;
+      for (var i = 0; i < branches.length; i++) {
+        final spread = (i - (branches.length - 1) / 2.0) * 3.0;
+        final aa = a + n * spread;
+        final bb = b + n * spread;
+        final d = _distPointToSegment(sceneP, aa, bb);
+        if (d < best) {
+          best = d;
+          bestInfo = EdgeInfo(child: child, parent: parent, branches: branches);
+        }
       }
     }
     if (bestInfo != null && best <= 8.0) return bestInfo;
@@ -1073,6 +1202,65 @@ class GraphPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant GraphPainter oldDelegate) {
     return oldDelegate.data != data;
+  }
+}
+
+class BakedPainter extends CustomPainter {
+  final Map<String, Offset> centers;
+  final GraphData data;
+  final Map<String, Color> branchColors;
+  final Map<String, List<String>> pairs;
+  final String? hoverPairKey;
+  BakedPainter({
+    required this.centers,
+    required this.data,
+    required this.branchColors,
+    required this.pairs,
+    required this.hoverPairKey,
+  });
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paintEdge = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    for (final entry in pairs.entries) {
+      final sp = entry.key.split('|');
+      if (sp.length != 2) continue;
+      final child = sp[0];
+      final parent = sp[1];
+      final a = centers[child];
+      final b = centers[parent];
+      if (a == null || b == null) continue;
+      final vx = b.dx - a.dx;
+      final vy = b.dy - a.dy;
+      final len = math.sqrt(vx * vx + vy * vy);
+      Offset n = len == 0 ? const Offset(0, 0) : Offset(-vy / len, vx / len);
+      final branches = entry.value;
+      for (var i = 0; i < branches.length; i++) {
+        final spread = (i - (branches.length - 1) / 2.0) * 3.0;
+        final aa = a + n * spread;
+        final bb = b + n * spread;
+        final key = '$child|$parent';
+        final color = branchColors[branches[i]] ?? const Color(0xFF9E9E9E);
+        paintEdge.color = color;
+        paintEdge.strokeWidth =
+            (hoverPairKey != null && hoverPairKey == key) ? 3.0 : 2.0;
+        canvas.drawLine(aa, bb, paintEdge);
+      }
+    }
+    final paintNode = Paint()..color = const Color(0xFF1976D2);
+    for (final c in data.commits) {
+      final p = centers[c.id];
+      if (p == null) continue;
+      canvas.drawCircle(p, 6, paintNode);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant BakedPainter oldDelegate) {
+    return oldDelegate.centers != centers ||
+        oldDelegate.hoverPairKey != hoverPairKey;
   }
 }
 
