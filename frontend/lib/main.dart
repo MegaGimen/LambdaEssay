@@ -205,6 +205,8 @@ class _GraphViewState extends State<_GraphView> {
   Map<String, Color>? _branchColors;
   Map<String, List<String>>? _pairBranches;
   Size? _canvasSize;
+  double _laneWidth = 120;
+  double _rowHeight = 160;
   static const Duration _rightPanDelay = Duration(milliseconds: 200);
   @override
   void didUpdateWidget(covariant _GraphView oldWidget) {
@@ -307,8 +309,8 @@ class _GraphViewState extends State<_GraphView> {
                   width: _canvasSize!.width,
                   height: _canvasSize!.height,
                   child: CustomPaint(
-                    painter: GraphPainter(
-                        widget.data, _branchColors!, _hoverEdgeKey()),
+                    painter: GraphPainter(widget.data, _branchColors!,
+                        _hoverEdgeKey(), _laneWidth, _rowHeight),
                     size: _canvasSize!,
                   ),
                 ),
@@ -334,6 +336,58 @@ class _GraphViewState extends State<_GraphView> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  const Text('间距调整',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 6),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('节点间距'),
+                      const SizedBox(width: 8),
+                      SizedBox(
+                        width: 180,
+                        child: Slider(
+                          min: 40,
+                          max: 160,
+                          divisions: 24,
+                          value: _rowHeight,
+                          label: _rowHeight.round().toString(),
+                          onChanged: (v) {
+                            setState(() {
+                              _rowHeight = v;
+                              _canvasSize = _computeCanvasSize(widget.data);
+                            });
+                          },
+                        ),
+                      ),
+                      Text(_rowHeight.round().toString()),
+                    ],
+                  ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('分支间距'),
+                      const SizedBox(width: 8),
+                      SizedBox(
+                        width: 180,
+                        child: Slider(
+                          min: 60,
+                          max: 200,
+                          divisions: 28,
+                          value: _laneWidth,
+                          label: _laneWidth.round().toString(),
+                          onChanged: (v) {
+                            setState(() {
+                              _laneWidth = v;
+                              _canvasSize = _computeCanvasSize(widget.data);
+                            });
+                          },
+                        ),
+                      ),
+                      Text(_laneWidth.round().toString()),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
                   const Text('分支图例',
                       style: TextStyle(fontWeight: FontWeight.bold)),
                   const SizedBox(height: 6),
@@ -478,29 +532,15 @@ class _GraphViewState extends State<_GraphView> {
   }
 
   Size _computeCanvasSize(GraphData data) {
-    const laneWidth = GraphPainter.laneWidth;
-    const rowHeight = GraphPainter.rowHeight;
+    final laneWidth = _laneWidth;
+    final rowHeight = _rowHeight;
     final commits = data.commits;
-    final activeLaneHead = <int, String>{};
-    var maxLane = 0;
-    for (var i = 0; i < commits.length; i++) {
-      final c = commits[i];
-      int? laneCandidate;
-      for (final e in activeLaneHead.entries) {
-        if (c.parents.contains(e.value)) {
-          laneCandidate = e.key;
-          break;
-        }
-      }
-      final lane = laneCandidate ?? _firstFreeLane(activeLaneHead);
-      activeLaneHead[lane] = c.id;
-      for (final e in activeLaneHead.entries.toList()) {
-        if (c.parents.contains(e.value) && e.key != lane) {
-          activeLaneHead.remove(e.key);
-        }
-      }
-      if (lane > maxLane) maxLane = lane;
+    final laneOf = _laneOfByBranches(data);
+    var maxLane = -1;
+    for (final v in laneOf.values) {
+      if (v > maxLane) maxLane = v;
     }
+    if (maxLane < 0) maxLane = 0;
     final w = (maxLane + 1) * laneWidth + 400;
     final h = commits.length * rowHeight + 400;
     return Size(w.toDouble(), h.toDouble());
@@ -588,30 +628,13 @@ class _GraphViewState extends State<_GraphView> {
   }
 
   CommitNode? _hitTest(Offset sceneP, GraphData data) {
-    const laneWidth = GraphPainter.laneWidth;
-    const rowHeight = GraphPainter.rowHeight;
+    final laneWidth = _laneWidth;
+    final rowHeight = _rowHeight;
     final commits = data.commits;
-    final laneOf = <String, int>{};
-    final activeLaneHead = <int, String>{};
+    final laneOf = _laneOfByBranches(data);
     final rowOf = <String, int>{};
     for (var i = 0; i < commits.length; i++) {
-      final c = commits[i];
-      rowOf[c.id] = i;
-      int? laneCandidate;
-      for (final e in activeLaneHead.entries) {
-        if (c.parents.contains(e.value)) {
-          laneCandidate = e.key;
-          break;
-        }
-      }
-      final lane = laneCandidate ?? _firstFreeLane(activeLaneHead);
-      laneOf[c.id] = lane;
-      activeLaneHead[lane] = c.id;
-      for (final e in activeLaneHead.entries.toList()) {
-        if (c.parents.contains(e.value) && e.key != lane) {
-          activeLaneHead.remove(e.key);
-        }
-      }
+      rowOf[commits[i].id] = i;
     }
     for (final c in commits) {
       final row = rowOf[c.id]!;
@@ -636,31 +659,62 @@ class _GraphViewState extends State<_GraphView> {
     return lane;
   }
 
-  EdgeInfo? _hitEdge(Offset sceneP, GraphData data) {
-    const laneWidth = GraphPainter.laneWidth;
-    const rowHeight = GraphPainter.rowHeight;
-    final commits = data.commits;
+  Map<String, int> _branchLane(List<Branch> branches) {
+    final ordered = List<Branch>.from(branches);
+    ordered.sort((a, b) {
+      int pa = a.name == 'master' ? 0 : 1;
+      int pb = b.name == 'master' ? 0 : 1;
+      if (pa != pb) return pa - pb;
+      return a.name.compareTo(b.name);
+    });
+    final map = <String, int>{};
+    for (var i = 0; i < ordered.length; i++) {
+      map[ordered[i].name] = i;
+    }
+    return map;
+  }
+
+  Map<String, int> _laneOfByBranches(GraphData data) {
     final laneOf = <String, int>{};
-    final activeLaneHead = <int, String>{};
-    final rowOf = <String, int>{};
-    for (var i = 0; i < commits.length; i++) {
-      final c = commits[i];
-      rowOf[c.id] = i;
-      int? laneCandidate;
-      for (final e in activeLaneHead.entries) {
-        if (c.parents.contains(e.value)) {
-          laneCandidate = e.key;
+    final branchLane = _branchLane(data.branches);
+    final orderedNames = branchLane.keys.toList()
+      ..sort((a, b) {
+        int pa = a == 'master' ? 0 : 1;
+        int pb = b == 'master' ? 0 : 1;
+        if (pa != pb) return pa - pb;
+        return a.compareTo(b);
+      });
+    for (final name in orderedNames) {
+      final lane = branchLane[name]!;
+      final ids = data.chains[name] ?? const <String>[];
+      for (final id in ids) {
+        laneOf[id] ??= lane;
+      }
+    }
+    for (final c in data.commits) {
+      if (laneOf[c.id] != null) continue;
+      int? lane;
+      for (final p in c.parents) {
+        final lp = laneOf[p];
+        if (lp != null) {
+          lane = lp;
           break;
         }
       }
-      final lane = laneCandidate ?? _firstFreeLane(activeLaneHead);
-      laneOf[c.id] = lane;
-      activeLaneHead[lane] = c.id;
-      for (final e in activeLaneHead.entries.toList()) {
-        if (c.parents.contains(e.value) && e.key != lane) {
-          activeLaneHead.remove(e.key);
-        }
-      }
+      final laneVal = lane ?? branchLane.length;
+      laneOf[c.id] = laneVal;
+    }
+    return laneOf;
+  }
+
+  EdgeInfo? _hitEdge(Offset sceneP, GraphData data) {
+    final laneWidth = _laneWidth;
+    final rowHeight = _rowHeight;
+    final commits = data.commits;
+    final laneOf = _laneOfByBranches(data);
+    final rowOf = <String, int>{};
+    for (var i = 0; i < commits.length; i++) {
+      rowOf[commits[i].id] = i;
     }
     if (_pairBranches == null) return null;
     double best = double.infinity;
@@ -769,10 +823,11 @@ class GraphPainter extends CustomPainter {
   final GraphData data;
   final Map<String, Color> branchColors;
   final String? hoverPairKey;
-  GraphPainter(this.data, this.branchColors, this.hoverPairKey);
-  static const double laneWidth = 80;
-  static const double rowHeight = 50;
+  final double laneWidth;
+  final double rowHeight;
   static const double nodeRadius = 6;
+  GraphPainter(this.data, this.branchColors, this.hoverPairKey, this.laneWidth,
+      this.rowHeight);
   static const List<Color> lanePalette = [
     Color(0xFF1976D2),
     Color(0xFF2E7D32),
@@ -789,8 +844,7 @@ class GraphPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final commits = data.commits;
-    final laneOf = <String, int>{};
-    final activeLaneHead = <int, String>{};
+    final laneOf = _laneOfByBranches({for (final c in commits) c.id: c});
     final rowOf = <String, int>{};
     final paintNode = Paint()..color = const Color(0xFF1976D2);
     final paintBorder = Paint()
@@ -819,21 +873,6 @@ class GraphPainter extends CustomPainter {
     for (var i = 0; i < commits.length; i++) {
       final c = commits[i];
       rowOf[c.id] = i;
-      int? laneCandidate;
-      for (final e in activeLaneHead.entries) {
-        if (c.parents.contains(e.value)) {
-          laneCandidate = e.key;
-          break;
-        }
-      }
-      final lane = laneCandidate ?? _firstFreeLane(activeLaneHead);
-      laneOf[c.id] = lane;
-      activeLaneHead[lane] = c.id;
-      for (final e in activeLaneHead.entries.toList()) {
-        if (c.parents.contains(e.value) && e.key != lane) {
-          activeLaneHead.remove(e.key);
-        }
-      }
     }
 
     // 绘制节点
@@ -969,6 +1008,54 @@ class GraphPainter extends CustomPainter {
       }
     }
     return memo;
+  }
+
+  Map<String, int> _branchLane(List<Branch> branches) {
+    final ordered = List<Branch>.from(branches);
+    ordered.sort((a, b) {
+      int pa = a.name == 'master' ? 0 : 1;
+      int pb = b.name == 'master' ? 0 : 1;
+      if (pa != pb) return pa - pb;
+      return a.name.compareTo(b.name);
+    });
+    final map = <String, int>{};
+    for (var i = 0; i < ordered.length; i++) {
+      map[ordered[i].name] = i;
+    }
+    return map;
+  }
+
+  Map<String, int> _laneOfByBranches(Map<String, CommitNode> byId) {
+    final laneOf = <String, int>{};
+    final branchLane = _branchLane(data.branches);
+    final orderedNames = branchLane.keys.toList()
+      ..sort((a, b) {
+        int pa = a == 'master' ? 0 : 1;
+        int pb = b == 'master' ? 0 : 1;
+        if (pa != pb) return pa - pb;
+        return a.compareTo(b);
+      });
+    for (final name in orderedNames) {
+      final lane = branchLane[name]!;
+      final ids = data.chains[name] ?? const <String>[];
+      for (final id in ids) {
+        laneOf[id] ??= lane;
+      }
+    }
+    for (final c in byId.values) {
+      if (laneOf[c.id] != null) continue;
+      int? lane;
+      for (final p in c.parents) {
+        final lp = laneOf[p];
+        if (lp != null) {
+          lane = lp;
+          break;
+        }
+      }
+      final laneVal = lane ?? branchLane.length;
+      laneOf[c.id] = laneVal;
+    }
+    return laneOf;
   }
 
   int _chooseLane(CommitNode c, Map<int, String> activeLaneHead) {
