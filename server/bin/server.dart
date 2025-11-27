@@ -37,6 +37,7 @@ String _sanitizePath(String? raw) {
 }
 
 Future<void> main(List<String> args) async {
+  await initTrackingService();
   final router = Router();
 
   router.get('/health', (Request req) async {
@@ -115,6 +116,71 @@ Future<void> main(List<String> args) async {
       final resp = await getGraph(normalized, limit: limit);
       return _cors(Response.ok(jsonEncode(resp.toJson()),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/track/create', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final name = (data['name'] as String?)?.trim() ?? '';
+    final docxPath = data['docxPath'] as String?;
+    if (name.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'name required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      final resp = await createTrackingProject(name, docxPath);
+      return _cors(Response.ok(jsonEncode(resp), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/track/open', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final name = (data['name'] as String?)?.trim() ?? '';
+    if (name.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'name required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      final resp = await openTrackingProject(name);
+      return _cors(Response.ok(jsonEncode(resp), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/track/update', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final name = (data['name'] as String?)?.trim() ?? '';
+    final newDocxPath = data['newDocxPath'] as String?;
+    if (name.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'name required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      final resp = await updateTrackingProject(name, newDocxPath: newDocxPath);
+      return _cors(Response.ok(jsonEncode(resp), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
     } catch (e) {
       return _cors(Response(500,
           body: jsonEncode({'error': e.toString()}),

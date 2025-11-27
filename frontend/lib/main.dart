@@ -92,6 +92,17 @@ class _GraphPageState extends State<GraphPage> {
   GraphData? data;
   String? error;
   bool loading = false;
+  String? currentProjectName;
+
+  Future<Map<String, dynamic>> _postJson(
+      String url, Map<String, dynamic> body) async {
+    final resp = await http.post(Uri.parse(url),
+        headers: {'Content-Type': 'application/json'}, body: jsonEncode(body));
+    if (resp.statusCode != 200) {
+      throw Exception(resp.body);
+    }
+    return jsonDecode(resp.body) as Map<String, dynamic>;
+  }
 
   Future<void> _load() async {
     final path = pathCtrl.text.trim();
@@ -137,12 +148,211 @@ class _GraphPageState extends State<GraphPage> {
     }
   }
 
+  Future<void> _onCreateTrackProject() async {
+    final nameCtrl = TextEditingController();
+    final docxCtrl = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('新建追踪项目'),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameCtrl,
+                decoration: const InputDecoration(labelText: '项目名称'),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: docxCtrl,
+                decoration: const InputDecoration(
+                    labelText: 'docx文件路径 c:\\path\\to\\file.docx'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消')),
+          ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('创建')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final name = nameCtrl.text.trim();
+    final docx = docxCtrl.text.trim();
+    if (name.isEmpty) {
+      setState(() => error = '请输入项目名称');
+      return;
+    }
+    try {
+      final resp = await _postJson('http://localhost:8080/track/create', {
+        'name': name,
+        'docxPath': docx.isEmpty ? null : docx,
+      });
+      final repoPath = resp['repoPath'] as String;
+      setState(() {
+        currentProjectName = name;
+        pathCtrl.text = repoPath;
+      });
+      await _postJson('http://localhost:8080/track/update', {'name': name});
+      await _load();
+    } catch (e) {
+      setState(() => error = e.toString());
+    }
+  }
+
+  Future<void> _onOpenTrackProject() async {
+    final nameCtrl = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('打开追踪项目'),
+        content: SizedBox(
+          width: 360,
+          child: TextField(
+            controller: nameCtrl,
+            decoration: const InputDecoration(labelText: '项目名称'),
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消')),
+          ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('打开')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final name = nameCtrl.text.trim();
+    if (name.isEmpty) {
+      setState(() => error = '请输入项目名称');
+      return;
+    }
+    try {
+      final resp =
+          await _postJson('http://localhost:8080/track/open', {'name': name});
+      final repoPath = resp['repoPath'] as String;
+      setState(() {
+        currentProjectName = name;
+        pathCtrl.text = repoPath;
+      });
+      await _postJson('http://localhost:8080/track/update', {'name': name});
+      await _load();
+    } catch (e) {
+      setState(() => error = e.toString());
+    }
+  }
+
+  Future<void> _onUpdateRepo() async {
+    String? name = currentProjectName;
+    if (name == null || name.isEmpty) {
+      final nameCtrl = TextEditingController();
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('更新git仓库'),
+          content: SizedBox(
+            width: 360,
+            child: TextField(
+              controller: nameCtrl,
+              decoration: const InputDecoration(labelText: '项目名称'),
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('取消')),
+            ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('确定')),
+          ],
+        ),
+      );
+      if (ok == true) {
+        name = nameCtrl.text.trim();
+        setState(() => currentProjectName = name);
+      }
+    }
+    if (name == null || name.isEmpty) return;
+    try {
+      final resp =
+          await _postJson('http://localhost:8080/track/update', {'name': name});
+      final needDocx = resp['needDocx'] == true;
+      if (needDocx) {
+        final docxCtrl = TextEditingController();
+        final ok = await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text('选择docx文件路径'),
+            content: SizedBox(
+              width: 420,
+              child: TextField(
+                controller: docxCtrl,
+                decoration: const InputDecoration(
+                    labelText: 'docx文件路径 c:\\path\\to\\file.docx'),
+              ),
+            ),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('取消')),
+              ElevatedButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('确定')),
+            ],
+          ),
+        );
+        if (ok == true) {
+          final docx = docxCtrl.text.trim();
+          if (docx.isNotEmpty) {
+            await _postJson('http://localhost:8080/track/update', {
+              'name': name,
+              'newDocxPath': docx,
+            });
+          }
+        }
+      }
+      await _load();
+    } catch (e) {
+      setState(() => error = e.toString());
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Git Graph 可视化')),
       body: Column(
         children: [
+          Padding(
+            padding: const EdgeInsets.all(8),
+            child: Row(
+              children: [
+                ElevatedButton(
+                  onPressed: loading ? null : _onCreateTrackProject,
+                  child: const Text('新建追踪项目'),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: loading ? null : _onOpenTrackProject,
+                  child: const Text('打开追踪项目'),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: loading ? null : _onUpdateRepo,
+                  child: const Text('更新git仓库'),
+                ),
+              ],
+            ),
+          ),
           Padding(
             padding: const EdgeInsets.all(8),
             child: Row(
