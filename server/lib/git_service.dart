@@ -1,5 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:async';
+import 'package:path/path.dart' as p;
 import 'models.dart';
 
 final Map<String, GraphResponse> _graphCache = <String, GraphResponse>{};
@@ -147,4 +149,198 @@ Future<Map<String, List<String>>> getBranchChains(
     result[b.name] = ids;
   }
   return result;
+}
+
+String _baseDir() {
+  final app = Platform.environment['APPDATA'];
+  if (app != null && app.isNotEmpty) return p.join(app, 'gitdocx');
+  final home = Platform.environment['HOME'] ?? '';
+  if (home.isNotEmpty) return p.join(home, '.gitdocx');
+  return p.join(Directory.systemTemp.path, 'gitdocx');
+}
+
+File _trackingFile(String name) {
+  final dir = p.normalize(p.join(_baseDir(), name));
+  return File(p.join(dir, 'tracking.json'));
+}
+
+Future<Map<String, dynamic>> _readTracking(String name) async {
+  final f = _trackingFile(name);
+  if (!f.existsSync()) return <String, dynamic>{};
+  final s = await f.readAsString();
+  try {
+    return jsonDecode(s) as Map<String, dynamic>;
+  } catch (_) {
+    return <String, dynamic>{};
+  }
+}
+
+Future<void> _writeTracking(String name, Map<String, dynamic> data) async {
+  final dir = Directory(p.dirname(_trackingFile(name).path));
+  if (!dir.existsSync()) {
+    dir.createSync(recursive: true);
+  }
+  final f = _trackingFile(name);
+  await f.writeAsString(jsonEncode(data));
+}
+
+String _projectDir(String name) {
+  return p.normalize(p.join(_baseDir(), name));
+}
+
+String? _findRepoDocx(String projDir) {
+  final d = Directory(projDir);
+  if (!d.existsSync()) return null;
+  final ents = d.listSync(recursive: false);
+  for (final e in ents) {
+    if (e is File && e.path.toLowerCase().endsWith('.docx')) {
+      return p.normalize(e.path);
+    }
+  }
+  return null;
+}
+
+final Map<String, StreamSubscription<FileSystemEvent>> _watchers = {};
+
+Future<Map<String, dynamic>> createTrackingProject(
+    String name, String? docxPath) async {
+  final projDir = _projectDir(name);
+  final dir = Directory(projDir);
+  if (!dir.existsSync()) {
+    dir.createSync(recursive: true);
+  }
+  final gitDir = Directory(p.join(projDir, '.git'));
+  if (!gitDir.existsSync()) {
+    await _runGit(['init'], projDir);
+  }
+  String? repoDocxPath;
+  if (docxPath != null && docxPath.trim().isNotEmpty) {
+    final src = File(docxPath);
+    if (src.existsSync()) {
+      repoDocxPath = p.normalize(p.join(projDir, p.basename(docxPath)));
+      await src.copy(repoDocxPath);
+    }
+  }
+  final tracking = await _readTracking(name);
+  tracking['name'] = name;
+  if (docxPath != null && docxPath.trim().isNotEmpty) {
+    tracking['docxPath'] = _sanitizeFsPath(docxPath);
+  }
+  if (repoDocxPath != null) {
+    tracking['repoDocxPath'] = repoDocxPath;
+  }
+  await _writeTracking(name, tracking);
+  await _startWatcher(name);
+  return {
+    'name': name,
+    'repoPath': projDir,
+  };
+}
+
+Future<Map<String, dynamic>> openTrackingProject(String name) async {
+  final projDir = _projectDir(name);
+  final dir = Directory(projDir);
+  if (!dir.existsSync()) {
+    throw Exception('project not found');
+  }
+  final tracking = await _readTracking(name);
+  await _startWatcher(name);
+  return {
+    'name': name,
+    'repoPath': projDir,
+    'docxPath': tracking['docxPath'],
+  };
+}
+
+Future<Map<String, dynamic>> updateTrackingProject(String name,
+    {String? newDocxPath}) async {
+  final projDir = _projectDir(name);
+  final dir = Directory(projDir);
+  if (!dir.existsSync()) {
+    throw Exception('project not found');
+  }
+  var tracking = await _readTracking(name);
+  String? sourcePath = tracking['docxPath'] as String?;
+  if (newDocxPath != null && newDocxPath.trim().isNotEmpty) {
+    sourcePath = _sanitizeFsPath(newDocxPath);
+    tracking['docxPath'] = sourcePath;
+  }
+  if (sourcePath == null ||
+      sourcePath.trim().isEmpty ||
+      !File(sourcePath).existsSync()) {
+    return {'needDocx': true, 'repoPath': projDir};
+  }
+  String? repoDocxPath = tracking['repoDocxPath'] as String?;
+  if (repoDocxPath == null || repoDocxPath.trim().isEmpty) {
+    repoDocxPath =
+        _findRepoDocx(projDir) ?? p.join(projDir, p.basename(sourcePath));
+    tracking['repoDocxPath'] = repoDocxPath;
+  }
+  await _writeTracking(name, tracking);
+  final src = File(sourcePath);
+  if (!src.existsSync()) {
+    return {'needDocx': true, 'repoPath': projDir};
+  }
+  await src.copy(repoDocxPath);
+  final diff = await _runGit(['diff', '--name-only', '--', p.basename(repoDocxPath)], projDir);
+  final head = await getHead(projDir);
+  final changed = diff.any((l) => l.trim().isNotEmpty);
+  return {
+    'workingChanged': changed,
+    'repoPath': projDir,
+    'head': head,
+  };
+}
+
+Future<String?> getHead(String repoPath) async {
+  try {
+    final lines = await _runGit(['rev-parse', 'HEAD'], repoPath);
+    if (lines.isEmpty) return null;
+    final id = lines.first.trim();
+    return id.isEmpty ? null : id;
+  } catch (_) {
+    return null;
+  }
+}
+
+String _sanitizeFsPath(String raw) {
+  var t = raw.trim();
+  if ((t.startsWith('"') && t.endsWith('"')) ||
+      (t.startsWith('\'') && t.endsWith('\''))) {
+    t = t.substring(1, t.length - 1);
+  }
+  if (t.startsWith('file://')) {
+    try {
+      final uri = Uri.parse(t);
+      t = uri.toFilePath(windows: true);
+    } catch (_) {}
+  }
+  return p.normalize(t);
+}
+
+Future<void> _startWatcher(String name) async {
+  final tracking = await _readTracking(name);
+  final docx = tracking['docxPath'] as String?;
+  if (docx == null || docx.trim().isEmpty) return;
+  final f = File(docx);
+  if (!f.existsSync()) return;
+  final sub = _watchers[name];
+  if (sub != null) return;
+  final s = f.watch(events: FileSystemEvent.modify);
+  final subscription = s.listen((_) async {
+    try {
+      await updateTrackingProject(name);
+    } catch (_) {}
+  });
+  _watchers[name] = subscription;
+}
+
+Future<void> initTrackingService() async {
+  final base = Directory(_baseDir());
+  if (!base.existsSync()) return;
+  final ents = base.listSync().whereType<Directory>().toList();
+  for (final d in ents) {
+    final name = p.basename(d.path);
+    await _startWatcher(name);
+  }
 }
