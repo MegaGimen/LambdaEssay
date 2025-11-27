@@ -80,6 +80,12 @@ class GraphData {
       );
 }
 
+class WorkingState {
+  final bool changed;
+  final String? baseId;
+  WorkingState({required this.changed, this.baseId});
+}
+
 class GraphPage extends StatefulWidget {
   const GraphPage({super.key});
   @override
@@ -93,6 +99,7 @@ class _GraphPageState extends State<GraphPage> {
   String? error;
   bool loading = false;
   String? currentProjectName;
+  WorkingState? working;
 
   Future<Map<String, dynamic>> _postJson(
       String url, Map<String, dynamic> body) async {
@@ -200,7 +207,14 @@ class _GraphPageState extends State<GraphPage> {
         currentProjectName = name;
         pathCtrl.text = repoPath;
       });
-      await _postJson('http://localhost:8080/track/update', {'name': name});
+      final up =
+          await _postJson('http://localhost:8080/track/update', {'name': name});
+      setState(() {
+        working = WorkingState(
+          changed: up['workingChanged'] == true,
+          baseId: up['head'] as String?,
+        );
+      });
       await _load();
     } catch (e) {
       setState(() => error = e.toString());
@@ -244,7 +258,14 @@ class _GraphPageState extends State<GraphPage> {
         currentProjectName = name;
         pathCtrl.text = repoPath;
       });
-      await _postJson('http://localhost:8080/track/update', {'name': name});
+      final up =
+          await _postJson('http://localhost:8080/track/update', {'name': name});
+      setState(() {
+        working = WorkingState(
+          changed: up['workingChanged'] == true,
+          baseId: up['head'] as String?,
+        );
+      });
       await _load();
     } catch (e) {
       setState(() => error = e.toString());
@@ -313,13 +334,25 @@ class _GraphPageState extends State<GraphPage> {
         if (ok == true) {
           final docx = docxCtrl.text.trim();
           if (docx.isNotEmpty) {
-            await _postJson('http://localhost:8080/track/update', {
+            final up = await _postJson('http://localhost:8080/track/update', {
               'name': name,
               'newDocxPath': docx,
+            });
+            setState(() {
+              working = WorkingState(
+                changed: up['workingChanged'] == true,
+                baseId: up['head'] as String?,
+              );
             });
           }
         }
       }
+      setState(() {
+        working = WorkingState(
+          changed: resp['workingChanged'] == true,
+          baseId: resp['head'] as String?,
+        );
+      });
       await _load();
     } catch (e) {
       setState(() => error = e.toString());
@@ -390,7 +423,7 @@ class _GraphPageState extends State<GraphPage> {
           Expanded(
             child: data == null
                 ? const Center(child: Text('输入路径并点击加载'))
-                : _GraphView(data: data!),
+                : _GraphView(data: data!, working: working),
           ),
         ],
       ),
@@ -400,7 +433,8 @@ class _GraphPageState extends State<GraphPage> {
 
 class _GraphView extends StatefulWidget {
   final GraphData data;
-  const _GraphView({required this.data});
+  final WorkingState? working;
+  const _GraphView({required this.data, this.working});
   @override
   State<_GraphView> createState() => _GraphViewState();
 }
@@ -530,7 +564,8 @@ class _GraphViewState extends State<_GraphView> {
                   height: _canvasSize!.height,
                   child: CustomPaint(
                     painter: GraphPainter(widget.data, _branchColors!,
-                        _hoverEdgeKey(), _laneWidth, _rowHeight),
+                        _hoverEdgeKey(), _laneWidth, _rowHeight,
+                        working: widget.working),
                     size: _canvasSize!,
                   ),
                 ),
@@ -772,7 +807,10 @@ class _GraphViewState extends State<_GraphView> {
       if (v > maxLane) maxLane = v;
     }
     if (maxLane < 0) maxLane = 0;
-    final w = (maxLane + 1) * laneWidth + 400;
+    var w = (maxLane + 1) * laneWidth + 400;
+    if (widget.working?.changed == true) {
+      w += 340;
+    }
     final h = commits.length * rowHeight + 400;
     return Size(w.toDouble(), h.toDouble());
   }
@@ -1056,9 +1094,11 @@ class GraphPainter extends CustomPainter {
   final String? hoverPairKey;
   final double laneWidth;
   final double rowHeight;
+  final WorkingState? working;
   static const double nodeRadius = 6;
   GraphPainter(this.data, this.branchColors, this.hoverPairKey, this.laneWidth,
-      this.rowHeight);
+      this.rowHeight,
+      {this.working});
   static const List<Color> lanePalette = [
     Color(0xFF1976D2),
     Color(0xFF2E7D32),
@@ -1177,6 +1217,43 @@ class GraphPainter extends CustomPainter {
       );
       textPainter.layout();
       textPainter.paint(canvas, Offset(x, y));
+    }
+
+    // 边框分区与当前状态
+    int maxLane = -1;
+    for (final v in laneOf.values) {
+      if (v > maxLane) maxLane = v;
+    }
+    if (maxLane < 0) maxLane = 0;
+    final graphWidth = (maxLane + 1) * laneWidth;
+    final graphHeight = commits.length * rowHeight;
+    final borderPaint = Paint()
+      ..color = const Color(0xFF000000)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    canvas.drawRect(Rect.fromLTWH(0, 0, graphWidth, graphHeight), borderPaint);
+
+    if (working?.changed == true) {
+      final overlayMargin = 40.0;
+      final overlayWidth = 240.0;
+      final overlayX = graphWidth + overlayMargin;
+      canvas.drawRect(
+          Rect.fromLTWH(overlayX, 0, overlayWidth, graphHeight), borderPaint);
+      final baseId = working?.baseId;
+      int row = 0;
+      if (baseId != null && rowOf.containsKey(baseId)) {
+        row = rowOf[baseId]!;
+      }
+      final cx = overlayX + overlayWidth / 2;
+      final cy = row * rowHeight + rowHeight / 2;
+      final paintCur = Paint()..color = const Color(0xFFD81B60);
+      canvas.drawCircle(Offset(cx, cy), nodeRadius * 1.6, paintCur);
+      final labelSpan = TextSpan(
+          text: '当前状态',
+          style: const TextStyle(color: Colors.black, fontSize: 12));
+      textPainter.text = labelSpan;
+      textPainter.layout();
+      textPainter.paint(canvas, Offset(cx + 10, cy - 8));
     }
   }
 
