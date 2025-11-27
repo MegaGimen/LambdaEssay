@@ -282,26 +282,25 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
     return {'needDocx': true, 'repoPath': projDir};
   }
   await src.copy(repoDocxPath);
-  final status = await _runGit(['status', '--porcelain'], projDir);
-  bool changed = status.isNotEmpty;
-  if (changed) {
-    await _runGit(['add', '-A'], projDir);
-    final msg =
-        'Update docx ${p.basename(repoDocxPath)} ${DateTime.now().toIso8601String()}';
-    await _runGit([
-      '-c',
-      'user.name=gitdocx',
-      '-c',
-      'user.email=gitdocx@example.com',
-      'commit',
-      '-m',
-      msg,
-    ], projDir);
-  }
+  final diff = await _runGit(['diff', '--name-only', '--', p.basename(repoDocxPath)], projDir);
+  final head = await getHead(projDir);
+  final changed = diff.any((l) => l.trim().isNotEmpty);
   return {
-    'updated': changed,
+    'workingChanged': changed,
     'repoPath': projDir,
+    'head': head,
   };
+}
+
+Future<String?> getHead(String repoPath) async {
+  try {
+    final lines = await _runGit(['rev-parse', 'HEAD'], repoPath);
+    if (lines.isEmpty) return null;
+    final id = lines.first.trim();
+    return id.isEmpty ? null : id;
+  } catch (_) {
+    return null;
+  }
 }
 
 String _sanitizeFsPath(String raw) {
