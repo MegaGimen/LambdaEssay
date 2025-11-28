@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter/gestures.dart';
 import 'package:http/http.dart' as http;
 
@@ -770,7 +769,7 @@ class _GraphViewState extends State<_GraphView> {
                                 decoration: BoxDecoration(
                                   color: (_branchColors?[b] ??
                                           const Color(0xFF9E9E9E))
-                                      .withOpacity(0.15),
+                                      .withValues(alpha: 0.15),
                                   borderRadius: BorderRadius.circular(12),
                                   border: Border.all(
                                       color: _branchColors?[b] ??
@@ -918,14 +917,6 @@ class _GraphViewState extends State<_GraphView> {
       }
     }
     return null;
-  }
-
-  int _firstFreeLane(Map<int, String> activeLaneHead) {
-    var lane = 0;
-    while (activeLaneHead.containsKey(lane)) {
-      lane++;
-    }
-    return lane;
   }
 
   Map<String, int> _branchLane(List<Branch> branches) {
@@ -1284,14 +1275,6 @@ class GraphPainter extends CustomPainter {
     return memo[id] ?? const Color(0xFF9E9E9E);
   }
 
-  String? _branchOfRefs(List<String> refs) {
-    final names = data.branches.map((b) => b.name).toSet();
-    for (final r in refs) {
-      if (names.contains(r)) return r;
-    }
-    return null;
-  }
-
   Map<String, Color> _computeBranchColors(Map<String, CommitNode> byId) {
     final memo = <String, Color>{};
     // Branch priority: master first, then others by name
@@ -1364,40 +1347,6 @@ class GraphPainter extends CustomPainter {
       laneOf[c.id] = laneVal;
     }
     return laneOf;
-  }
-
-  int _chooseLane(CommitNode c, Map<int, String> activeLaneHead) {
-    for (final entry in activeLaneHead.entries) {
-      if (c.parents.contains(entry.value)) {
-        return entry.key;
-      }
-    }
-    var lane = 0;
-    while (activeLaneHead.containsKey(lane)) {
-      lane++;
-    }
-    return lane;
-  }
-
-  static int _chooseLaneStatic(CommitNode c, Map<int, String> activeLaneHead) {
-    for (final entry in activeLaneHead.entries) {
-      if (c.parents.contains(entry.value)) {
-        return entry.key;
-      }
-    }
-    var lane = 0;
-    while (activeLaneHead.containsKey(lane)) {
-      lane++;
-    }
-    return lane;
-  }
-
-  int _firstFreeLane(Map<int, String> activeLaneHead) {
-    var lane = 0;
-    while (activeLaneHead.containsKey(lane)) {
-      lane++;
-    }
-    return lane;
   }
 
   @override

@@ -7,6 +7,8 @@ dependencies:
   flutter:
     sdk: flutter
   http: ^1.2.0
+  archive: ^3.4.10
+  xml: ^6.5.0
 dev_dependencies:
   flutter_test:
     sdk: flutter
