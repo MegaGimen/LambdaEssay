@@ -193,7 +193,7 @@ class _Block {
   final _BlockType type;
   final List<InlineSpan>? spans;
   final TextAlign? align;
-  final List<List<_Para>>? tableRows;
+  final List<List<_Cell>>? tableRows;
   final List<_Block>? children;
   _Block({
     required this.type,
@@ -209,7 +209,7 @@ class _TableView extends StatelessWidget {
   const _TableView({required this.block});
   @override
   Widget build(BuildContext context) {
-    final rows = block.tableRows ?? const <List<_Para>>[];
+    final rows = block.tableRows ?? const <List<_Cell>>[];
     final colCount = rows.isNotEmpty
         ? rows.map((r) => r.length).reduce((a, b) => a > b ? a : b)
         : 0;
@@ -229,11 +229,22 @@ class _TableView extends StatelessWidget {
             TableRow(
               children: [
                 for (final cell in row)
-                  Padding(
+                  Container(
+                    decoration: BoxDecoration(
+                      border:
+                          Border.all(color: const Color(0xFF777777), width: 1),
+                      color: cell.bgColor,
+                    ),
                     padding: const EdgeInsets.all(6),
-                    child: RichText(
-                      textAlign: cell.align,
-                      text: TextSpan(children: cell.spans),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        for (final p in cell.paras)
+                          RichText(
+                            textAlign: p.align,
+                            text: TextSpan(children: p.spans),
+                          ),
+                      ],
                     ),
                   ),
               ],
@@ -337,7 +348,17 @@ List<_Block> _parseDocx(Uint8List bytes) {
   return blocks;
 }
 
-List<InlineSpan> _parseRun(XmlElement r, String wNs) {
+List<InlineSpan> _parseRun(
+  XmlElement r,
+  String wNs,
+  String rNs,
+  Archive zip,
+  Map<String, String> rels,
+  String aNs,
+  String wpNs,
+  String wpsNs,
+  String vNs,
+) {
   final spans = <InlineSpan>[];
   final rPr = r.getElement('rPr', namespace: wNs);
   final bold = rPr?.getElement('b', namespace: wNs) != null;
@@ -386,6 +407,166 @@ List<InlineSpan> _parseRun(XmlElement r, String wNs) {
       spans.add(TextSpan(text: '\t', style: style));
     } else if (child is XmlElement && child.name.local == 'br') {
       spans.add(TextSpan(text: '\n', style: style));
+    } else if (child is XmlElement && child.name.local == 'drawing') {
+      final inline = child.findElements('inline', namespace: wpNs).firstOrNull;
+      final anchor = child.findElements('anchor', namespace: wpNs).firstOrNull;
+      if (inline != null) {
+        final blip = inline.findAllElements('blip', namespace: aNs).firstOrNull;
+        final rid = blip?.getAttribute('embed', namespace: rNs);
+        final extent = inline.getElement('extent', namespace: wpNs);
+        double? w;
+        double? h;
+        if (extent != null) {
+          final cx = extent.getAttribute('cx');
+          final cy = extent.getAttribute('cy');
+          w = cx != null ? _emuToPx(int.tryParse(cx)) : null;
+          h = cy != null ? _emuToPx(int.tryParse(cy)) : null;
+        }
+        if (rid != null && rels[rid] != null) {
+          final path = 'word/${rels[rid]!}';
+          final imgFile = zip.files.where((f) => f.name == path).firstOrNull;
+          if (imgFile != null) {
+            final data = Uint8List.fromList(imgFile.content as List<int>);
+            spans.add(WidgetSpan(
+              alignment: ui.PlaceholderAlignment.aboveBaseline,
+              child:
+                  Image.memory(data, width: w, height: h, fit: BoxFit.contain),
+            ));
+          }
+        }
+      } else if (anchor != null) {
+        final txbx = anchor
+            .findAllElements('graphicData', namespace: aNs)
+            .expand((g) => g.findAllElements('wsp', namespace: wpsNs))
+            .expand((wsp) => wsp.findAllElements('txbx', namespace: wpsNs))
+            .firstOrNull;
+        if (txbx != null) {
+          final content =
+              txbx.findAllElements('txbxContent', namespace: wNs).firstOrNull;
+          if (content != null) {
+            final paras = _parseContainerBlocks(
+                    content, wNs, rNs, zip, rels, aNs, wpNs, wpsNs, vNs)
+                .where((b) => b.type == _BlockType.para)
+                .map((b) =>
+                    _Para(b.spans ?? const [], b.align ?? TextAlign.left))
+                .toList();
+            spans.add(WidgetSpan(
+              child: Container(
+                decoration: BoxDecoration(
+                    border: Border.all(color: const Color(0xFF777777))),
+                padding: const EdgeInsets.all(6),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (final p in paras)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 2),
+                        child: RichText(
+                            textAlign: p.align,
+                            text: TextSpan(children: p.spans)),
+                      ),
+                  ],
+                ),
+              ),
+            ));
+          }
+        } else {
+          final blip =
+              anchor.findAllElements('blip', namespace: aNs).firstOrNull;
+          final rid = blip?.getAttribute('embed', namespace: rNs);
+          final extent = anchor.getElement('extent', namespace: wpNs);
+          double? w;
+          double? h;
+          if (extent != null) {
+            final cx = extent.getAttribute('cx');
+            final cy = extent.getAttribute('cy');
+            w = cx != null ? _emuToPx(int.tryParse(cx)) : null;
+            h = cy != null ? _emuToPx(int.tryParse(cy)) : null;
+          }
+          if (rid != null && rels[rid] != null) {
+            final path = 'word/${rels[rid]!}';
+            final imgFile = zip.files.where((f) => f.name == path).firstOrNull;
+            if (imgFile != null) {
+              final data = Uint8List.fromList(imgFile.content as List<int>);
+              spans.add(WidgetSpan(
+                  child: Image.memory(data,
+                      width: w, height: h, fit: BoxFit.contain)));
+            }
+          }
+        }
+      }
+    } else if (child is XmlElement && child.name.local == 'AlternateContent') {
+      final choice = child.getElement('Choice');
+      final fallback = child.getElement('Fallback');
+      final drawing = choice?.getElement('drawing', namespace: wNs) ??
+          fallback?.getElement('pict', namespace: wNs);
+      if (drawing != null) {
+        final inline =
+            drawing.findElements('inline', namespace: wpNs).firstOrNull;
+        final anchor =
+            drawing.findElements('anchor', namespace: wpNs).firstOrNull;
+        if (inline != null || anchor != null) {
+          final drEl = inline ?? anchor!;
+          final blip = drEl.findAllElements('blip', namespace: aNs).firstOrNull;
+          final rid = blip?.getAttribute('embed', namespace: rNs);
+          double? w;
+          double? h;
+          final extent = drEl.getElement('extent', namespace: wpNs);
+          if (extent != null) {
+            final cx = extent.getAttribute('cx');
+            final cy = extent.getAttribute('cy');
+            w = cx != null ? _emuToPx(int.tryParse(cx)) : null;
+            h = cy != null ? _emuToPx(int.tryParse(cy)) : null;
+          }
+          if (rid != null && rels[rid] != null) {
+            final path = 'word/${rels[rid]!}';
+            final imgFile = zip.files.where((f) => f.name == path).firstOrNull;
+            if (imgFile != null) {
+              final data = Uint8List.fromList(imgFile.content as List<int>);
+              spans.add(WidgetSpan(
+                  child: Image.memory(data,
+                      width: w, height: h, fit: BoxFit.contain)));
+            }
+          }
+        } else {
+          final vTextBox = drawing
+              .findAllElements('shape', namespace: vNs)
+              .expand((sh) => sh.findAllElements('textbox', namespace: vNs))
+              .firstOrNull;
+          if (vTextBox != null) {
+            final content = vTextBox
+                .findAllElements('txbxContent', namespace: wNs)
+                .firstOrNull;
+            if (content != null) {
+              final paras = _parseContainerBlocks(
+                      content, wNs, rNs, zip, rels, aNs, wpNs, wpsNs, vNs)
+                  .where((b) => b.type == _BlockType.para)
+                  .map((b) =>
+                      _Para(b.spans ?? const [], b.align ?? TextAlign.left))
+                  .toList();
+              spans.add(WidgetSpan(
+                child: Container(
+                  decoration: BoxDecoration(
+                      border: Border.all(color: const Color(0xFF777777))),
+                  padding: const EdgeInsets.all(6),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      for (final p in paras)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 2),
+                          child: RichText(
+                              textAlign: p.align,
+                              text: TextSpan(children: p.spans)),
+                        ),
+                    ],
+                  ),
+                ),
+              ));
+            }
+          }
+        }
+      }
     }
   }
   return spans;
@@ -414,11 +595,13 @@ _Para _parseParagraph(
   for (final node in p.children) {
     if (node is XmlElement) {
       if (node.name.namespaceUri == wNs && node.name.local == 'r') {
-        spans.addAll(_parseRun(node, wNs));
+        spans.addAll(
+            _parseRun(node, wNs, rNs, zip, rels, aNs, wpNs, wpsNs, vNs));
       } else if (node.name.namespaceUri == wNs &&
           node.name.local == 'hyperlink') {
         for (final rn in node.findElements('r', namespace: wNs)) {
-          spans.addAll(_parseRun(rn, wNs));
+          spans.addAll(
+              _parseRun(rn, wNs, rNs, zip, rels, aNs, wpNs, wpsNs, vNs));
         }
       } else if (node.name.local == 'drawing') {
         final inline = node.findElements('inline', namespace: wpNs).firstOrNull;
@@ -558,7 +741,13 @@ _Para _parseParagraph(
   return _Para(spans, align);
 }
 
-List<List<_Para>> _parseTable(
+class _Cell {
+  final List<_Para> paras;
+  final Color? bgColor;
+  _Cell({required this.paras, this.bgColor});
+}
+
+List<List<_Cell>> _parseTable(
   XmlElement tbl,
   String wNs,
   String rNs,
@@ -569,20 +758,24 @@ List<List<_Para>> _parseTable(
   String wpsNs,
   String vNs,
 ) {
-  final rows = <List<_Para>>[];
+  final rows = <List<_Cell>>[];
   for (final tr in tbl.findAllElements('tr', namespace: wNs)) {
-    final cells = <_Para>[];
+    final cells = <_Cell>[];
     for (final tc in tr.findAllElements('tc', namespace: wNs)) {
-      final merged = <InlineSpan>[];
-      var align = TextAlign.left;
+      final paras = <_Para>[];
       for (final p in tc.findAllElements('p', namespace: wNs)) {
         final parsed =
             _parseParagraph(p, wNs, rNs, zip, rels, aNs, wpNs, wpsNs, vNs);
-        merged.addAll(parsed.spans);
-        merged.add(const TextSpan(text: '\n'));
-        align = parsed.align;
+        paras.add(parsed);
       }
-      cells.add(_Para(merged, align));
+      Color? bg;
+      final tcPr = tc.getElement('tcPr', namespace: wNs);
+      final shd = tcPr?.getElement('shd', namespace: wNs);
+      final fill = shd?.getAttribute('fill', namespace: wNs);
+      if (fill != null && fill.toLowerCase() != 'auto') {
+        bg = _parseColor(fill);
+      }
+      cells.add(_Cell(paras: paras, bgColor: bg));
     }
     rows.add(cells);
   }
