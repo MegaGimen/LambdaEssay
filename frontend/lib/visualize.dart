@@ -1,11 +1,8 @@
-import 'dart:convert';
 import 'dart:typed_data';
-import 'dart:ui' as ui;
 import 'dart:html' as html;
-import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:xml/xml.dart';
+import 'web_view_registry.dart' as wvr;
 
 class VisualizeDocxPage extends StatefulWidget {
   const VisualizeDocxPage({super.key});
@@ -17,9 +14,35 @@ class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
   bool loading = false;
   String? error;
   String? fileName;
-  List<_Para>? content;
+  String? _pdfObjectUrl;
+  html.IFrameElement? _iframe;
 
-  Future<void> _pickAndParse() async {
+  @override
+  void initState() {
+    super.initState();
+    if (kIsWeb) {
+      wvr.registerPdfViewFactory('pdf-view', (int viewId) {
+        final iframe = html.IFrameElement();
+        iframe.style.border = 'none';
+        iframe.style.width = '100%';
+        iframe.style.height = '100%';
+        if (_pdfObjectUrl != null) iframe.src = _pdfObjectUrl!;
+        _iframe = iframe;
+        return iframe;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    if (_pdfObjectUrl != null) {
+      html.Url.revokeObjectUrl(_pdfObjectUrl!);
+      _pdfObjectUrl = null;
+    }
+    super.dispose();
+  }
+
+  Future<void> _pickDocxAndConvert() async {
     if (!kIsWeb) {
       setState(() => error = '仅支持 Web 环境');
       return;
@@ -30,44 +53,82 @@ class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
     await input.onChange.first;
     final file = input.files?.isNotEmpty == true ? input.files!.first : null;
     if (file == null) return;
-    fileName = file.name;
-    final reader = html.FileReader();
-    reader.readAsArrayBuffer(file);
-    await reader.onLoad.first;
-    final result = reader.result;
-    Uint8List bytes;
-    if (result is ByteBuffer) {
-      bytes = Uint8List.view(result);
-    } else if (result is Uint8List) {
-      bytes = result;
-    } else if (result is List<int>) {
-      bytes = Uint8List.fromList(result);
-    } else {
-      throw Exception('不支持的文件读取结果类型');
-    }
     setState(() {
       loading = true;
       error = null;
-      content = null;
+      fileName = file.name;
     });
-    try {
-      final paras = _parseDocx(bytes);
+    final form = html.FormData();
+    form.appendBlob('file', file, file.name);
+    form.append('to', 'pdf');
+    final xhr = html.HttpRequest();
+    xhr.open('POST', 'http://localhost:8080/convert', async: true);
+    xhr.responseType = 'arraybuffer';
+    xhr.send(form);
+    await xhr.onLoadEnd.first;
+    if (xhr.status == 200) {
+      final res = xhr.response;
+      Uint8List pdfBytes;
+      if (res is ByteBuffer) {
+        pdfBytes = Uint8List.view(res);
+      } else if (res is Uint8List) {
+        pdfBytes = res;
+      } else if (res is List<int>) {
+        pdfBytes = Uint8List.fromList(res);
+      } else {
+        setState(() {
+          error = '转换返回类型不支持';
+          loading = false;
+        });
+        return;
+      }
+      final url = html.Url.createObjectUrl(
+        html.Blob([pdfBytes], 'application/pdf'),
+      );
+      _setPdfUrl(url);
+    } else {
       setState(() {
-        content = paras;
-        loading = false;
-      });
-    } catch (e) {
-      setState(() {
-        error = e.toString();
+        error = '转换失败: ${xhr.status}';
         loading = false;
       });
     }
   }
 
+  Future<void> _pickPdf() async {
+    if (!kIsWeb) {
+      setState(() => error = '仅支持 Web 环境');
+      return;
+    }
+    final input = html.FileUploadInputElement();
+    input.accept = '.pdf';
+    input.click();
+    await input.onChange.first;
+    final file = input.files?.isNotEmpty == true ? input.files!.first : null;
+    if (file == null) return;
+    setState(() {
+      loading = true;
+      error = null;
+      fileName = file.name;
+    });
+    final url = html.Url.createObjectUrl(file);
+    _setPdfUrl(url);
+  }
+
+  void _setPdfUrl(String url) {
+    if (_pdfObjectUrl != null) {
+      html.Url.revokeObjectUrl(_pdfObjectUrl!);
+    }
+    _pdfObjectUrl = url;
+    _iframe?.src = url;
+    setState(() {
+      loading = false;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('DOCX 解析预览')),
+      appBar: AppBar(title: const Text('PDF 预览')),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -76,9 +137,15 @@ class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
             child: Row(
               children: [
                 ElevatedButton.icon(
-                  onPressed: loading ? null : _pickAndParse,
+                  onPressed: loading ? null : _pickDocxAndConvert,
                   icon: const Icon(Icons.upload_file),
-                  label: const Text('选择 DOCX 文件'),
+                  label: const Text('选择 DOCX 并转换为 PDF'),
+                ),
+                const SizedBox(width: 12),
+                ElevatedButton.icon(
+                  onPressed: loading ? null : _pickPdf,
+                  icon: const Icon(Icons.picture_as_pdf),
+                  label: const Text('选择 PDF 文件'),
                 ),
                 const SizedBox(width: 12),
                 if (fileName != null) Text(fileName!),
@@ -94,254 +161,18 @@ class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
             const Expanded(
               child: Center(child: CircularProgressIndicator()),
             )
-          else if (content == null)
+          else if (_pdfObjectUrl == null)
             const Expanded(
-              child: Center(child: Text('请选择 DOCX 文件进行解析')),
+              child: Center(child: Text('请选择 DOCX 或 PDF 进行预览')),
             )
           else
             Expanded(
-              child: ListView.builder(
-                padding: const EdgeInsets.all(12),
-                itemCount: content!.length,
-                itemBuilder: (context, index) {
-                  final p = content![index];
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: RichText(
-                      textAlign: p.align,
-                      text: TextSpan(children: p.spans),
-                    ),
-                  );
-                },
-              ),
+              child: HtmlElementView(viewType: 'pdf-view'),
             ),
         ],
       ),
     );
   }
-}
-
-class _Para {
-  final List<InlineSpan> spans;
-  final TextAlign align;
-  _Para(this.spans, this.align);
-}
-
-List<_Para> _parseDocx(Uint8List bytes) {
-  const wNs = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
-  const rNs =
-      'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
-  final zip = ZipDecoder().decodeBytes(bytes);
-  final docFile = zip.files.firstWhere(
-    (f) => f.name == 'word/document.xml',
-    orElse: () => throw Exception('缺少 word/document.xml'),
-  );
-  final xmlStr = utf8.decode(docFile.content as List<int>);
-  final doc = XmlDocument.parse(xmlStr);
-  final rels = <String, String>{};
-  final relFile =
-      zip.files.where((f) => f.name == 'word/_rels/document.xml.rels').toList();
-  if (relFile.isNotEmpty) {
-    final relStr = utf8.decode(relFile.first.content as List<int>);
-    final relDoc = XmlDocument.parse(relStr);
-    for (final rel in relDoc.findAllElements('Relationship')) {
-      final id = rel.getAttribute('Id');
-      final target = rel.getAttribute('Target');
-      if (id != null && target != null) rels[id] = target;
-    }
-  }
-  final paras = <_Para>[];
-  for (final p in doc.findAllElements('p', namespace: wNs)) {
-    final spans = <InlineSpan>[];
-    var align = TextAlign.left;
-    final pPr = p.getElement('pPr', namespace: wNs);
-    final jc = pPr
-        ?.getElement('jc', namespace: wNs)
-        ?.getAttribute('val', namespace: wNs);
-    if (jc == 'center') align = TextAlign.center;
-    if (jc == 'right') align = TextAlign.right;
-    if (jc == 'both') align = TextAlign.justify;
-    for (final node in p.children) {
-      if (node is XmlElement) {
-        if (node.name.namespaceUri == wNs && node.name.local == 'r') {
-          spans.addAll(_parseRun(node, wNs));
-        } else if (node.name.namespaceUri == wNs &&
-            node.name.local == 'hyperlink') {
-          for (final rn in node.findElements('r', namespace: wNs)) {
-            spans.addAll(_parseRun(rn, wNs));
-          }
-        } else if (node.name.local == 'drawing') {
-          final rid = _findEmbedRid(node, rNs);
-          if (rid != null) {
-            final target = rels[rid];
-            if (target != null) {
-              final path = 'word/$target';
-              final imgFile = zip.files.where((f) => f.name == path).toList();
-              if (imgFile.isNotEmpty) {
-                final data =
-                    Uint8List.fromList(imgFile.first.content as List<int>);
-                spans.add(WidgetSpan(
-                  alignment: ui.PlaceholderAlignment.aboveBaseline,
-                  child: Image.memory(data, height: 20),
-                ));
-              }
-            }
-          }
-        } else if (node.name.namespaceUri == wNs && node.name.local == 'tbl') {
-          spans.add(TextSpan(text: '\n'));
-        }
-      }
-    }
-    paras.add(_Para(spans, align));
-  }
-  return paras;
-}
-
-List<InlineSpan> _parseRun(XmlElement r, String wNs) {
-  final spans = <InlineSpan>[];
-  final rPr = r.getElement('rPr', namespace: wNs);
-  final bold = rPr?.getElement('b', namespace: wNs) != null;
-  final italic = rPr?.getElement('i', namespace: wNs) != null;
-  final uVal =
-      rPr?.getElement('u', namespace: wNs)?.getAttribute('val', namespace: wNs);
-  final strike = rPr?.getElement('strike', namespace: wNs) != null;
-  final colorVal = rPr
-      ?.getElement('color', namespace: wNs)
-      ?.getAttribute('val', namespace: wNs);
-  final highlightVal = rPr
-      ?.getElement('highlight', namespace: wNs)
-      ?.getAttribute('val', namespace: wNs);
-  final szVal = rPr
-      ?.getElement('sz', namespace: wNs)
-      ?.getAttribute('val', namespace: wNs);
-  double? fontSize;
-  if (szVal != null) {
-    final n = int.tryParse(szVal);
-    if (n != null) fontSize = n / 2.0;
-  }
-  var decoration = TextDecoration.none;
-  if (uVal != null && uVal != 'none') decoration = TextDecoration.underline;
-  if (strike)
-    decoration =
-        TextDecoration.combine([decoration, TextDecoration.lineThrough]);
-  Color? color;
-  if (colorVal != null && colorVal.toLowerCase() != 'auto') {
-    color = _parseColor(colorVal);
-  }
-  Color? bgColor;
-  if (highlightVal != null) bgColor = _parseHighlight(highlightVal);
-  final style = TextStyle(
-    fontWeight: bold ? FontWeight.bold : FontWeight.normal,
-    fontStyle: italic ? FontStyle.italic : FontStyle.normal,
-    decoration: decoration,
-    color: color,
-    backgroundColor: bgColor,
-    fontSize: fontSize,
-  );
-  for (final child in r.children) {
-    if (child is XmlElement && child.name.local == 't') {
-      final txt = child.innerText;
-      spans.add(TextSpan(text: txt, style: style));
-    } else if (child is XmlElement && child.name.local == 'tab') {
-      spans.add(TextSpan(text: '\t', style: style));
-    } else if (child is XmlElement && child.name.local == 'br') {
-      spans.add(TextSpan(text: '\n', style: style));
-    }
-  }
-  return spans;
-}
-
-String? _findEmbedRid(XmlElement drawing, String rNs) {
-  for (final el in drawing.descendants.whereType<XmlElement>()) {
-    if (el.name.local == 'blip') {
-      final rid = el.getAttribute('embed', namespace: rNs);
-      if (rid != null) return rid;
-    }
-  }
-  return null;
-}
-
-Color? _parseColor(String val) {
-  final v = val.trim();
-  if (v.length == 6) {
-    final n = int.tryParse(v, radix: 16);
-    if (n != null) return Color(0xFF000000 | n);
-  }
-  switch (v.toLowerCase()) {
-    case 'yellow':
-      return const Color(0xFFFFFF00);
-    case 'green':
-      return const Color(0xFF00FF00);
-    case 'cyan':
-      return const Color(0xFF00FFFF);
-    case 'magenta':
-      return const Color(0xFFFF00FF);
-    case 'blue':
-      return const Color(0xFF0000FF);
-    case 'red':
-      return const Color(0xFFFF0000);
-    case 'black':
-      return const Color(0xFF000000);
-    case 'white':
-      return const Color(0xFFFFFFFF);
-    case 'darkblue':
-      return const Color(0xFF00008B);
-    case 'darkcyan':
-      return const Color(0xFF008B8B);
-    case 'darkmagenta':
-      return const Color(0xFF8B008B);
-    case 'darkred':
-      return const Color(0xFF8B0000);
-    case 'darkyellow':
-      return const Color(0xFFB5B500);
-    case 'darkgray':
-      return const Color(0xFFA9A9A9);
-    case 'lightgray':
-      return const Color(0xFFD3D3D3);
-  }
-  return null;
-}
-
-Color? _parseHighlight(String val) {
-  switch (val.toLowerCase()) {
-    case 'yellow':
-      return const Color(0xFFFFFF00);
-    case 'green':
-      return const Color(0xFF92D050);
-    case 'cyan':
-      return const Color(0xFF00FFFF);
-    case 'magenta':
-      return const Color(0xFFFF00FF);
-    case 'blue':
-      return const Color(0xFF00B0F0);
-    case 'red':
-      return const Color(0xFFFF0000);
-    case 'black':
-      return const Color(0xFF000000);
-    case 'white':
-      return const Color(0xFFFFFFFF);
-    case 'darkblue':
-      return const Color(0xFF00008B);
-    case 'darkcyan':
-      return const Color(0xFF008B8B);
-    case 'darkmagenta':
-      return const Color(0xFF8B008B);
-    case 'darkred':
-      return const Color(0xFF8B0000);
-    case 'darkyellow':
-      return const Color(0xFFB5B500);
-    case 'darkgray':
-      return const Color(0xFFA9A9A9);
-    case 'lightgray':
-      return const Color(0xFFD3D3D3);
-    case 'none':
-      return null;
-  }
-  if (val.length == 6) {
-    final n = int.tryParse(val, radix: 16);
-    if (n != null) return Color(0xFF000000 | n);
-  }
-  return null;
 }
 
 void main() {
