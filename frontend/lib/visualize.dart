@@ -815,13 +815,20 @@ class _SideBySideIframeTemplateState extends State<SideBySideIframeTemplate> {
         isSyncing = false;
         return;
       }
+      
+      // 垂直滚动比例
       const h = document.documentElement.scrollHeight - window.innerHeight;
-      if (h <= 0) return;
-      const ratio = window.scrollY / h;
+      const ratioY = h > 0 ? window.scrollY / h : 0;
+      
+      // 水平滚动比例
+      const w = document.documentElement.scrollWidth - window.innerWidth;
+      const ratioX = w > 0 ? window.scrollX / w : 0;
+      
       window.parent.postMessage({
         type: 'sync-scroll',
         side: side,
-        ratio: ratio
+        ratioY: ratioY,
+        ratioX: ratioX
       }, '*');
     });
     
@@ -830,10 +837,32 @@ class _SideBySideIframeTemplateState extends State<SideBySideIframeTemplate> {
       if (!data) return;
       
       if (data.type === 'sync-scroll' && data.side !== side) {
+        isSyncing = true;
+        
+        let targetTop = window.scrollY;
+        let targetLeft = window.scrollX;
+        let shouldScroll = false;
+
+        // 同步垂直滚动
         const h = document.documentElement.scrollHeight - window.innerHeight;
-        if (h > 0) {
-          isSyncing = true;
-          window.scrollTo(0, data.ratio * h);
+        if (h > 0 && data.ratioY !== undefined) {
+          targetTop = data.ratioY * h;
+          shouldScroll = true;
+        }
+        
+        // 同步水平滚动
+        const w = document.documentElement.scrollWidth - window.innerWidth;
+        if (w > 0 && data.ratioX !== undefined) {
+          targetLeft = data.ratioX * w;
+          shouldScroll = true;
+        }
+
+        if (shouldScroll) {
+          window.scrollTo({
+            top: targetTop,
+            left: targetLeft,
+            behavior: 'instant'
+          });
         }
       }
       
