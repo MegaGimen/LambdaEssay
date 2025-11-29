@@ -31,6 +31,28 @@ class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
   @override
   void initState() {
     super.initState();
+    // 防止浏览器默认的 Ctrl+滚轮 缩放
+    html.window.onWheel.listen((event) {
+      if (event.ctrlKey) {
+        event.preventDefault();
+      }
+    });
+    // 防止 Ctrl+加号/减号/0 缩放
+    html.window.onKeyDown.listen((event) {
+      if (event.ctrlKey &&
+          (event.key == '=' ||
+              event.key == '-' ||
+              event.key == '0' ||
+              event.key == '+')) {
+        event.preventDefault();
+      }
+    });
+    // 防止移动端/触摸板的双指缩放
+    final meta = html.MetaElement()
+      ..name = 'viewport'
+      ..content =
+          'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
+    html.document.head?.append(meta);
   }
 
   @override
@@ -66,6 +88,7 @@ class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
     });
   }
 
+  // ignore: unused_element
   Future<void> _pickDocxAndConvert() async {
     if (!kIsWeb) {
       setState(() => error = '仅支持 Web 环境');
@@ -122,6 +145,7 @@ class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
     }
   }
 
+  // ignore: unused_element
   Future<void> _pickMultipleDocxAndConvert() async {
     if (!kIsWeb) {
       setState(() => error = '仅支持 Web 环境');
@@ -279,20 +303,21 @@ class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
               runSpacing: 12,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                ElevatedButton.icon(
-                  onPressed: loading ? null : _pickDocxAndConvert,
-                  icon: const Icon(Icons.upload_file),
-                  label: const Text('DOCX 转 PDF'),
-                ),
-                ElevatedButton.icon(
-                  onPressed: loading ? null : _pickMultipleDocxAndConvert,
-                  icon: const Icon(Icons.view_sidebar),
-                  label: const Text('多 DOCX 并排'),
-                ),
-                const SizedBox(
-                  height: 20,
-                  child: VerticalDivider(color: Colors.grey),
-                ),
+                // 隐藏 DOCX 转换入口，仅保留 PDF 上传
+                // ElevatedButton.icon(
+                //   onPressed: loading ? null : _pickDocxAndConvert,
+                //   icon: const Icon(Icons.upload_file),
+                //   label: const Text('DOCX 转 PDF'),
+                // ),
+                // ElevatedButton.icon(
+                //   onPressed: loading ? null : _pickMultipleDocxAndConvert,
+                //   icon: const Icon(Icons.view_sidebar),
+                //   label: const Text('多 DOCX 并排'),
+                // ),
+                // const SizedBox(
+                //   height: 20,
+                //   child: VerticalDivider(color: Colors.grey),
+                // ),
                 ElevatedButton.icon(
                   onPressed: () => _pickPdf('left'),
                   icon: const Icon(Icons.picture_as_pdf),
@@ -695,6 +720,25 @@ class _SideBySideIframeTemplateState extends State<SideBySideIframeTemplate> {
     let pdfDoc = null;
     let isSyncing = false;
     let currentScale = 1.0;
+
+    // 防止 iframe 内的缩放事件冒泡到主页面
+    window.addEventListener('wheel', function(e) {
+      if (e.ctrlKey) {
+        e.preventDefault();
+        // 可以选择在这里处理缩放逻辑
+        // zoom(e.deltaY > 0 ? -0.1 : 0.1);
+      }
+    }, { passive: false });
+    
+    window.addEventListener('keydown', function(e) {
+      if (e.ctrlKey && (e.key === '=' || e.key === '-' || e.key === '0' || e.key === '+')) {
+        e.preventDefault();
+      }
+    });
+
+    window.addEventListener('gesturestart', function(e) {
+      e.preventDefault();
+    });
     
     async function render() {
       if (!pdfDoc) return;
