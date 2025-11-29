@@ -11,14 +11,31 @@
     <script src="flutter.js" defer></script>
     <script>
       window.addEventListener('load', function() {
-        _flutter.loader.loadEntrypoint({
-          serviceWorker: { serviceWorkerVersion: serviceWorkerVersion },
-          onEntrypointLoaded: function(engineInitializer) {
-            engineInitializer.initializeEngine().then(function(appRunner) {
+        try {
+          if (typeof FlutterLoader !== 'undefined') {
+            var loader = new FlutterLoader();
+            loader.load({
+              serviceWorker: { serviceWorkerVersion: serviceWorkerVersion }
+            }).then(function(engineInitializer) {
+              return engineInitializer.initializeEngine();
+            }).then(function(appRunner) {
               appRunner.runApp();
             });
+          } else if (window._flutter && _flutter.loader) {
+            _flutter.loader.loadEntrypoint({
+              serviceWorker: { serviceWorkerVersion: serviceWorkerVersion },
+              onEntrypointLoaded: function(engineInitializer) {
+                engineInitializer.initializeEngine().then(function(appRunner) {
+                  appRunner.runApp();
+                });
+              }
+            });
+          } else {
+            document.body.innerHTML = '<div style="padding:16px;color:#b00020">flutter.js 未加载或不兼容</div>';
           }
-        });
+        } catch (e) {
+          document.body.innerHTML = '<div style="padding:16px;color:#b00020">加载失败: ' + e + '</div>';
+        }
       });
     </script>
   </body>

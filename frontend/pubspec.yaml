@@ -9,6 +9,7 @@ dependencies:
   http: ^1.2.0
   archive: ^3.4.10
   xml: ^6.5.0
+  syncfusion_flutter_pdfviewer: ^31.1.19
 dev_dependencies:
   flutter_test:
     sdk: flutter
