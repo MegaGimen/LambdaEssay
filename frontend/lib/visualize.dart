@@ -31,28 +31,6 @@ class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
   @override
   void initState() {
     super.initState();
-    // 防止浏览器默认的 Ctrl+滚轮 缩放
-    html.window.onWheel.listen((event) {
-      if (event.ctrlKey) {
-        event.preventDefault();
-      }
-    });
-    // 防止 Ctrl+加号/减号/0 缩放
-    html.window.onKeyDown.listen((event) {
-      if (event.ctrlKey &&
-          (event.key == '=' ||
-              event.key == '-' ||
-              event.key == '0' ||
-              event.key == '+')) {
-        event.preventDefault();
-      }
-    });
-    // 防止移动端/触摸板的双指缩放
-    final meta = html.MetaElement()
-      ..name = 'viewport'
-      ..content =
-          'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
-    html.document.head?.append(meta);
   }
 
   @override
@@ -721,23 +699,53 @@ class _SideBySideIframeTemplateState extends State<SideBySideIframeTemplate> {
     let isSyncing = false;
     let currentScale = 1.0;
 
-    // 防止 iframe 内的缩放事件冒泡到主页面
+    // 防止 iframe 内的缩放事件冒泡到主页面，并实现内部缩放
     window.addEventListener('wheel', function(e) {
       if (e.ctrlKey) {
         e.preventDefault();
-        // 可以选择在这里处理缩放逻辑
-        // zoom(e.deltaY > 0 ? -0.1 : 0.1);
+        // 滚轮向下(deltaY > 0)是缩小，向上是放大
+        // 调整步进值，使其平滑
+        const delta = e.deltaY > 0 ? -0.05 : 0.05;
+        zoom(delta);
       }
     }, { passive: false });
     
+    // 拦截键盘缩放，只在 iframe 聚焦时生效
     window.addEventListener('keydown', function(e) {
-      if (e.ctrlKey && (e.key === '=' || e.key === '-' || e.key === '0' || e.key === '+')) {
-        e.preventDefault();
+      if (e.ctrlKey) {
+        if (e.key === '=' || e.key === '+') {
+          e.preventDefault();
+          zoom(0.1);
+        } else if (e.key === '-') {
+          e.preventDefault();
+          zoom(-0.1);
+        } else if (e.key === '0') {
+          e.preventDefault();
+          // 重置缩放逻辑可以自己实现，这里暂且不处理或设为1.0
+          currentScale = 1.0;
+          render();
+          window.parent.postMessage({
+            type: 'sync-zoom',
+            side: side,
+            scale: currentScale
+          }, '*');
+        }
       }
     });
 
+    // 处理触摸板/移动端的双指缩放手势 (Safari/Webkit)
     window.addEventListener('gesturestart', function(e) {
       e.preventDefault();
+    });
+    window.addEventListener('gesturechange', function(e) {
+      e.preventDefault();
+      // e.scale 是相对于 gesturestart 时的比例
+      // 这里简化处理，只根据变化方向微调
+      if (e.scale > 1) {
+        zoom(0.02);
+      } else if (e.scale < 1) {
+        zoom(-0.02);
+      }
     });
     
     async function render() {
