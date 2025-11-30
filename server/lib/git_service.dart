@@ -205,6 +205,19 @@ final Map<String, StreamSubscription<FileSystemEvent>> _watchers = {};
 
 Future<Uint8List> compareCommits(
     String repoPath, String commit1, String commit2) async {
+  // 1. Check cache
+  final cacheDir = Directory(p.join(_baseDir(), 'cache'));
+  if (!cacheDir.existsSync()) {
+    cacheDir.createSync(recursive: true);
+  }
+  final cacheName = '${commit1}cmp${commit2}.pdf';
+  final cachePath = p.join(cacheDir.path, cacheName);
+  final cacheFile = File(cachePath);
+  if (cacheFile.existsSync()) {
+    return await cacheFile.readAsBytes();
+  }
+
+  // 2. Generate if not cached
   final docxAbs = _findRepoDocx(repoPath);
   if (docxAbs == null) {
     throw Exception('No .docx file found in repository');
@@ -245,6 +258,9 @@ Future<Uint8List> compareCommits(
     if (res.exitCode != 0 || !File(pdf).existsSync()) {
       throw Exception('Compare failed: ${res.stdout}\n${res.stderr}');
     }
+
+    // 3. Save to cache
+    await File(pdf).copy(cachePath);
 
     return await File(pdf).readAsBytes();
   } finally {
