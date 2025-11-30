@@ -753,58 +753,6 @@ class _GraphViewState extends State<_GraphView> {
     _canvasSize ??= _computeCanvasSize(widget.data);
     return Stack(
       children: [
-        Positioned(
-          top: 16,
-          left: 16,
-          child: Material(
-            elevation: 4,
-            borderRadius: BorderRadius.circular(8),
-            child: Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text('当前分支: ${widget.data.currentBranch ?? "Unknown"}',
-                      style: const TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (widget.working?.changed == true)
-                        ElevatedButton.icon(
-                          onPressed: _onCommit,
-                          icon: const Icon(Icons.upload),
-                          label: const Text('提交更改'),
-                          style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.green,
-                              foregroundColor: Colors.white),
-                        ),
-                      if (widget.working?.changed == true)
-                        const SizedBox(width: 8),
-                      OutlinedButton.icon(
-                        onPressed: _onCreateBranch,
-                        icon: const Icon(Icons.add),
-                        label: const Text('新建分支'),
-                      ),
-                      const SizedBox(width: 8),
-                      OutlinedButton.icon(
-                        onPressed: _onSwitchBranch,
-                        icon: const Icon(Icons.swap_horiz),
-                        label: const Text('切换分支'),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
         MouseRegion(
           onHover: (d) {
             final scene = _toScene(d.localPosition);
@@ -898,6 +846,58 @@ class _GraphViewState extends State<_GraphView> {
                     size: _canvasSize!,
                   ),
                 ),
+              ),
+            ),
+          ),
+        ),
+        Positioned(
+          top: 16,
+          left: 16,
+          child: Material(
+            elevation: 4,
+            borderRadius: BorderRadius.circular(8),
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('当前分支: ${widget.data.currentBranch ?? "Unknown"}',
+                      style: const TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (widget.working?.changed == true)
+                        ElevatedButton.icon(
+                          onPressed: _onCommit,
+                          icon: const Icon(Icons.upload),
+                          label: const Text('提交更改'),
+                          style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green,
+                              foregroundColor: Colors.white),
+                        ),
+                      if (widget.working?.changed == true)
+                        const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        onPressed: _onCreateBranch,
+                        icon: const Icon(Icons.add),
+                        label: const Text('新建分支'),
+                      ),
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        onPressed: _onSwitchBranch,
+                        icon: const Icon(Icons.swap_horiz),
+                        label: const Text('切换分支'),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ),
           ),
