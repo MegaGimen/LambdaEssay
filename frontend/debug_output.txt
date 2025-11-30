@@ -1,0 +1,33 @@
+Children count: 15 vs 15
+
+--- Difference at index 3 ---
+DOC 1:
+<w:p>
+  <w:pPr>
+    <w:jc w:val="left"/>
+  </w:pPr>
+  <w:r>
+    <w:rPr>
+      <w:highlight w:val="yellow"/>
+    </w:rPr>
+    <w:t>我很厉害</w:t>
+  </w:r>
+</w:p>
+DOC 2:
+<w:p>
+  <w:pPr>
+    <w:jc w:val="left"/>
+  </w:pPr>
+  <w:r>
+    <w:rPr>
+      <w:highlight w:val="yellow"/>
+    </w:rPr>
+    <w:t>我很</w:t>
+  </w:r>
+  <w:r>
+    <w:rPr>
+      <w:highlight w:val="yellow"/>
+    </w:rPr>
+    <w:t>傻逼</w:t>
+  </w:r>
+</w:p>
