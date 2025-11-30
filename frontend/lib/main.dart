@@ -66,8 +66,12 @@ class GraphData {
   final List<CommitNode> commits;
   final List<Branch> branches;
   final Map<String, List<String>> chains;
+  final String? currentBranch;
   GraphData(
-      {required this.commits, required this.branches, required this.chains});
+      {required this.commits,
+      required this.branches,
+      required this.chains,
+      this.currentBranch});
   factory GraphData.fromJson(Map<String, dynamic> j) => GraphData(
         commits: ((j['commits'] as List).map(
           (e) => CommitNode.fromJson(e as Map<String, dynamic>),
@@ -78,6 +82,7 @@ class GraphData {
         chains: (j['chains'] as Map<String, dynamic>).map(
           (k, v) => MapEntry(k, (v as List).cast<String>()),
         ),
+        currentBranch: j['currentBranch'],
       );
 }
 
@@ -427,7 +432,9 @@ class _GraphPageState extends State<GraphPage> {
                 : _GraphView(
                     data: data!,
                     working: working,
-                    repoPath: pathCtrl.text.trim()),
+                    repoPath: pathCtrl.text.trim(),
+                    projectName: currentProjectName,
+                    onRefresh: _load),
           ),
         ],
       ),
@@ -439,7 +446,14 @@ class _GraphView extends StatefulWidget {
   final GraphData data;
   final WorkingState? working;
   final String repoPath;
-  const _GraphView({required this.data, this.working, required this.repoPath});
+  final String? projectName;
+  final VoidCallback? onRefresh;
+  const _GraphView(
+      {required this.data,
+      this.working,
+      required this.repoPath,
+      this.projectName,
+      this.onRefresh});
   @override
   State<_GraphView> createState() => _GraphViewState();
 }
@@ -494,20 +508,6 @@ class _GraphViewState extends State<_GraphView> {
     setState(() => _comparing = true);
     try {
       final nodes = _selectedNodes.toList();
-      // Sort nodes by date/topo order if possible?
-      // Ideally we want old vs new. But user selection order is arbitrary.
-      // Let's just send them as is. The backend calls git show c1 and c2.
-      // doccmp compares original (c1) vs revised (c2).
-      // Maybe we should sort them by index in commits list?
-      // The commits list is topo ordered (newest first usually).
-      // So if index(c1) < index(c2), c1 is newer.
-      // We usually want Compare(Old, New).
-      // So let's sort such that Old is first argument to doccmp?
-      // Wait, doccmp param: OriginalPath, RevisedPath.
-      // Original should be the older one.
-      // Commits list is usually newest first.
-      // So larger index = older.
-
       final commits = widget.data.commits;
       int idx1 = commits.indexWhere((c) => c.id == nodes[0]);
       int idx2 = commits.indexWhere((c) => c.id == nodes[1]);
@@ -517,7 +517,6 @@ class _GraphViewState extends State<_GraphView> {
 
       if (idx1 != -1 && idx2 != -1) {
         if (idx1 < idx2) {
-          // idx1 is smaller, so it appears earlier in list -> newer
           newC = nodes[0];
           oldC = nodes[1];
         } else {
@@ -561,6 +560,192 @@ class _GraphViewState extends State<_GraphView> {
     }
   }
 
+  Future<void> _onCommit() async {
+    final authorCtrl = TextEditingController();
+    final msgCtrl = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('提交更改'),
+        content: SizedBox(
+          width: 400,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: authorCtrl,
+                decoration: const InputDecoration(labelText: '作者姓名'),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: msgCtrl,
+                decoration:
+                    const InputDecoration(labelText: '备注信息 (Commit Message)'),
+                maxLines: 3,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              try {
+                final resp = await http.post(
+                  Uri.parse('http://localhost:8080/compare_working'),
+                  headers: {'Content-Type': 'application/json'},
+                  body: jsonEncode({'repoPath': widget.repoPath}),
+                );
+                if (resp.statusCode != 200) throw Exception(resp.body);
+                if (!mounted) return;
+                Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => VisualizeDocxPage(
+                            initialBytes: resp.bodyBytes,
+                            title: 'Working Copy Diff',
+                            onBack: () => Navigator.pop(context))));
+              } catch (e) {
+                ScaffoldMessenger.of(context)
+                    .showSnackBar(SnackBar(content: Text('预览失败: $e')));
+              }
+            },
+            child: const Text('预览差异'),
+          ),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消')),
+          ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('提交')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final author = authorCtrl.text.trim();
+    final msg = msgCtrl.text.trim();
+    if (author.isEmpty || msg.isEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('请填写完整信息')));
+      return;
+    }
+    try {
+      final resp = await http.post(Uri.parse('http://localhost:8080/commit'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'repoPath': widget.repoPath,
+            'author': author,
+            'message': msg,
+          }));
+      if (resp.statusCode != 200) throw Exception(resp.body);
+      widget.onRefresh?.call();
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('提交成功')));
+    } catch (e) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('提交失败: $e')));
+    }
+  }
+
+  Future<void> _onCreateBranch() async {
+    final nameCtrl = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('新建分支'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('输入新分支名称，创建后将自动切换到该分支。'),
+            TextField(
+                controller: nameCtrl,
+                decoration: const InputDecoration(labelText: '分支名称')),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消')),
+          ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('创建')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final name = nameCtrl.text.trim();
+    if (name.isEmpty) return;
+    try {
+      final resp = await http.post(
+          Uri.parse('http://localhost:8080/branch/create'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'repoPath': widget.repoPath, 'branchName': name}));
+      if (resp.statusCode != 200) throw Exception(resp.body);
+      widget.onRefresh?.call();
+    } catch (e) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('创建失败: $e')));
+    }
+  }
+
+  Future<void> _onSwitchBranch() async {
+    final nameCtrl = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('切换分支'),
+        content: SizedBox(
+          width: 300,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (widget.working?.changed == true)
+                const Text('⚠️ 当前有未提交的更改！切换操作将被拒绝。请先提交。',
+                    style: TextStyle(
+                        color: Colors.red, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              TextField(
+                  controller: nameCtrl,
+                  decoration: const InputDecoration(labelText: '目标分支名称')),
+              const SizedBox(height: 8),
+              const Text('注意：如果没有未提交更改，切换时将直接替换当前文档。请确保Word已关闭。',
+                  style: TextStyle(fontSize: 12, color: Colors.grey)),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消')),
+          ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('切换')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final name = nameCtrl.text.trim();
+    if (name.isEmpty) return;
+
+    if (widget.working?.changed == true) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('请先提交更改再切换分支')));
+      return;
+    }
+
+    try {
+      final resp = await http.post(
+          Uri.parse('http://localhost:8080/branch/switch'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(
+              {'projectName': widget.projectName ?? '', 'branchName': name}));
+      if (resp.statusCode != 200) throw Exception(resp.body);
+      widget.onRefresh?.call();
+    } catch (e) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('切换失败: $e')));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     _branchColors ??= _assignBranchColors(widget.data.branches);
@@ -568,6 +753,58 @@ class _GraphViewState extends State<_GraphView> {
     _canvasSize ??= _computeCanvasSize(widget.data);
     return Stack(
       children: [
+        Positioned(
+          top: 16,
+          left: 16,
+          child: Material(
+            elevation: 4,
+            borderRadius: BorderRadius.circular(8),
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('当前分支: ${widget.data.currentBranch ?? "Unknown"}',
+                      style: const TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (widget.working?.changed == true)
+                        ElevatedButton.icon(
+                          onPressed: _onCommit,
+                          icon: const Icon(Icons.upload),
+                          label: const Text('提交更改'),
+                          style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green,
+                              foregroundColor: Colors.white),
+                        ),
+                      if (widget.working?.changed == true)
+                        const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        onPressed: _onCreateBranch,
+                        icon: const Icon(Icons.add),
+                        label: const Text('新建分支'),
+                      ),
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        onPressed: _onSwitchBranch,
+                        icon: const Icon(Icons.swap_horiz),
+                        label: const Text('切换分支'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
         MouseRegion(
           onHover: (d) {
             final scene = _toScene(d.localPosition);

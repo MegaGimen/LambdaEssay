@@ -34,11 +34,16 @@ class GraphResponse {
   final List<CommitNode> commits;
   final List<Branch> branches;
   final Map<String, List<String>> chains;
+  final String? currentBranch;
   GraphResponse(
-      {required this.commits, required this.branches, required this.chains});
+      {required this.commits,
+      required this.branches,
+      required this.chains,
+      this.currentBranch});
   Map<String, dynamic> toJson() => {
         'commits': commits.map((e) => e.toJson()).toList(),
         'branches': branches.map((e) => e.toJson()).toList(),
         'chains': chains,
+        'currentBranch': currentBranch,
       };
 }

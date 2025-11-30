@@ -148,6 +148,94 @@ Future<void> main(List<String> args) async {
     }
   });
 
+  router.post('/commit', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoPath = _sanitizePath(data['repoPath'] as String?);
+    final author = (data['author'] as String?) ?? '';
+    final message = (data['message'] as String?) ?? '';
+    if (repoPath.isEmpty || author.isEmpty || message.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoPath, author, message required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      await commitChanges(repoPath, author, message);
+      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/branch/create', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoPath = _sanitizePath(data['repoPath'] as String?);
+    final branchName = (data['branchName'] as String?)?.trim() ?? '';
+    if (repoPath.isEmpty || branchName.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoPath, branchName required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      await createBranch(repoPath, branchName);
+      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/branch/switch', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final projectName = (data['projectName'] as String?)?.trim() ?? '';
+    final branchName = (data['branchName'] as String?)?.trim() ?? '';
+    if (projectName.isEmpty || branchName.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'projectName, branchName required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      await switchBranch(projectName, branchName);
+      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/compare_working', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoPath = _sanitizePath(data['repoPath'] as String?);
+    if (repoPath.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoPath required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      final pdf = await compareWorking(repoPath);
+      return _cors(Response.ok(pdf, headers: {
+        'Content-Type': 'application/pdf',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
   router.post('/convert', (Request req) async {
     final ct = req.headers['content-type'] ?? '';
     final b = _boundaryOf(ct);

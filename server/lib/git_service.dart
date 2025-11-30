@@ -52,14 +52,35 @@ Future<List<Branch>> getBranches(String repoPath) async {
   return result;
 }
 
+Future<String?> getCurrentBranch(String repoPath) async {
+  try {
+    final lines = await _runGit(['branch', '--show-current'], repoPath);
+    if (lines.isEmpty) return null;
+    return lines.first.trim();
+  } catch (_) {
+    return null;
+  }
+}
+
 Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
   final key = '${repoPath}|${limit ?? 0}';
+  // We skip cache if we want fresh branch status, or we include branch in cache key?
+  // For now, let's just clear cache on write ops, so read ops can cache.
+  // But currentBranch might change outside?
+  // Let's fetch currentBranch every time and just cache the heavy log part?
+  // Simplify: disable cache for now or just accept it.
+  // Actually, let's just fetch branch separately?
+  // No, putting it in GraphResponse is cleaner.
+  // Let's invalidate cache on any write.
+  
   final cached = _graphCache[key];
   if (cached != null) {
     return cached;
   }
   final branches = await getBranches(repoPath);
   final chains = await getBranchChains(repoPath, branches, limit: limit);
+  final current = await getCurrentBranch(repoPath);
+  
   final logArgs = [
     'log',
     '--all',
@@ -98,9 +119,108 @@ Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
     );
   }
   final resp =
-      GraphResponse(commits: commits, branches: branches, chains: chains);
+      GraphResponse(commits: commits, branches: branches, chains: chains, currentBranch: current);
   _graphCache[key] = resp;
   return resp;
+}
+
+Future<void> commitChanges(
+    String repoPath, String author, String message) async {
+  await _runGit(['add', '.'], repoPath);
+  // Ensure author format "Name <email>"
+  final safeAuthor = author.trim().isEmpty ? 'Unknown' : author.trim();
+  final authorArg = '$safeAuthor <$safeAuthor@gitdocx.local>';
+  await _runGit([
+    'commit',
+    '--author=$authorArg',
+    '-m',
+    message
+  ], repoPath);
+  clearCache();
+}
+
+Future<void> createBranch(String repoPath, String branchName) async {
+  await _runGit(['checkout', '-b', branchName], repoPath);
+  clearCache();
+}
+
+Future<void> switchBranch(String projectName, String branchName) async {
+  final repoPath = _projectDir(projectName);
+  await _runGit(['checkout', branchName], repoPath);
+  
+  // Sync back to external docx
+  final tracking = await _readTracking(projectName);
+  final docxPath = tracking['docxPath'] as String?;
+  final repoDocxPath = tracking['repoDocxPath'] as String?;
+  
+  if (docxPath != null && repoDocxPath != null) {
+    final src = File(repoDocxPath);
+    final dst = File(docxPath);
+    if (src.existsSync()) {
+      try {
+        // This might fail if Word has the file open and locked
+        await src.copy(dst.path);
+      } catch (e) {
+        // If copy fails, we should probably warn the user or try to rollback checkout?
+        // But checkout is already done.
+        // Let's just rethrow so frontend can show alert "Checkout done but file sync failed. Please close Word and try update."
+        throw Exception('Switch successful, but failed to update external file (is Word open?): $e');
+      }
+    }
+  }
+  clearCache();
+}
+
+Future<Uint8List> compareWorking(String repoPath) async {
+  final docxAbs = _findRepoDocx(repoPath);
+  if (docxAbs == null) {
+    throw Exception('No .docx file found in repository');
+  }
+  final docxRel = p.relative(docxAbs, from: repoPath);
+
+  final tmpDir = await Directory.systemTemp.createTemp('gitdocx_cmp_work_');
+  try {
+    final p1 = p.join(tmpDir.path, 'HEAD.docx');
+    final p2 = docxAbs; // The working copy directly
+    final pdf = p.join(tmpDir.path, 'diff.pdf');
+
+    await _runGitToFile(['show', 'HEAD:$docxRel'], repoPath, p1);
+    // p2 is already there on disk.
+
+    final scriptPath = p.fromUri(Platform.script);
+    final repoRoot = p.dirname(p.dirname(p.dirname(scriptPath)));
+    final ps1Path = p.join(repoRoot, 'frontend', 'lib', 'doccmp.ps1');
+
+    if (!File(ps1Path).existsSync()) {
+      throw Exception('doccmp.ps1 not found at $ps1Path');
+    }
+
+    final res = await Process.run('powershell', [
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      ps1Path,
+      '-OriginalPath',
+      p1,
+      '-RevisedPath',
+      p2,
+      '-PdfPath',
+      pdf
+    ]);
+
+    if (res.exitCode != 0 || !File(pdf).existsSync()) {
+      throw Exception(
+          'Compare failed: ${res.stdout}\n${res.stderr}');
+    }
+
+    return await File(pdf).readAsBytes();
+  } finally {
+    try {
+      if (tmpDir.existsSync()) {
+        tmpDir.deleteSync(recursive: true);
+      }
+    } catch (_) {}
+  }
 }
 
 List<String> _parseRefs(String decoration) {
