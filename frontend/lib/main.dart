@@ -434,7 +434,8 @@ class _GraphPageState extends State<GraphPage> {
                     working: working,
                     repoPath: pathCtrl.text.trim(),
                     projectName: currentProjectName,
-                    onRefresh: _load),
+                    onRefresh: _load,
+                    onUpdate: _onUpdateRepo),
           ),
         ],
       ),
@@ -448,12 +449,14 @@ class _GraphView extends StatefulWidget {
   final String repoPath;
   final String? projectName;
   final VoidCallback? onRefresh;
+  final Future<void> Function()? onUpdate;
   const _GraphView(
       {required this.data,
       this.working,
       required this.repoPath,
       this.projectName,
-      this.onRefresh});
+      this.onRefresh,
+      this.onUpdate});
   @override
   State<_GraphView> createState() => _GraphViewState();
 }
@@ -637,7 +640,12 @@ class _GraphViewState extends State<_GraphView> {
             'message': msg,
           }));
       if (resp.statusCode != 200) throw Exception(resp.body);
-      widget.onRefresh?.call();
+      if (widget.onUpdate != null) {
+        await widget.onUpdate!();
+      } else {
+        widget.onRefresh?.call();
+      }
+      if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('提交成功')));
     } catch (e) {
@@ -680,7 +688,11 @@ class _GraphViewState extends State<_GraphView> {
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode({'repoPath': widget.repoPath, 'branchName': name}));
       if (resp.statusCode != 200) throw Exception(resp.body);
-      widget.onRefresh?.call();
+      if (widget.onUpdate != null) {
+        await widget.onUpdate!();
+      } else {
+        widget.onRefresh?.call();
+      }
     } catch (e) {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('创建失败: $e')));
@@ -739,7 +751,11 @@ class _GraphViewState extends State<_GraphView> {
           body: jsonEncode(
               {'projectName': widget.projectName ?? '', 'branchName': name}));
       if (resp.statusCode != 200) throw Exception(resp.body);
-      widget.onRefresh?.call();
+      if (widget.onUpdate != null) {
+        await widget.onUpdate!();
+      } else {
+        widget.onRefresh?.call();
+      }
     } catch (e) {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('切换失败: $e')));
