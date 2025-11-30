@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:path/path.dart' as p;
 import 'models.dart';
 
@@ -202,6 +203,94 @@ String? _findRepoDocx(String projDir) {
 
 final Map<String, StreamSubscription<FileSystemEvent>> _watchers = {};
 
+Future<Uint8List> compareCommits(
+    String repoPath, String commit1, String commit2) async {
+  // 1. Check cache
+  final cacheDir = Directory(p.join(_baseDir(), 'cache'));
+  if (!cacheDir.existsSync()) {
+    cacheDir.createSync(recursive: true);
+  }
+  final cacheName = '${commit1}cmp${commit2}.pdf';
+  final cachePath = p.join(cacheDir.path, cacheName);
+  final cacheFile = File(cachePath);
+  if (cacheFile.existsSync()) {
+    return await cacheFile.readAsBytes();
+  }
+
+  // 2. Generate if not cached
+  final docxAbs = _findRepoDocx(repoPath);
+  if (docxAbs == null) {
+    throw Exception('No .docx file found in repository');
+  }
+  final docxRel = p.relative(docxAbs, from: repoPath);
+
+  final tmpDir = await Directory.systemTemp.createTemp('gitdocx_cmp_');
+  try {
+    final p1 = p.join(tmpDir.path, 'old.docx');
+    final p2 = p.join(tmpDir.path, 'new.docx');
+    final pdf = p.join(tmpDir.path, 'diff.pdf');
+
+    await _runGitToFile(['show', '$commit1:$docxRel'], repoPath, p1);
+    await _runGitToFile(['show', '$commit2:$docxRel'], repoPath, p2);
+
+    final scriptPath = p.fromUri(Platform.script);
+    // script -> bin -> server -> root
+    final repoRoot = p.dirname(p.dirname(p.dirname(scriptPath)));
+    final ps1Path = p.join(repoRoot, 'frontend', 'lib', 'doccmp.ps1');
+
+    if (!File(ps1Path).existsSync()) {
+      throw Exception('doccmp.ps1 not found at $ps1Path');
+    }
+
+    final res = await Process.run('powershell', [
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      ps1Path,
+      '-OriginalPath',
+      p1,
+      '-RevisedPath',
+      p2,
+      '-PdfPath',
+      pdf
+    ]);
+
+    if (res.exitCode != 0 || !File(pdf).existsSync()) {
+      throw Exception('Compare failed: ${res.stdout}\n${res.stderr}');
+    }
+
+    // 3. Save to cache
+    await File(pdf).copy(cachePath);
+
+    return await File(pdf).readAsBytes();
+  } finally {
+    try {
+      if (tmpDir.existsSync()) {
+        tmpDir.deleteSync(recursive: true);
+      }
+    } catch (_) {}
+  }
+}
+
+Future<void> _runGitToFile(
+    List<String> args, String repoPath, String outFile) async {
+  final fullArgs = [
+    '-c',
+    'core.quotepath=false',
+    '-C',
+    repoPath,
+    ...args,
+  ];
+  final res = await Process.run('git', fullArgs, stdoutEncoding: null);
+  if (res.exitCode != 0) {
+    final err = res.stderr is String
+        ? res.stderr
+        : utf8.decode(res.stderr as List<int>);
+    throw Exception('git error: $err');
+  }
+  await File(outFile).writeAsBytes(res.stdout as List<int>);
+}
+
 Future<Map<String, dynamic>> createTrackingProject(
     String name, String? docxPath) async {
   final projDir = _projectDir(name);
@@ -282,7 +371,8 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
     return {'needDocx': true, 'repoPath': projDir};
   }
   await src.copy(repoDocxPath);
-  final diff = await _runGit(['diff', '--name-only', '--', p.basename(repoDocxPath)], projDir);
+  final diff = await _runGit(
+      ['diff', '--name-only', '--', p.basename(repoDocxPath)], projDir);
   final head = await getHead(projDir);
   final changed = diff.any((l) => l.trim().isNotEmpty);
   return {
