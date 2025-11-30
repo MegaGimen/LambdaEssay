@@ -87,25 +87,6 @@ class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
                 icon: const Icon(Icons.arrow_back), onPressed: widget.onBack)
             : null,
         title: Text(_fileName ?? widget.title ?? 'PDF 预览'),
-        actions: [
-          if (_pdfBytes != null)
-            IconButton(
-              icon: const Icon(Icons.upload_file),
-              onPressed: _pickPdf,
-              tooltip: '上传新的 PDF',
-            ),
-          if (_pdfBytes != null)
-            IconButton(
-              icon: const Icon(Icons.close),
-              onPressed: () {
-                setState(() {
-                  _pdfBytes = null;
-                  _fileName = null;
-                });
-              },
-              tooltip: '关闭',
-            ),
-        ],
       ),
       body: _pdfBytes == null
           ? Center(
