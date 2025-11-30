@@ -1,9 +1,10 @@
 import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter/gestures.dart';
 import 'package:http/http.dart' as http;
+import 'visualize.dart';
 
 void main() {
   runApp(const GitGraphApp());
@@ -423,7 +424,10 @@ class _GraphPageState extends State<GraphPage> {
           Expanded(
             child: data == null
                 ? const Center(child: Text('输入路径并点击加载'))
-                : _GraphView(data: data!, working: working),
+                : _GraphView(
+                    data: data!,
+                    working: working,
+                    repoPath: pathCtrl.text.trim()),
           ),
         ],
       ),
@@ -434,7 +438,8 @@ class _GraphPageState extends State<GraphPage> {
 class _GraphView extends StatefulWidget {
   final GraphData data;
   final WorkingState? working;
-  const _GraphView({required this.data, this.working});
+  final String repoPath;
+  const _GraphView({required this.data, this.working, required this.repoPath});
   @override
   State<_GraphView> createState() => _GraphViewState();
 }
@@ -452,6 +457,8 @@ class _GraphViewState extends State<_GraphView> {
   double _laneWidth = 120;
   double _rowHeight = 160;
   static const Duration _rightPanDelay = Duration(milliseconds: 200);
+  final Set<String> _selectedNodes = {};
+  bool _comparing = false;
 
   void _resetView() {
     setState(() {
@@ -459,6 +466,7 @@ class _GraphViewState extends State<_GraphView> {
       _hovered = null;
       _hoverPos = null;
       _hoverEdge = null;
+      _selectedNodes.clear();
     });
   }
 
@@ -476,6 +484,80 @@ class _GraphViewState extends State<_GraphView> {
       _rightPanActive = false;
       _rightPanLast = null;
       _rightPanStart = null;
+      _selectedNodes.clear();
+      _comparing = false;
+    }
+  }
+
+  Future<void> _onCompare() async {
+    if (_selectedNodes.length != 2) return;
+    setState(() => _comparing = true);
+    try {
+      final nodes = _selectedNodes.toList();
+      // Sort nodes by date/topo order if possible?
+      // Ideally we want old vs new. But user selection order is arbitrary.
+      // Let's just send them as is. The backend calls git show c1 and c2.
+      // doccmp compares original (c1) vs revised (c2).
+      // Maybe we should sort them by index in commits list?
+      // The commits list is topo ordered (newest first usually).
+      // So if index(c1) < index(c2), c1 is newer.
+      // We usually want Compare(Old, New).
+      // So let's sort such that Old is first argument to doccmp?
+      // Wait, doccmp param: OriginalPath, RevisedPath.
+      // Original should be the older one.
+      // Commits list is usually newest first.
+      // So larger index = older.
+
+      final commits = widget.data.commits;
+      int idx1 = commits.indexWhere((c) => c.id == nodes[0]);
+      int idx2 = commits.indexWhere((c) => c.id == nodes[1]);
+
+      String oldC = nodes[0];
+      String newC = nodes[1];
+
+      if (idx1 != -1 && idx2 != -1) {
+        if (idx1 < idx2) {
+          // idx1 is smaller, so it appears earlier in list -> newer
+          newC = nodes[0];
+          oldC = nodes[1];
+        } else {
+          newC = nodes[1];
+          oldC = nodes[0];
+        }
+      }
+
+      final resp = await http.post(
+        Uri.parse('http://localhost:8080/compare'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'repoPath': widget.repoPath,
+          'commit1': oldC,
+          'commit2': newC,
+        }),
+      );
+      if (resp.statusCode != 200) {
+        throw Exception(resp.body);
+      }
+      final pdfBytes = resp.bodyBytes;
+      if (!mounted) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => VisualizeDocxPage(
+            initialBytes: pdfBytes,
+            title: '${newC.substring(0, 7)} vs ${oldC.substring(0, 7)}',
+            onBack: () => Navigator.pop(context),
+          ),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('对比失败: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _comparing = false);
     }
   }
 
@@ -543,14 +625,18 @@ class _GraphViewState extends State<_GraphView> {
                 final scene = _toScene(d.localPosition);
                 final hit = _hitTest(scene, widget.data);
                 if (hit != null) {
-                  showDialog(
-                    context: context,
-                    builder: (_) => AlertDialog(
-                      title: Text(hit.subject),
-                      content: Text(
-                          'commit ${hit.id}\n${hit.author}\n${hit.date}\nparents: ${hit.parents.join(', ')}'),
-                    ),
-                  );
+                  setState(() {
+                    if (_selectedNodes.contains(hit.id)) {
+                      _selectedNodes.remove(hit.id);
+                    } else {
+                      if (_selectedNodes.length >= 2) {
+                        _selectedNodes.clear();
+                        _selectedNodes.add(hit.id);
+                      } else {
+                        _selectedNodes.add(hit.id);
+                      }
+                    }
+                  });
                 }
               },
               child: InteractiveViewer(
@@ -563,9 +649,15 @@ class _GraphViewState extends State<_GraphView> {
                   width: _canvasSize!.width,
                   height: _canvasSize!.height,
                   child: CustomPaint(
-                    painter: GraphPainter(widget.data, _branchColors!,
-                        _hoverEdgeKey(), _laneWidth, _rowHeight,
-                        working: widget.working),
+                    painter: GraphPainter(
+                      widget.data,
+                      _branchColors!,
+                      _hoverEdgeKey(),
+                      _laneWidth,
+                      _rowHeight,
+                      working: widget.working,
+                      selectedNodes: _selectedNodes,
+                    ),
                     size: _canvasSize!,
                   ),
                 ),
@@ -770,7 +862,7 @@ class _GraphViewState extends State<_GraphView> {
                                 decoration: BoxDecoration(
                                   color: (_branchColors?[b] ??
                                           const Color(0xFF9E9E9E))
-                                      .withOpacity(0.15),
+                                      .withValues(alpha: 0.15),
                                   borderRadius: BorderRadius.circular(12),
                                   border: Border.all(
                                       color: _branchColors?[b] ??
@@ -782,6 +874,30 @@ class _GraphViewState extends State<_GraphView> {
                           .toList(),
                     ),
                   ],
+                ),
+              ),
+            ),
+          ),
+        if (_selectedNodes.length == 2)
+          Positioned(
+            bottom: 32,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: ElevatedButton.icon(
+                onPressed: _comparing ? null : _onCompare,
+                icon: _comparing
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.compare_arrows),
+                label: Text(_comparing ? '对比中...' : '一键比较差异'),
+                style: ElevatedButton.styleFrom(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                  textStyle: const TextStyle(fontSize: 16),
                 ),
               ),
             ),
@@ -918,14 +1034,6 @@ class _GraphViewState extends State<_GraphView> {
       }
     }
     return null;
-  }
-
-  int _firstFreeLane(Map<int, String> activeLaneHead) {
-    var lane = 0;
-    while (activeLaneHead.containsKey(lane)) {
-      lane++;
-    }
-    return lane;
   }
 
   Map<String, int> _branchLane(List<Branch> branches) {
@@ -1095,10 +1203,11 @@ class GraphPainter extends CustomPainter {
   final double laneWidth;
   final double rowHeight;
   final WorkingState? working;
+  final Set<String> selectedNodes;
   static const double nodeRadius = 6;
   GraphPainter(this.data, this.branchColors, this.hoverPairKey, this.laneWidth,
       this.rowHeight,
-      {this.working});
+      {this.working, required this.selectedNodes});
   static const List<Color> lanePalette = [
     Color(0xFF1976D2),
     Color(0xFF2E7D32),
@@ -1160,6 +1269,13 @@ class GraphPainter extends CustomPainter {
       canvas.drawCircle(Offset(x, y), r, paintNode);
       if (isSplit) {
         canvas.drawCircle(Offset(x, y), r, paintBorder);
+      }
+      if (selectedNodes.contains(c.id)) {
+        final paintSel = Paint()
+          ..color = Colors.redAccent
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 3.0;
+        canvas.drawCircle(Offset(x, y), r + 4, paintSel);
       }
     }
 
@@ -1284,14 +1400,6 @@ class GraphPainter extends CustomPainter {
     return memo[id] ?? const Color(0xFF9E9E9E);
   }
 
-  String? _branchOfRefs(List<String> refs) {
-    final names = data.branches.map((b) => b.name).toSet();
-    for (final r in refs) {
-      if (names.contains(r)) return r;
-    }
-    return null;
-  }
-
   Map<String, Color> _computeBranchColors(Map<String, CommitNode> byId) {
     final memo = <String, Color>{};
     // Branch priority: master first, then others by name
@@ -1364,40 +1472,6 @@ class GraphPainter extends CustomPainter {
       laneOf[c.id] = laneVal;
     }
     return laneOf;
-  }
-
-  int _chooseLane(CommitNode c, Map<int, String> activeLaneHead) {
-    for (final entry in activeLaneHead.entries) {
-      if (c.parents.contains(entry.value)) {
-        return entry.key;
-      }
-    }
-    var lane = 0;
-    while (activeLaneHead.containsKey(lane)) {
-      lane++;
-    }
-    return lane;
-  }
-
-  static int _chooseLaneStatic(CommitNode c, Map<int, String> activeLaneHead) {
-    for (final entry in activeLaneHead.entries) {
-      if (c.parents.contains(entry.value)) {
-        return entry.key;
-      }
-    }
-    var lane = 0;
-    while (activeLaneHead.containsKey(lane)) {
-      lane++;
-    }
-    return lane;
-  }
-
-  int _firstFreeLane(Map<int, String> activeLaneHead) {
-    var lane = 0;
-    while (activeLaneHead.containsKey(lane)) {
-      lane++;
-    }
-    return lane;
   }
 
   @override
