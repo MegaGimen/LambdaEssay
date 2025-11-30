@@ -6,7 +6,16 @@ import 'package:flutter/material.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 
 class VisualizeDocxPage extends StatefulWidget {
-  const VisualizeDocxPage({super.key});
+  final Uint8List? initialBytes;
+  final String? title;
+  final VoidCallback? onBack;
+
+  const VisualizeDocxPage({
+    super.key,
+    this.initialBytes,
+    this.title,
+    this.onBack,
+  });
 
   @override
   State<VisualizeDocxPage> createState() => _VisualizeDocxPageState();
@@ -20,6 +29,10 @@ class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
   @override
   void initState() {
     super.initState();
+    if (widget.initialBytes != null) {
+      _pdfBytes = widget.initialBytes;
+      _fileName = widget.title;
+    }
     // Add listeners to prevent browser zoom
     // This attempts to block the default browser zoom behavior when the user uses Ctrl+Scroll or Ctrl +/-
     // allowing the PDF viewer's internal zoom or just preventing UI scaling.
@@ -69,7 +82,11 @@ class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(_fileName ?? 'PDF 预览'),
+        leading: widget.onBack != null
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back), onPressed: widget.onBack)
+            : null,
+        title: Text(_fileName ?? widget.title ?? 'PDF 预览'),
         actions: [
           if (_pdfBytes != null)
             IconButton(

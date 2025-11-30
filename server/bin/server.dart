@@ -124,6 +124,30 @@ Future<void> main(List<String> args) async {
     }
   });
 
+  router.post('/compare', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoPath = _sanitizePath(data['repoPath'] as String?);
+    final c1 = data['commit1'] as String?;
+    final c2 = data['commit2'] as String?;
+
+    if (repoPath.isEmpty || c1 == null || c2 == null) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoPath, commit1, commit2 required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      final pdf = await compareCommits(repoPath, c1, c2);
+      return _cors(Response.ok(pdf, headers: {
+        'Content-Type': 'application/pdf',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
   router.post('/convert', (Request req) async {
     final ct = req.headers['content-type'] ?? '';
     final b = _boundaryOf(ct);
