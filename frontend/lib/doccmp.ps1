@@ -1,39 +1,60 @@
 param(
-    [string] $BaseFileName,
-    [string] $ChangedFileName
+    [Parameter(Mandatory=$true)]
+    [string]$OriginalPath,
+
+    [Parameter(Mandatory=$true)]
+    [string]$RevisedPath,
+
+    [Parameter(Mandatory=$true)]
+    [string]$PdfPath
 )
 
-$ErrorActionPreference = 'Stop'
-
-function resolve($relativePath) {
-    (Resolve-Path $relativePath).Path
-}
-
-$BaseFileName = resolve $BaseFileName
-$ChangedFileName = resolve $ChangedFileName
-
-# Remove the readonly attribute because Word is unable to compare readonly
-# files:
-$baseFile = Get-ChildItem $BaseFileName
-if ($baseFile.IsReadOnly) {
-    $baseFile.IsReadOnly = $false
-}
-
 # Constants
+$wdCompareDestinationNew = 2
+$wdFormatPDF = 17
 $wdDoNotSaveChanges = 0
-$wdCompareTargetNew = 2
+
+# Create Word Application
+$word = New-Object -ComObject Word.Application
+$word.Visible = $false
+$word.DisplayAlerts = 0
 
 try {
-    $word = New-Object -ComObject Word.Application
-    $word.Visible = $true
-    $document = $word.Documents.Open($BaseFileName, $false, $false)
-    $document.Compare($ChangedFileName, [ref]"Comparison", [ref]$wdCompareTargetNew, [ref]$true, [ref]$true)
+    # Resolve absolute paths
+    $OriginalPath = (Resolve-Path $OriginalPath).Path
+    $RevisedPath = (Resolve-Path $RevisedPath).Path
+    $PdfPath = [System.IO.Path]::GetFullPath($PdfPath)
 
-    $word.ActiveDocument.Saved = 1
+    Write-Host "Opening original document: $OriginalPath"
+    # Open(FileName, ConfirmConversions, ReadOnly, AddToRecentFiles, ...)
+    # Open as ReadOnly ($true) to prevent "File in Use" dialogs or locking issues
+    $doc = $word.Documents.Open($OriginalPath, $false, $true)
 
-    # Now close the document so only compare results window persists:
-    $document.Close([ref]$wdDoNotSaveChanges)
-} catch {
-    Add-Type -AssemblyName System.Windows.Forms
-    [System.Windows.Forms.MessageBox]::Show($_.Exception)
+    Write-Host "Comparing with revised document: $RevisedPath"
+    # Compare(Name, AuthorName, CompareTarget, DetectFormatChanges, IgnoreAllComparisonWarnings, AddToRecentFiles, RemovePersonalInformation, RemoveDateAndTime)
+    $doc.Compare($RevisedPath, "System", $wdCompareDestinationNew, $true, $true, $false, $false, $false)
+
+    # The comparison result is the active document
+    $diffDoc = $word.ActiveDocument
+    
+    Write-Host "Saving comparison to PDF: $PdfPath"
+    $diffDoc.SaveAs2($PdfPath, $wdFormatPDF)
+    
+    $diffDoc.Close($wdDoNotSaveChanges)
+    # The original doc is still open, close it too
+    $doc.Close($wdDoNotSaveChanges)
+    
+    Write-Host "Success!"
+}
+catch {
+    Write-Error "An error occurred: $_"
+    exit 1
+}
+finally {
+    $word.Quit()
+    # Cleanup COM objects
+    [System.Runtime.Interopservices.Marshal]::ReleaseComObject($word) | Out-Null
+    Remove-Variable word
+    [GC]::Collect()
+    [GC]::WaitForPendingFinalizers()
 }
