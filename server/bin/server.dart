@@ -409,6 +409,27 @@ Future<void> main(List<String> args) async {
     }
   });
 
+  router.post('/track/info', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoPath = _sanitizePath(data['repoPath'] as String?);
+    if (repoPath.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoPath required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      final info = await getTrackingInfo(repoPath);
+      return _cors(Response.ok(jsonEncode(info ?? {}), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
   router.post('/push', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
@@ -466,8 +487,8 @@ Future<void> main(List<String> args) async {
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
-      final projDir = await pullFromRemote(repoName, username, token);
-      return _cors(Response.ok(jsonEncode({'status': 'ok', 'path': projDir}),
+      final result = await pullFromRemote(repoName, username, token);
+      return _cors(Response.ok(jsonEncode(result),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     } catch (e) {
       return _cors(Response(500,

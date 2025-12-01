@@ -256,9 +256,70 @@ class _GraphPageState extends State<GraphPage> {
         'token': _token,
       });
       final path = resp['path'] as String;
+      final isFresh = resp['isFresh'] == true;
+
       setState(() {
         pathCtrl.text = path;
+        // If fresh clone, user needs to set up tracking document
+        if (isFresh) {
+          currentProjectName = repoName;
+        }
       });
+
+      if (isFresh) {
+        // Ask for docx path
+        final docxCtrl = TextEditingController();
+        final ok = await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text('设置追踪文档'),
+            content: SizedBox(
+              width: 400,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('这是一个新的克隆，请选择要追踪的Word文档(.docx)'),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: docxCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'docx文件路径 c:\\path\\to\\file.docx',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('跳过'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('确定'),
+              ),
+            ],
+          ),
+        );
+        if (ok == true) {
+          final docx = docxCtrl.text.trim();
+          if (docx.isNotEmpty) {
+            try {
+              await _postJson('http://localhost:8080/track/update', {
+                'name': repoName,
+                'newDocxPath': docx,
+              });
+              setState(() {
+                docxPathCtrl.text = docx;
+              });
+            } catch (e) {
+              ScaffoldMessenger.of(context)
+                  .showSnackBar(SnackBar(content: Text('设置文档失败: $e')));
+            }
+          }
+        }
+      }
+
       await _load(); // Reload graph
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('拉取成功')));
@@ -296,6 +357,27 @@ class _GraphPageState extends State<GraphPage> {
       error = null;
       data = null;
     });
+
+    // Try fetch tracking info
+    try {
+      final info = await _postJson('http://localhost:8080/track/info', {
+        'repoPath': path,
+      });
+      if (info.isNotEmpty) {
+        setState(() {
+          currentProjectName = info['name'];
+          docxPathCtrl.text = info['docxPath'] ?? '';
+        });
+      } else {
+        setState(() {
+          currentProjectName = null;
+          docxPathCtrl.clear();
+        });
+      }
+    } catch (_) {
+      // Ignore if not tracked or error
+    }
+
     try {
       await http.post(
         Uri.parse('http://localhost:8080/reset'),
