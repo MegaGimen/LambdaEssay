@@ -727,6 +727,49 @@ Future<Map<String, dynamic>> pullFromRemote(
   bool isFresh = !dir.existsSync();
 
   if (!isFresh) {
+    // Check safety before destroying
+    // 1. Check uncommitted changes
+    try {
+      final statusLines = await _runGit(['status', '--porcelain'], projDir);
+      if (statusLines.isNotEmpty) {
+        throw Exception(
+            'Local repository has uncommitted changes. Please commit or discard them before pulling.');
+      }
+    } catch (e) {
+      // If repo is broken, maybe allow overwrite? But safer to warn.
+      if (e.toString().contains('uncommitted')) rethrow;
+      // else proceed (maybe not a git repo, will be overwritten)
+    }
+
+    // 2. Check if local is newer than remote
+    try {
+      // Fetch remote head to FETCH_HEAD
+      // We use the remoteUrl directly to be sure
+      await _runGit(['fetch', remoteUrl, 'HEAD'], projDir);
+
+      // Check if HEAD is ancestor of FETCH_HEAD
+      // If HEAD is ancestor of FETCH_HEAD (remote), it means we are behind (safe to fast-forward/reset).
+      // If HEAD is NOT ancestor, it means we have local commits not in remote (ahead or diverged).
+      final mergeBaseRes = await Process.run(
+        'git',
+        ['merge-base', '--is-ancestor', 'HEAD', 'FETCH_HEAD'],
+        workingDirectory: projDir,
+        runInShell: true,
+      );
+
+      // exitCode 0 means true (is ancestor)
+      // exitCode 1 means false (not ancestor)
+      if (mergeBaseRes.exitCode != 0) {
+        throw Exception(
+            'Local branch is ahead of remote or diverged. Please push your changes first to avoid losing work.');
+      }
+    } catch (e) {
+      if (e.toString().contains('Local branch is ahead')) rethrow;
+      // If fetch fails, we might be offline or repo deleted.
+      // We can choose to proceed or fail.
+      // Given "thorough pull", if remote is gone, we probably fail at clone anyway.
+    }
+
     // Preserve tracking info
     savedTracking = await _readTracking(repoName);
     // Delete existing directory for a "thorough" clean pull
@@ -815,6 +858,26 @@ Future<Map<String, dynamic>> pullFromRemote(
     // Existing: Restore saved tracking info, overwriting any remote tracking.json
     if (savedTracking != null && savedTracking.isNotEmpty) {
       await _writeTracking(repoName, savedTracking);
+
+      // Sync Repo Docx -> External Docx
+      // We just pulled fresh from remote, so Repo is the source of truth.
+      // We should update the external docx to match.
+      final repoDocxPath = savedTracking['repoDocxPath'] as String?;
+      final docxPath = savedTracking['docxPath'] as String?;
+
+      if (repoDocxPath != null && docxPath != null) {
+        final repoFile = File(repoDocxPath);
+        final extFile = File(docxPath);
+        if (repoFile.existsSync()) {
+          try {
+            // We overwrite external with repo content
+            await extFile.writeAsBytes(await repoFile.readAsBytes());
+          } catch (e) {
+            print('Warning: Failed to sync external docx: $e');
+            // Non-fatal, but user might see old content in Word
+          }
+        }
+      }
     }
   }
 
