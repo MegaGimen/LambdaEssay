@@ -146,7 +146,7 @@ Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
 
 Future<void> commitChanges(
     String repoPath, String author, String message) async {
-  await _runGit(['add', '.'], repoPath);
+  await _runGit(['add', '*.docx'], repoPath);
   // Ensure author format "Name <email>"
   final safeAuthor = author.trim().isEmpty ? 'Unknown' : author.trim();
   final authorArg = '$safeAuthor <$safeAuthor@gitdocx.local>';
@@ -296,19 +296,35 @@ String _baseDir() {
 }
 
 File _trackingFile(String name) {
-  final dir = p.normalize(p.join(_baseDir(), name));
-  return File(p.join(dir, 'tracking.json'));
+  final dir = p.join(_baseDir(), '.configs');
+  return File(p.join(dir, '$name.json'));
 }
 
 Future<Map<String, dynamic>> _readTracking(String name) async {
   final f = _trackingFile(name);
-  if (!f.existsSync()) return <String, dynamic>{};
-  final s = await f.readAsString();
-  try {
-    return jsonDecode(s) as Map<String, dynamic>;
-  } catch (_) {
-    return <String, dynamic>{};
+  if (f.existsSync()) {
+    try {
+      final s = await f.readAsString();
+      return jsonDecode(s) as Map<String, dynamic>;
+    } catch (_) {
+      return <String, dynamic>{};
+    }
   }
+  // Migration: Check old location inside repo
+  final oldPath = p.join(_projectDir(name), 'tracking.json');
+  final oldFile = File(oldPath);
+  if (oldFile.existsSync()) {
+    try {
+      final s = await oldFile.readAsString();
+      final data = jsonDecode(s) as Map<String, dynamic>;
+      // Migrate to new location
+      await _writeTracking(name, data);
+      return data;
+    } catch (_) {
+      return <String, dynamic>{};
+    }
+  }
+  return <String, dynamic>{};
 }
 
 Future<void> _writeTracking(String name, Map<String, dynamic> data) async {
@@ -436,6 +452,8 @@ Future<Map<String, dynamic>> createTrackingProject(
   final gitDir = Directory(p.join(projDir, '.git'));
   if (!gitDir.existsSync()) {
     await _runGit(['init'], projDir);
+    final gitignore = File(p.join(projDir, '.gitignore'));
+    await gitignore.writeAsString('tracking.json\n');
   }
   String? repoDocxPath;
   if (docxPath != null && docxPath.trim().isNotEmpty) {
@@ -487,8 +505,9 @@ Future<Map<String, dynamic>?> getTrackingInfo(String repoPath) async {
   try {
     final ents = base.listSync().whereType<Directory>();
     for (final d in ents) {
+      final name = p.basename(d.path);
+      if (name.startsWith('.')) continue;
       if (p.normalize(d.path) == normalized) {
-        final name = p.basename(d.path);
         final tracking = await _readTracking(name);
         return {
           'name': name,
@@ -672,6 +691,7 @@ Future<void> initTrackingService() async {
   final ents = base.listSync().whereType<Directory>().toList();
   for (final d in ents) {
     final name = p.basename(d.path);
+    if (name.startsWith('.')) continue;
     await _startWatcher(name);
   }
 }
@@ -849,38 +869,28 @@ Future<Map<String, dynamic>> pullFromRemote(
     // Non-fatal, we at least have the clone
   }
 
-  // Tracking logic
-  if (isFresh) {
-    // Fresh clone: Delete tracking.json if it exists (from remote) to prevent path confusion
-    final tFile = File(p.join(projDir, 'tracking.json'));
-    if (tFile.existsSync()) {
-      try {
-        tFile.deleteSync();
-      } catch (_) {}
-    }
-    // Do NOT auto-init tracking. Let user input.
-  } else {
-    // Existing: Restore saved tracking info, overwriting any remote tracking.json
-    if (savedTracking != null && savedTracking.isNotEmpty) {
-      await _writeTracking(repoName, savedTracking);
+  // Post-pull cleanup & sync
+  // 1. If tracking.json exists in repo (from remote), delete it to avoid confusion
+  final legacyTracking = File(p.join(projDir, 'tracking.json'));
+  if (legacyTracking.existsSync()) {
+    try {
+      legacyTracking.deleteSync();
+    } catch (_) {}
+  }
 
-      // Sync Repo Docx -> External Docx
-      // We just pulled fresh from remote, so Repo is the source of truth.
-      // We should update the external docx to match.
-      final repoDocxPath = savedTracking['repoDocxPath'] as String?;
-      final docxPath = savedTracking['docxPath'] as String?;
+  if (!isFresh && savedTracking != null && savedTracking.isNotEmpty) {
+    // Sync Repo Docx -> External Docx
+    final repoDocxPath = savedTracking['repoDocxPath'] as String?;
+    final docxPath = savedTracking['docxPath'] as String?;
 
-      if (repoDocxPath != null && docxPath != null) {
-        final repoFile = File(repoDocxPath);
-        final extFile = File(docxPath);
-        if (repoFile.existsSync()) {
-          try {
-            // We overwrite external with repo content
-            await extFile.writeAsBytes(await repoFile.readAsBytes());
-          } catch (e) {
-            print('Warning: Failed to sync external docx: $e');
-            // Non-fatal, but user might see old content in Word
-          }
+    if (repoDocxPath != null && docxPath != null) {
+      final repoFile = File(repoDocxPath);
+      final extFile = File(docxPath);
+      if (repoFile.existsSync()) {
+        try {
+          await extFile.writeAsBytes(await repoFile.readAsBytes());
+        } catch (e) {
+          print('Warning: Failed to sync external docx: $e');
         }
       }
     }
