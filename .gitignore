@@ -60,3 +60,5 @@ frontend/lib/diffscripts/build
 frontend/lib/diffscripts/dist
 
 frontend/lib/diffscripts/Heidegger.spec
+
+*.exe

@@ -38,6 +38,20 @@ String _sanitizePath(String? raw) {
 }
 
 Future<void> main(List<String> args) async {
+  // Start Heidegger service in background
+  try {
+    final scriptDir = p.dirname(Platform.script.toFilePath());
+    final heideggerPath = p.join(scriptDir, 'Heidegger.exe');
+    if (File(heideggerPath).existsSync()) {
+      print('Starting Heidegger service from $heideggerPath...');
+      await Process.start(heideggerPath, [], mode: ProcessStartMode.detached);
+    } else {
+      print('Heidegger.exe not found at $heideggerPath');
+    }
+  } catch (e) {
+    print('Failed to start Heidegger: $e');
+  }
+
   await initTrackingService();
   final router = Router();
 
