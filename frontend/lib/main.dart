@@ -4,7 +4,6 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
 import 'visualize.dart';
 
 void main() {
@@ -39,13 +38,13 @@ class CommitNode {
     required this.subject,
   });
   factory CommitNode.fromJson(Map<String, dynamic> j) => CommitNode(
-        id: j['id'],
-        parents: (j['parents'] as List).cast<String>(),
-        refs: (j['refs'] as List).cast<String>(),
-        author: j['author'],
-        date: j['date'],
-        subject: j['subject'],
-      );
+    id: j['id'],
+    parents: (j['parents'] as List).cast<String>(),
+    refs: (j['refs'] as List).cast<String>(),
+    author: j['author'],
+    date: j['date'],
+    subject: j['subject'],
+  );
 }
 
 class Branch {
@@ -68,23 +67,24 @@ class GraphData {
   final List<Branch> branches;
   final Map<String, List<String>> chains;
   final String? currentBranch;
-  GraphData(
-      {required this.commits,
-      required this.branches,
-      required this.chains,
-      this.currentBranch});
+  GraphData({
+    required this.commits,
+    required this.branches,
+    required this.chains,
+    this.currentBranch,
+  });
   factory GraphData.fromJson(Map<String, dynamic> j) => GraphData(
-        commits: ((j['commits'] as List).map(
-          (e) => CommitNode.fromJson(e as Map<String, dynamic>),
-        )).toList(),
-        branches: ((j['branches'] as List).map(
-          (e) => Branch.fromJson(e as Map<String, dynamic>),
-        )).toList(),
-        chains: (j['chains'] as Map<String, dynamic>).map(
-          (k, v) => MapEntry(k, (v as List).cast<String>()),
-        ),
-        currentBranch: j['currentBranch'],
-      );
+    commits: ((j['commits'] as List).map(
+      (e) => CommitNode.fromJson(e as Map<String, dynamic>),
+    )).toList(),
+    branches: ((j['branches'] as List).map(
+      (e) => Branch.fromJson(e as Map<String, dynamic>),
+    )).toList(),
+    chains: (j['chains'] as Map<String, dynamic>).map(
+      (k, v) => MapEntry(k, (v as List).cast<String>()),
+    ),
+    currentBranch: j['currentBranch'],
+  );
 }
 
 class WorkingState {
@@ -102,34 +102,27 @@ class GraphPage extends StatefulWidget {
 class _GraphPageState extends State<GraphPage> {
   final TextEditingController pathCtrl = TextEditingController();
   final TextEditingController limitCtrl = TextEditingController(text: '500');
+  final TextEditingController docxPathCtrl = TextEditingController();
   GraphData? data;
   String? error;
   bool loading = false;
   String? currentProjectName;
   WorkingState? working;
-  SharedPreferences? _prefs;
 
   @override
   void initState() {
     super.initState();
-    SharedPreferences.getInstance().then((p) {
-      setState(() => _prefs = p);
-    });
-  }
-
-  Future<void> _saveDocxPath(String projectName, String path) async {
-    if (_prefs == null) return;
-    await _prefs!.setString('docx_$projectName', path);
-  }
-
-  String? _getDocxPath(String projectName) {
-    return _prefs?.getString('docx_$projectName');
   }
 
   Future<Map<String, dynamic>> _postJson(
-      String url, Map<String, dynamic> body) async {
-    final resp = await http.post(Uri.parse(url),
-        headers: {'Content-Type': 'application/json'}, body: jsonEncode(body));
+    String url,
+    Map<String, dynamic> body,
+  ) async {
+    final resp = await http.post(
+      Uri.parse(url),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(body),
+    );
     if (resp.statusCode != 200) {
       throw Exception(resp.body);
     }
@@ -200,18 +193,21 @@ class _GraphPageState extends State<GraphPage> {
               TextField(
                 controller: docxCtrl,
                 decoration: const InputDecoration(
-                    labelText: 'docx文件路径 c:\\path\\to\\file.docx'),
+                  labelText: 'docx文件路径 c:\\path\\to\\file.docx',
+                ),
               ),
             ],
           ),
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消')),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
           ElevatedButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('创建')),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('创建'),
+          ),
         ],
       ),
     );
@@ -222,9 +218,6 @@ class _GraphPageState extends State<GraphPage> {
       setState(() => error = '请输入项目名称');
       return;
     }
-    if (docx.isNotEmpty) {
-      await _saveDocxPath(name, docx);
-    }
     try {
       final resp = await _postJson('http://localhost:8080/track/create', {
         'name': name,
@@ -234,9 +227,11 @@ class _GraphPageState extends State<GraphPage> {
       setState(() {
         currentProjectName = name;
         pathCtrl.text = repoPath;
+        docxPathCtrl.text = docx;
       });
-      final up =
-          await _postJson('http://localhost:8080/track/update', {'name': name});
+      final up = await _postJson('http://localhost:8080/track/update', {
+        'name': name,
+      });
       setState(() {
         working = WorkingState(
           changed: up['workingChanged'] == true,
@@ -264,11 +259,13 @@ class _GraphPageState extends State<GraphPage> {
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消')),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
           ElevatedButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('打开')),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('打开'),
+          ),
         ],
       ),
     );
@@ -279,15 +276,19 @@ class _GraphPageState extends State<GraphPage> {
       return;
     }
     try {
-      final resp =
-          await _postJson('http://localhost:8080/track/open', {'name': name});
+      final resp = await _postJson('http://localhost:8080/track/open', {
+        'name': name,
+      });
       final repoPath = resp['repoPath'] as String;
+      final docxPath = resp['docxPath'] as String?;
       setState(() {
         currentProjectName = name;
         pathCtrl.text = repoPath;
+        docxPathCtrl.text = docxPath ?? '';
       });
-      final up =
-          await _postJson('http://localhost:8080/track/update', {'name': name});
+      final up = await _postJson('http://localhost:8080/track/update', {
+        'name': name,
+      });
       setState(() {
         working = WorkingState(
           changed: up['workingChanged'] == true,
@@ -317,11 +318,13 @@ class _GraphPageState extends State<GraphPage> {
           ),
           actions: [
             TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('取消')),
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消'),
+            ),
             ElevatedButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('确定')),
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('确定'),
+            ),
           ],
         ),
       );
@@ -332,12 +335,13 @@ class _GraphPageState extends State<GraphPage> {
     }
     if (name == null || name.isEmpty) return;
     try {
-      final resp =
-          await _postJson('http://localhost:8080/track/update', {'name': name});
+      final resp = await _postJson('http://localhost:8080/track/update', {
+        'name': name,
+      });
       final needDocx = resp['needDocx'] == true;
       if (needDocx) {
-        String? docx = _getDocxPath(name);
-        bool askUser = docx == null || docx.isEmpty;
+        String? docx = docxPathCtrl.text.trim();
+        bool askUser = docx.isEmpty;
 
         if (askUser) {
           final docxCtrl = TextEditingController();
@@ -350,24 +354,24 @@ class _GraphPageState extends State<GraphPage> {
                 child: TextField(
                   controller: docxCtrl,
                   decoration: const InputDecoration(
-                      labelText: 'docx文件路径 c:\\path\\to\\file.docx'),
+                    labelText: 'docx文件路径 c:\\path\\to\\file.docx',
+                  ),
                 ),
               ),
               actions: [
                 TextButton(
-                    onPressed: () => Navigator.pop(context, false),
-                    child: const Text('取消')),
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('取消'),
+                ),
                 ElevatedButton(
-                    onPressed: () => Navigator.pop(context, true),
-                    child: const Text('确定')),
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('确定'),
+                ),
               ],
             ),
           );
           if (ok == true) {
             docx = docxCtrl.text.trim();
-            if (docx.isNotEmpty) {
-              await _saveDocxPath(name, docx);
-            }
           } else {
             docx = null;
           }
@@ -379,6 +383,7 @@ class _GraphPageState extends State<GraphPage> {
             'newDocxPath': docx,
           });
           setState(() {
+            docxPathCtrl.text = docx!;
             working = WorkingState(
               changed: up['workingChanged'] == true,
               baseId: up['head'] as String?,
@@ -399,55 +404,60 @@ class _GraphPageState extends State<GraphPage> {
     }
   }
 
-  Future<void> _onProjectSettings() async {
+  Future<void> _onChangeDocxPath() async {
     if (currentProjectName == null) return;
     final name = currentProjectName!;
-    final currentDocx = _getDocxPath(name) ?? '';
-    final docxCtrl = TextEditingController(text: currentDocx);
+    final docxCtrl = TextEditingController(text: docxPathCtrl.text);
 
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: Text('项目设置: $name'),
+        title: Text('修改Docx路径: $name'),
         content: SizedBox(
           width: 400,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('绑定的Docx文件路径：'),
-              TextField(
-                controller: docxCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'c:\\path\\to\\file.docx',
-                  hintText: '留空则清除',
-                ),
-              ),
-            ],
+          child: TextField(
+            controller: docxCtrl,
+            decoration: const InputDecoration(
+              labelText: 'c:\\path\\to\\file.docx',
+            ),
           ),
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消')),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
           ElevatedButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('保存')),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('保存'),
+          ),
         ],
       ),
     );
 
     if (ok == true) {
       final newPath = docxCtrl.text.trim();
-      if (newPath.isEmpty) {
-        if (_prefs != null) {
-          await _prefs!.remove('docx_$name');
-        }
-      } else {
-        await _saveDocxPath(name, newPath);
+      if (newPath.isEmpty) return;
+
+      try {
+        final up = await _postJson('http://localhost:8080/track/update', {
+          'name': name,
+          'newDocxPath': newPath,
+        });
+        setState(() {
+          docxPathCtrl.text = newPath;
+          working = WorkingState(
+            changed: up['workingChanged'] == true,
+            baseId: up['head'] as String?,
+          );
+        });
+        await _load();
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('路径已更新')));
+      } catch (e) {
+        setState(() => error = e.toString());
       }
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('设置已保存，正在更新...')));
-      await _onUpdateRepo();
     }
   }
 
@@ -477,26 +487,44 @@ class _GraphPageState extends State<GraphPage> {
                 ),
                 const SizedBox(width: 8),
                 if (currentProjectName != null)
-                  IconButton(
-                    onPressed: _onProjectSettings,
-                    icon: const Icon(Icons.settings),
-                    tooltip: '项目设置',
+                  Text(
+                    ' 当前项目: $currentProjectName ',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
               ],
             ),
           ),
+          if (currentProjectName != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              child: Row(
+                children: [
+                  const Text('追踪文档: '),
+                  Expanded(
+                    child: TextField(
+                      controller: docxPathCtrl,
+                      readOnly: true,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        contentPadding: EdgeInsets.symmetric(horizontal: 8),
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: _onChangeDocxPath,
+                    icon: const Icon(Icons.edit),
+                    tooltip: '修改Docx路径',
+                  ),
+                ],
+              ),
+            ),
           Padding(
             padding: const EdgeInsets.all(8),
             child: Row(
               children: [
-                Expanded(
-                  child: TextField(
-                    controller: pathCtrl,
-                    decoration: const InputDecoration(
-                      labelText: '本地仓库路径 c:\\path\\to\\repo',
-                    ),
-                  ),
-                ),
                 const SizedBox(width: 8),
                 SizedBox(
                   width: 120,
@@ -528,7 +556,8 @@ class _GraphPageState extends State<GraphPage> {
                     repoPath: pathCtrl.text.trim(),
                     projectName: currentProjectName,
                     onRefresh: _load,
-                    onUpdate: _onUpdateRepo),
+                    onUpdate: _onUpdateRepo,
+                  ),
           ),
         ],
       ),
@@ -543,13 +572,14 @@ class _GraphView extends StatefulWidget {
   final String? projectName;
   final VoidCallback? onRefresh;
   final Future<void> Function()? onUpdate;
-  const _GraphView(
-      {required this.data,
-      this.working,
-      required this.repoPath,
-      this.projectName,
-      this.onRefresh,
-      this.onUpdate});
+  const _GraphView({
+    required this.data,
+    this.working,
+    required this.repoPath,
+    this.projectName,
+    this.onRefresh,
+    this.onUpdate,
+  });
   @override
   State<_GraphView> createState() => _GraphViewState();
 }
@@ -647,9 +677,9 @@ class _GraphViewState extends State<_GraphView> {
       );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('对比失败: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('对比失败: $e')));
       }
     } finally {
       if (mounted) setState(() => _comparing = false);
@@ -675,8 +705,9 @@ class _GraphViewState extends State<_GraphView> {
               const SizedBox(height: 8),
               TextField(
                 controller: msgCtrl,
-                decoration:
-                    const InputDecoration(labelText: '备注信息 (Commit Message)'),
+                decoration: const InputDecoration(
+                  labelText: '备注信息 (Commit Message)',
+                ),
                 maxLines: 3,
               ),
             ],
@@ -694,25 +725,31 @@ class _GraphViewState extends State<_GraphView> {
                 if (resp.statusCode != 200) throw Exception(resp.body);
                 if (!mounted) return;
                 Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) => VisualizeDocxPage(
-                            initialBytes: resp.bodyBytes,
-                            title: 'Working Copy Diff',
-                            onBack: () => Navigator.pop(context))));
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => VisualizeDocxPage(
+                      initialBytes: resp.bodyBytes,
+                      title: 'Working Copy Diff',
+                      onBack: () => Navigator.pop(context),
+                    ),
+                  ),
+                );
               } catch (e) {
-                ScaffoldMessenger.of(context)
-                    .showSnackBar(SnackBar(content: Text('预览失败: $e')));
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(SnackBar(content: Text('预览失败: $e')));
               }
             },
             child: const Text('预览差异'),
           ),
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消')),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
           ElevatedButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('提交')),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('提交'),
+          ),
         ],
       ),
     );
@@ -720,18 +757,21 @@ class _GraphViewState extends State<_GraphView> {
     final author = authorCtrl.text.trim();
     final msg = msgCtrl.text.trim();
     if (author.isEmpty || msg.isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('请填写完整信息')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请填写完整信息')));
       return;
     }
     try {
-      final resp = await http.post(Uri.parse('http://localhost:8080/commit'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({
-            'repoPath': widget.repoPath,
-            'author': author,
-            'message': msg,
-          }));
+      final resp = await http.post(
+        Uri.parse('http://localhost:8080/commit'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'repoPath': widget.repoPath,
+          'author': author,
+          'message': msg,
+        }),
+      );
       if (resp.statusCode != 200) throw Exception(resp.body);
       if (widget.onUpdate != null) {
         await widget.onUpdate!();
@@ -739,11 +779,13 @@ class _GraphViewState extends State<_GraphView> {
         widget.onRefresh?.call();
       }
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('提交成功')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('提交成功')));
     } catch (e) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('提交失败: $e')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('提交失败: $e')));
     }
   }
 
@@ -758,17 +800,20 @@ class _GraphViewState extends State<_GraphView> {
           children: [
             const Text('输入新分支名称，创建后将自动切换到该分支。'),
             TextField(
-                controller: nameCtrl,
-                decoration: const InputDecoration(labelText: '分支名称')),
+              controller: nameCtrl,
+              decoration: const InputDecoration(labelText: '分支名称'),
+            ),
           ],
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消')),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
           ElevatedButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('创建')),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('创建'),
+          ),
         ],
       ),
     );
@@ -777,9 +822,10 @@ class _GraphViewState extends State<_GraphView> {
     if (name.isEmpty) return;
     try {
       final resp = await http.post(
-          Uri.parse('http://localhost:8080/branch/create'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'repoPath': widget.repoPath, 'branchName': name}));
+        Uri.parse('http://localhost:8080/branch/create'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'repoPath': widget.repoPath, 'branchName': name}),
+      );
       if (resp.statusCode != 200) throw Exception(resp.body);
       if (widget.onUpdate != null) {
         await widget.onUpdate!();
@@ -787,8 +833,9 @@ class _GraphViewState extends State<_GraphView> {
         widget.onRefresh?.call();
       }
     } catch (e) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('创建失败: $e')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('创建失败: $e')));
     }
   }
 
@@ -804,26 +851,35 @@ class _GraphViewState extends State<_GraphView> {
             mainAxisSize: MainAxisSize.min,
             children: [
               if (widget.working?.changed == true)
-                const Text('⚠️ 当前有未提交的更改！切换操作将被拒绝。请先提交。',
-                    style: TextStyle(
-                        color: Colors.red, fontWeight: FontWeight.bold)),
+                const Text(
+                  '⚠️ 当前有未提交的更改！切换操作将被拒绝。请先提交。',
+                  style: TextStyle(
+                    color: Colors.red,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
               const SizedBox(height: 8),
               TextField(
-                  controller: nameCtrl,
-                  decoration: const InputDecoration(labelText: '目标分支名称')),
+                controller: nameCtrl,
+                decoration: const InputDecoration(labelText: '目标分支名称'),
+              ),
               const SizedBox(height: 8),
-              const Text('注意：如果没有未提交更改，切换时将直接替换当前文档。请确保Word已关闭。',
-                  style: TextStyle(fontSize: 12, color: Colors.grey)),
+              const Text(
+                '注意：如果没有未提交更改，切换时将直接替换当前文档。请确保Word已关闭。',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
             ],
           ),
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消')),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
           ElevatedButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('切换')),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('切换'),
+          ),
         ],
       ),
     );
@@ -832,17 +888,21 @@ class _GraphViewState extends State<_GraphView> {
     if (name.isEmpty) return;
 
     if (widget.working?.changed == true) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('请先提交更改再切换分支')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请先提交更改再切换分支')));
       return;
     }
 
     try {
       final resp = await http.post(
-          Uri.parse('http://localhost:8080/branch/switch'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode(
-              {'projectName': widget.projectName ?? '', 'branchName': name}));
+        Uri.parse('http://localhost:8080/branch/switch'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'projectName': widget.projectName ?? '',
+          'branchName': name,
+        }),
+      );
       if (resp.statusCode != 200) throw Exception(resp.body);
       if (widget.onUpdate != null) {
         await widget.onUpdate!();
@@ -850,8 +910,9 @@ class _GraphViewState extends State<_GraphView> {
         widget.onRefresh?.call();
       }
     } catch (e) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('切换失败: $e')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('切换失败: $e')));
     }
   }
 
@@ -975,9 +1036,13 @@ class _GraphViewState extends State<_GraphView> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text('当前分支: ${widget.data.currentBranch ?? "Unknown"}',
-                      style: const TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.bold)),
+                  Text(
+                    '当前分支: ${widget.data.currentBranch ?? "Unknown"}',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                   const SizedBox(height: 8),
                   Row(
                     mainAxisSize: MainAxisSize.min,
@@ -988,8 +1053,9 @@ class _GraphViewState extends State<_GraphView> {
                           icon: const Icon(Icons.upload),
                           label: const Text('提交更改'),
                           style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.green,
-                              foregroundColor: Colors.white),
+                            backgroundColor: Colors.green,
+                            foregroundColor: Colors.white,
+                          ),
                         ),
                       if (widget.working?.changed == true)
                         const SizedBox(width: 8),
@@ -1022,7 +1088,7 @@ class _GraphViewState extends State<_GraphView> {
                 color: const Color(0xFFFDFDFD),
                 borderRadius: BorderRadius.circular(6),
                 boxShadow: const [
-                  BoxShadow(color: Color(0x22000000), blurRadius: 4)
+                  BoxShadow(color: Color(0x22000000), blurRadius: 4),
                 ],
               ),
               child: Column(
@@ -1040,8 +1106,10 @@ class _GraphViewState extends State<_GraphView> {
                     ],
                   ),
                   const SizedBox(height: 8),
-                  const Text('间距调整',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  const Text(
+                    '间距调整',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
                   const SizedBox(height: 6),
                   Row(
                     mainAxisSize: MainAxisSize.min,
@@ -1092,8 +1160,10 @@ class _GraphViewState extends State<_GraphView> {
                     ],
                   ),
                   const SizedBox(height: 8),
-                  const Text('分支图例',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  const Text(
+                    '分支图例',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
                   const SizedBox(height: 6),
                   for (final b in widget.data.branches)
                     Padding(
@@ -1125,8 +1195,9 @@ class _GraphViewState extends State<_GraphView> {
                             height: 12,
                             child: DecoratedBox(
                               decoration: BoxDecoration(
-                                  color: Color(0xFF9E9E9E),
-                                  shape: BoxShape.circle),
+                                color: Color(0xFF9E9E9E),
+                                shape: BoxShape.circle,
+                              ),
                             ),
                           ),
                           SizedBox(width: 6),
@@ -1188,7 +1259,7 @@ class _GraphViewState extends State<_GraphView> {
                   color: const Color(0xFFFAFAFA),
                   borderRadius: BorderRadius.circular(6),
                   boxShadow: const [
-                    BoxShadow(color: Color(0x33000000), blurRadius: 6)
+                    BoxShadow(color: Color(0x33000000), blurRadius: 6),
                   ],
                 ),
                 child: Column(
@@ -1196,27 +1267,37 @@ class _GraphViewState extends State<_GraphView> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                        '${_hoverEdge!.child.substring(0, 7)} → ${_hoverEdge!.parent.substring(0, 7)}'),
+                      '${_hoverEdge!.child.substring(0, 7)} → ${_hoverEdge!.parent.substring(0, 7)}',
+                    ),
                     const SizedBox(height: 6),
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
                       children: _hoverEdge!.branches
-                          .map((b) => Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: (_branchColors?[b] ??
-                                          const Color(0xFF9E9E9E))
-                                      .withValues(alpha: 0.15),
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(
-                                      color: _branchColors?[b] ??
-                                          const Color(0xFF9E9E9E)),
+                          .map(
+                            (b) => Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color:
+                                    (_branchColors?[b] ??
+                                            const Color(0xFF9E9E9E))
+                                        .withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color:
+                                      _branchColors?[b] ??
+                                      const Color(0xFF9E9E9E),
                                 ),
-                                child: Text(b,
-                                    style: const TextStyle(fontSize: 12)),
-                              ))
+                              ),
+                              child: Text(
+                                b,
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            ),
+                          )
                           .toList(),
                     ),
                   ],
@@ -1241,8 +1322,10 @@ class _GraphViewState extends State<_GraphView> {
                     : const Icon(Icons.compare_arrows),
                 label: Text(_comparing ? '对比中...' : '一键比较差异'),
                 style: ElevatedButton.styleFrom(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 16,
+                  ),
                   textStyle: const TextStyle(fontSize: 16),
                 ),
               ),
@@ -1466,8 +1549,11 @@ class _GraphViewState extends State<_GraphView> {
       final d = _distToCubic(sceneP, Offset(x, y), c1, c2, Offset(px, py));
       if (d < best) {
         best = d;
-        bestInfo =
-            EdgeInfo(child: child, parent: parent, branches: entry.value);
+        bestInfo = EdgeInfo(
+          child: child,
+          parent: parent,
+          branches: entry.value,
+        );
       }
     }
     if (bestInfo != null && best <= 8.0) return bestInfo;
@@ -1490,11 +1576,13 @@ class _GraphViewState extends State<_GraphView> {
 
   Offset _cubicPoint(Offset a, Offset c1, Offset c2, Offset b, double t) {
     final mt = 1 - t;
-    final x = mt * mt * mt * a.dx +
+    final x =
+        mt * mt * mt * a.dx +
         3 * mt * mt * t * c1.dx +
         3 * mt * t * t * c2.dx +
         t * t * t * b.dx;
-    final y = mt * mt * mt * a.dy +
+    final y =
+        mt * mt * mt * a.dy +
         3 * mt * mt * t * c1.dy +
         3 * mt * t * t * c2.dy +
         t * t * t * b.dy;
@@ -1510,7 +1598,8 @@ class _GraphViewState extends State<_GraphView> {
     double t = ab2 == 0 ? 0 : (apx * abx + apy * aby) / ab2;
     if (t < 0)
       t = 0;
-    else if (t > 1) t = 1;
+    else if (t > 1)
+      t = 1;
     final cx = a.dx + t * abx;
     final cy = a.dy + t * aby;
     final dx = p.dx - cx;
@@ -1518,8 +1607,12 @@ class _GraphViewState extends State<_GraphView> {
     return math.sqrt(dx * dx + dy * dy);
   }
 
-  int _obstacleCount(String child, String parent, Map<String, int> laneOf,
-      Map<String, int> rowOf) {
+  int _obstacleCount(
+    String child,
+    String parent,
+    Map<String, int> laneOf,
+    Map<String, int> rowOf,
+  ) {
     final rc = rowOf[child]!;
     final rp = rowOf[parent]!;
     final lc = laneOf[child]!;
@@ -1551,9 +1644,15 @@ class GraphPainter extends CustomPainter {
   final WorkingState? working;
   final Set<String> selectedNodes;
   static const double nodeRadius = 6;
-  GraphPainter(this.data, this.branchColors, this.hoverPairKey, this.laneWidth,
-      this.rowHeight,
-      {this.working, required this.selectedNodes});
+  GraphPainter(
+    this.data,
+    this.branchColors,
+    this.hoverPairKey,
+    this.laneWidth,
+    this.rowHeight, {
+    this.working,
+    required this.selectedNodes,
+  });
   static const List<Color> lanePalette = [
     Color(0xFF1976D2),
     Color(0xFF2E7D32),
@@ -1608,8 +1707,9 @@ class GraphPainter extends CustomPainter {
       final x = lane * laneWidth + laneWidth / 2;
       final y = row * rowHeight + rowHeight / 2;
       final childIds = children[c.id] ?? const <String>[];
-      final childColors =
-          childIds.map((id) => _colorOfCommit(id, colorMemo)).toSet();
+      final childColors = childIds
+          .map((id) => _colorOfCommit(id, colorMemo))
+          .toSet();
       final isSplit = childIds.length >= 2 && childColors.length >= 2;
       final r = isSplit ? nodeRadius * 1.6 : nodeRadius;
       canvas.drawCircle(Offset(x, y), r, paintNode);
@@ -1656,11 +1756,18 @@ class GraphPainter extends CustomPainter {
         final spread = (done - (total - 1) / 2.0) * 3.0; // -..0..+
         final path = Path();
         path.moveTo(x, y);
-        path.cubicTo(x + dir * (bendBase + spread), midY,
-            px - dir * (bendBase + spread), midY, px, py);
+        path.cubicTo(
+          x + dir * (bendBase + spread),
+          midY,
+          px - dir * (bendBase + spread),
+          midY,
+          px,
+          py,
+        );
         paintEdge.color = bcolor;
-        paintEdge.strokeWidth =
-            (hoverPairKey != null && hoverPairKey == key) ? 3.0 : 2.0;
+        paintEdge.strokeWidth = (hoverPairKey != null && hoverPairKey == key)
+            ? 3.0
+            : 2.0;
         canvas.drawPath(path, paintEdge);
       }
     }
@@ -1671,7 +1778,8 @@ class GraphPainter extends CustomPainter {
       final lane = laneOf[c.id]!;
       final x = lane * laneWidth + laneWidth / 2 + 10;
       final y = row * rowHeight + rowHeight / 2 - 8;
-      final label = c.id.substring(0, 7) +
+      final label =
+          c.id.substring(0, 7) +
           (c.refs.isNotEmpty ? ' [' + c.refs.first + ']' : '');
       textPainter.text = TextSpan(
         text: label,
@@ -1700,7 +1808,9 @@ class GraphPainter extends CustomPainter {
       final overlayWidth = 240.0;
       final overlayX = graphWidth + overlayMargin;
       canvas.drawRect(
-          Rect.fromLTWH(overlayX, 0, overlayWidth, graphHeight), borderPaint);
+        Rect.fromLTWH(overlayX, 0, overlayWidth, graphHeight),
+        borderPaint,
+      );
       final baseId = working?.baseId;
       int row = 0;
       if (baseId != null && rowOf.containsKey(baseId)) {
@@ -1711,16 +1821,21 @@ class GraphPainter extends CustomPainter {
       final paintCur = Paint()..color = const Color(0xFFD81B60);
       canvas.drawCircle(Offset(cx, cy), nodeRadius * 1.6, paintCur);
       final labelSpan = TextSpan(
-          text: '当前状态',
-          style: const TextStyle(color: Colors.black, fontSize: 12));
+        text: '当前状态',
+        style: const TextStyle(color: Colors.black, fontSize: 12),
+      );
       textPainter.text = labelSpan;
       textPainter.layout();
       textPainter.paint(canvas, Offset(cx + 10, cy - 8));
     }
   }
 
-  int _obstacleCount(String child, String parent, Map<String, int> laneOf,
-      Map<String, int> rowOf) {
+  int _obstacleCount(
+    String child,
+    String parent,
+    Map<String, int> laneOf,
+    Map<String, int> rowOf,
+  ) {
     final rc = rowOf[child]!;
     final rp = rowOf[parent]!;
     final lc = laneOf[child]!;
