@@ -462,6 +462,30 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
   };
 }
 
+Future<Map<String, dynamic>?> getTrackingInfo(String repoPath) async {
+  final base = Directory(_baseDir());
+  if (!base.existsSync()) return null;
+  final normalized = p.normalize(repoPath);
+
+  // Check if repoPath is directly a project dir in baseDir
+  // iterate subdirs
+  try {
+    final ents = base.listSync().whereType<Directory>();
+    for (final d in ents) {
+      if (p.normalize(d.path) == normalized) {
+        final name = p.basename(d.path);
+        final tracking = await _readTracking(name);
+        return {
+          'name': name,
+          'docxPath': tracking['docxPath'],
+          'repoDocxPath': tracking['repoDocxPath']
+        };
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
 Future<Map<String, dynamic>> updateTrackingProject(String name,
     {String? newDocxPath}) async {
   final projDir = _projectDir(name);
@@ -677,7 +701,7 @@ Future<void> pushToRemote(
   await _runGit(['push', '--all', remoteUrl], repoPath);
 }
 
-Future<String> pullFromRemote(
+Future<Map<String, dynamic>> pullFromRemote(
     String repoName, String username, String token) async {
   final projDir = _projectDir(repoName);
   final dir = Directory(projDir);
@@ -685,7 +709,9 @@ Future<String> pullFromRemote(
       'http://$username:$token@47.242.109.145:3000/$username/$repoName.git';
 
   Map<String, dynamic>? savedTracking;
-  if (dir.existsSync()) {
+  bool isFresh = !dir.existsSync();
+
+  if (!isFresh) {
     // Preserve tracking info
     savedTracking = await _readTracking(repoName);
     // Delete existing directory for a "thorough" clean pull
@@ -760,25 +786,27 @@ Future<String> pullFromRemote(
     // Non-fatal, we at least have the clone
   }
 
-  // Restore or Init tracking
-  if (savedTracking != null && savedTracking.isNotEmpty) {
-    await _writeTracking(repoName, savedTracking);
+  // Tracking logic
+  if (isFresh) {
+    // Fresh clone: Delete tracking.json if it exists (from remote) to prevent path confusion
+    final tFile = File(p.join(projDir, 'tracking.json'));
+    if (tFile.existsSync()) {
+      try {
+        tFile.deleteSync();
+      } catch (_) {}
+    }
+    // Do NOT auto-init tracking. Let user input.
   } else {
-    // Ensure tracking exists
-    final tracking = await _readTracking(repoName);
-    if (tracking.isEmpty) {
-      tracking['name'] = repoName;
-      // Try to find docx
-      final found = _findRepoDocx(projDir);
-      if (found != null) {
-        tracking['docxPath'] =
-            found; // Initial guess, user might want to change
-        tracking['repoDocxPath'] = found;
-      }
-      await _writeTracking(repoName, tracking);
+    // Existing: Restore saved tracking info, overwriting any remote tracking.json
+    if (savedTracking != null && savedTracking.isNotEmpty) {
+      await _writeTracking(repoName, savedTracking);
     }
   }
+
   await _startWatcher(repoName);
   clearCache();
-  return projDir;
+  return {
+    'path': projDir,
+    'isFresh': isFresh,
+  };
 }
