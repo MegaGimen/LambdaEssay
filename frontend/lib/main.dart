@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'visualize.dart';
 
 void main() {
@@ -106,6 +107,24 @@ class _GraphPageState extends State<GraphPage> {
   bool loading = false;
   String? currentProjectName;
   WorkingState? working;
+  SharedPreferences? _prefs;
+
+  @override
+  void initState() {
+    super.initState();
+    SharedPreferences.getInstance().then((p) {
+      setState(() => _prefs = p);
+    });
+  }
+
+  Future<void> _saveDocxPath(String projectName, String path) async {
+    if (_prefs == null) return;
+    await _prefs!.setString('docx_$projectName', path);
+  }
+
+  String? _getDocxPath(String projectName) {
+    return _prefs?.getString('docx_$projectName');
+  }
 
   Future<Map<String, dynamic>> _postJson(
       String url, Map<String, dynamic> body) async {
@@ -202,6 +221,9 @@ class _GraphPageState extends State<GraphPage> {
     if (name.isEmpty) {
       setState(() => error = '请输入项目名称');
       return;
+    }
+    if (docx.isNotEmpty) {
+      await _saveDocxPath(name, docx);
     }
     try {
       final resp = await _postJson('http://localhost:8080/track/create', {
@@ -314,54 +336,118 @@ class _GraphPageState extends State<GraphPage> {
           await _postJson('http://localhost:8080/track/update', {'name': name});
       final needDocx = resp['needDocx'] == true;
       if (needDocx) {
-        final docxCtrl = TextEditingController();
-        final ok = await showDialog<bool>(
-          context: context,
-          builder: (_) => AlertDialog(
-            title: const Text('选择docx文件路径'),
-            content: SizedBox(
-              width: 420,
-              child: TextField(
-                controller: docxCtrl,
-                decoration: const InputDecoration(
-                    labelText: 'docx文件路径 c:\\path\\to\\file.docx'),
+        String? docx = _getDocxPath(name);
+        bool askUser = docx == null || docx.isEmpty;
+
+        if (askUser) {
+          final docxCtrl = TextEditingController();
+          final ok = await showDialog<bool>(
+            context: context,
+            builder: (_) => AlertDialog(
+              title: const Text('选择docx文件路径'),
+              content: SizedBox(
+                width: 420,
+                child: TextField(
+                  controller: docxCtrl,
+                  decoration: const InputDecoration(
+                      labelText: 'docx文件路径 c:\\path\\to\\file.docx'),
+                ),
               ),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    child: const Text('取消')),
+                ElevatedButton(
+                    onPressed: () => Navigator.pop(context, true),
+                    child: const Text('确定')),
+              ],
             ),
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text('取消')),
-              ElevatedButton(
-                  onPressed: () => Navigator.pop(context, true),
-                  child: const Text('确定')),
-            ],
-          ),
-        );
-        if (ok == true) {
-          final docx = docxCtrl.text.trim();
-          if (docx.isNotEmpty) {
-            final up = await _postJson('http://localhost:8080/track/update', {
-              'name': name,
-              'newDocxPath': docx,
-            });
-            setState(() {
-              working = WorkingState(
-                changed: up['workingChanged'] == true,
-                baseId: up['head'] as String?,
-              );
-            });
+          );
+          if (ok == true) {
+            docx = docxCtrl.text.trim();
+            if (docx.isNotEmpty) {
+              await _saveDocxPath(name, docx);
+            }
+          } else {
+            docx = null;
           }
         }
+
+        if (docx != null && docx.isNotEmpty) {
+          final up = await _postJson('http://localhost:8080/track/update', {
+            'name': name,
+            'newDocxPath': docx,
+          });
+          setState(() {
+            working = WorkingState(
+              changed: up['workingChanged'] == true,
+              baseId: up['head'] as String?,
+            );
+          });
+        }
+      } else {
+        setState(() {
+          working = WorkingState(
+            changed: resp['workingChanged'] == true,
+            baseId: resp['head'] as String?,
+          );
+        });
       }
-      setState(() {
-        working = WorkingState(
-          changed: resp['workingChanged'] == true,
-          baseId: resp['head'] as String?,
-        );
-      });
       await _load();
     } catch (e) {
       setState(() => error = e.toString());
+    }
+  }
+
+  Future<void> _onProjectSettings() async {
+    if (currentProjectName == null) return;
+    final name = currentProjectName!;
+    final currentDocx = _getDocxPath(name) ?? '';
+    final docxCtrl = TextEditingController(text: currentDocx);
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('项目设置: $name'),
+        content: SizedBox(
+          width: 400,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('绑定的Docx文件路径：'),
+              TextField(
+                controller: docxCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'c:\\path\\to\\file.docx',
+                  hintText: '留空则清除',
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消')),
+          ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('保存')),
+        ],
+      ),
+    );
+
+    if (ok == true) {
+      final newPath = docxCtrl.text.trim();
+      if (newPath.isEmpty) {
+        if (_prefs != null) {
+          await _prefs!.remove('docx_$name');
+        }
+      } else {
+        await _saveDocxPath(name, newPath);
+      }
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('设置已保存，正在更新...')));
+      await _onUpdateRepo();
     }
   }
 
@@ -389,6 +475,13 @@ class _GraphPageState extends State<GraphPage> {
                   onPressed: loading ? null : _onUpdateRepo,
                   child: const Text('更新git仓库'),
                 ),
+                const SizedBox(width: 8),
+                if (currentProjectName != null)
+                  IconButton(
+                    onPressed: _onProjectSettings,
+                    icon: const Icon(Icons.settings),
+                    tooltip: '项目设置',
+                  ),
               ],
             ),
           ),
