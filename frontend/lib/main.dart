@@ -38,13 +38,13 @@ class CommitNode {
     required this.subject,
   });
   factory CommitNode.fromJson(Map<String, dynamic> j) => CommitNode(
-    id: j['id'],
-    parents: (j['parents'] as List).cast<String>(),
-    refs: (j['refs'] as List).cast<String>(),
-    author: j['author'],
-    date: j['date'],
-    subject: j['subject'],
-  );
+        id: j['id'],
+        parents: (j['parents'] as List).cast<String>(),
+        refs: (j['refs'] as List).cast<String>(),
+        author: j['author'],
+        date: j['date'],
+        subject: j['subject'],
+      );
 }
 
 class Branch {
@@ -74,17 +74,17 @@ class GraphData {
     this.currentBranch,
   });
   factory GraphData.fromJson(Map<String, dynamic> j) => GraphData(
-    commits: ((j['commits'] as List).map(
-      (e) => CommitNode.fromJson(e as Map<String, dynamic>),
-    )).toList(),
-    branches: ((j['branches'] as List).map(
-      (e) => Branch.fromJson(e as Map<String, dynamic>),
-    )).toList(),
-    chains: (j['chains'] as Map<String, dynamic>).map(
-      (k, v) => MapEntry(k, (v as List).cast<String>()),
-    ),
-    currentBranch: j['currentBranch'],
-  );
+        commits: ((j['commits'] as List).map(
+          (e) => CommitNode.fromJson(e as Map<String, dynamic>),
+        )).toList(),
+        branches: ((j['branches'] as List).map(
+          (e) => Branch.fromJson(e as Map<String, dynamic>),
+        )).toList(),
+        chains: (j['chains'] as Map<String, dynamic>).map(
+          (k, v) => MapEntry(k, (v as List).cast<String>()),
+        ),
+        currentBranch: j['currentBranch'],
+      );
 }
 
 class WorkingState {
@@ -1233,12 +1233,13 @@ class _GraphViewState extends State<_GraphView> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(_hovered!.subject),
+                      Text('提交信息: ${_hovered!.subject}'),
                       const SizedBox(height: 4),
-                      Text('${_hovered!.author}  ${_hovered!.date}'),
+                      Text('作者: ${_hovered!.author}'),
+                      Text('时间: ${_hovered!.date}'),
                       const SizedBox(height: 4),
-                      Text('parents: ${_hovered!.parents.join(', ')}'),
-                      Text('commit: ${_hovered!.id.substring(0, 7)}'),
+                      Text('父节点的提交的 ID: ${_hovered!.parents.join(', ')}'),
+                      Text('提交的 ID: ${_hovered!.id}'),
                     ],
                   ),
                 ),
@@ -1281,14 +1282,12 @@ class _GraphViewState extends State<_GraphView> {
                                 vertical: 4,
                               ),
                               decoration: BoxDecoration(
-                                color:
-                                    (_branchColors?[b] ??
-                                            const Color(0xFF9E9E9E))
-                                        .withValues(alpha: 0.15),
+                                color: (_branchColors?[b] ??
+                                        const Color(0xFF9E9E9E))
+                                    .withValues(alpha: 0.15),
                                 borderRadius: BorderRadius.circular(12),
                                 border: Border.all(
-                                  color:
-                                      _branchColors?[b] ??
+                                  color: _branchColors?[b] ??
                                       const Color(0xFF9E9E9E),
                                 ),
                               ),
@@ -1576,13 +1575,11 @@ class _GraphViewState extends State<_GraphView> {
 
   Offset _cubicPoint(Offset a, Offset c1, Offset c2, Offset b, double t) {
     final mt = 1 - t;
-    final x =
-        mt * mt * mt * a.dx +
+    final x = mt * mt * mt * a.dx +
         3 * mt * mt * t * c1.dx +
         3 * mt * t * t * c2.dx +
         t * t * t * b.dx;
-    final y =
-        mt * mt * mt * a.dy +
+    final y = mt * mt * mt * a.dy +
         3 * mt * mt * t * c1.dy +
         3 * mt * t * t * c2.dy +
         t * t * t * b.dy;
@@ -1598,8 +1595,7 @@ class _GraphViewState extends State<_GraphView> {
     double t = ab2 == 0 ? 0 : (apx * abx + apy * aby) / ab2;
     if (t < 0)
       t = 0;
-    else if (t > 1)
-      t = 1;
+    else if (t > 1) t = 1;
     final cx = a.dx + t * abx;
     final cy = a.dy + t * aby;
     final dx = p.dx - cx;
@@ -1707,9 +1703,8 @@ class GraphPainter extends CustomPainter {
       final x = lane * laneWidth + laneWidth / 2;
       final y = row * rowHeight + rowHeight / 2;
       final childIds = children[c.id] ?? const <String>[];
-      final childColors = childIds
-          .map((id) => _colorOfCommit(id, colorMemo))
-          .toSet();
+      final childColors =
+          childIds.map((id) => _colorOfCommit(id, colorMemo)).toSet();
       final isSplit = childIds.length >= 2 && childColors.length >= 2;
       final r = isSplit ? nodeRadius * 1.6 : nodeRadius;
       canvas.drawCircle(Offset(x, y), r, paintNode);
@@ -1765,9 +1760,8 @@ class GraphPainter extends CustomPainter {
           py,
         );
         paintEdge.color = bcolor;
-        paintEdge.strokeWidth = (hoverPairKey != null && hoverPairKey == key)
-            ? 3.0
-            : 2.0;
+        paintEdge.strokeWidth =
+            (hoverPairKey != null && hoverPairKey == key) ? 3.0 : 2.0;
         canvas.drawPath(path, paintEdge);
       }
     }
@@ -1777,16 +1771,26 @@ class GraphPainter extends CustomPainter {
       final row = rowOf[c.id]!;
       final lane = laneOf[c.id]!;
       final x = lane * laneWidth + laneWidth / 2 + 10;
-      final y = row * rowHeight + rowHeight / 2 - 8;
-      final label =
-          c.id.substring(0, 7) +
-          (c.refs.isNotEmpty ? ' [' + c.refs.first + ']' : '');
+      final y = row * rowHeight + rowHeight / 2;
+      String msg = c.subject;
+      if (msg.length > 10) {
+        msg = '${msg.substring(0, 10)}...';
+      }
+
       textPainter.text = TextSpan(
-        text: label,
         style: const TextStyle(color: Colors.black, fontSize: 12),
+        children: [
+          TextSpan(text: '提交id：${c.id.substring(0, 7)}'),
+          if (c.refs.isNotEmpty)
+            TextSpan(
+                text: ' [${c.refs.first}]',
+                style: const TextStyle(fontWeight: FontWeight.bold)),
+          const TextSpan(text: '\n'),
+          TextSpan(text: '提交信息：$msg'),
+        ],
       );
       textPainter.layout();
-      textPainter.paint(canvas, Offset(x, y));
+      textPainter.paint(canvas, Offset(x, y - textPainter.height / 2));
     }
 
     // 边框分区与当前状态
