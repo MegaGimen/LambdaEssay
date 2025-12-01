@@ -72,7 +72,7 @@ Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
   // Actually, let's just fetch branch separately?
   // No, putting it in GraphResponse is cleaner.
   // Let's invalidate cache on any write.
-  
+
   final cached = _graphCache[key];
   if (cached != null) {
     return cached;
@@ -80,7 +80,7 @@ Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
   final branches = await getBranches(repoPath);
   final chains = await getBranchChains(repoPath, branches, limit: limit);
   final current = await getCurrentBranch(repoPath);
-  
+
   final logArgs = [
     'log',
     '--all',
@@ -118,8 +118,11 @@ Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
       ),
     );
   }
-  final resp =
-      GraphResponse(commits: commits, branches: branches, chains: chains, currentBranch: current);
+  final resp = GraphResponse(
+      commits: commits,
+      branches: branches,
+      chains: chains,
+      currentBranch: current);
   _graphCache[key] = resp;
   return resp;
 }
@@ -130,12 +133,7 @@ Future<void> commitChanges(
   // Ensure author format "Name <email>"
   final safeAuthor = author.trim().isEmpty ? 'Unknown' : author.trim();
   final authorArg = '$safeAuthor <$safeAuthor@gitdocx.local>';
-  await _runGit([
-    'commit',
-    '--author=$authorArg',
-    '-m',
-    message
-  ], repoPath);
+  await _runGit(['commit', '--author=$authorArg', '-m', message], repoPath);
   clearCache();
 }
 
@@ -147,12 +145,12 @@ Future<void> createBranch(String repoPath, String branchName) async {
 Future<void> switchBranch(String projectName, String branchName) async {
   final repoPath = _projectDir(projectName);
   await _runGit(['checkout', branchName], repoPath);
-  
+
   // Sync back to external docx
   final tracking = await _readTracking(projectName);
   final docxPath = tracking['docxPath'] as String?;
   final repoDocxPath = tracking['repoDocxPath'] as String?;
-  
+
   if (docxPath != null && repoDocxPath != null) {
     final src = File(repoDocxPath);
     final dst = File(docxPath);
@@ -164,7 +162,8 @@ Future<void> switchBranch(String projectName, String branchName) async {
         // If copy fails, we should probably warn the user or try to rollback checkout?
         // But checkout is already done.
         // Let's just rethrow so frontend can show alert "Checkout done but file sync failed. Please close Word and try update."
-        throw Exception('Switch successful, but failed to update external file (is Word open?): $e');
+        throw Exception(
+            'Switch successful, but failed to update external file (is Word open?): $e');
       }
     }
   }
@@ -209,8 +208,7 @@ Future<Uint8List> compareWorking(String repoPath) async {
     ]);
 
     if (res.exitCode != 0 || !File(pdf).existsSync()) {
-      throw Exception(
-          'Compare failed: ${res.stdout}\n${res.stderr}');
+      throw Exception('Compare failed: ${res.stdout}\n${res.stderr}');
     }
 
     return await File(pdf).readAsBytes();
@@ -491,13 +489,41 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
     return {'needDocx': true, 'repoPath': projDir};
   }
 
-  // Check if files are semantically identical using Heidegger service
-  bool isIdentical = false;
-  if (File(repoDocxPath).existsSync()) {
-    isIdentical = await _checkDocxIdentical(sourcePath, repoDocxPath);
+  // Try to compare Source vs HEAD to decide whether to Restore or Copy
+  bool restored = false;
+  final relPath = p.relative(repoDocxPath, from: projDir);
+  // Git expects forward slashes for 'HEAD:path'
+  final gitRelPath = relPath.replaceAll(r'\', '/');
+
+  final tmpDir = await Directory.systemTemp.createTemp('git_head_check_');
+  try {
+    final headFile = p.join(tmpDir.path, 'HEAD.docx');
+    bool hasHead = false;
+    try {
+      await _runGitToFile(['show', 'HEAD:$gitRelPath'], projDir, headFile);
+      hasHead = true;
+    } catch (_) {
+      // File might not exist in HEAD
+    }
+
+    if (hasHead) {
+      // Compare Source vs HEAD
+      final isIdenticalToHead = await _checkDocxIdentical(sourcePath, headFile);
+      if (isIdenticalToHead) {
+        // If Source is semantically identical to HEAD, we restore the working copy
+        // to ensure git status is clean (undoing any metadata-only changes).
+        await _runGit(['checkout', 'HEAD', '--', relPath], projDir);
+        restored = true;
+      }
+    }
+  } finally {
+    try {
+      tmpDir.deleteSync(recursive: true);
+    } catch (_) {}
   }
 
-  if (!isIdentical) {
+  if (!restored) {
+    // If we didn't restore (either different from HEAD, or new file), we update the working copy
     await src.copy(repoDocxPath);
   }
 
@@ -520,9 +546,10 @@ Future<bool> _checkDocxIdentical(String path1, String path2) async {
 
     final client = HttpClient();
     final req = await client.post('localhost', 5000, '/compare');
-    final boundary = '---gitbin-boundary-${DateTime.now().millisecondsSinceEpoch}';
-    req.headers.contentType =
-        ContentType('multipart', 'form-data', parameters: {'boundary': boundary});
+    final boundary =
+        '---gitbin-boundary-${DateTime.now().millisecondsSinceEpoch}';
+    req.headers.contentType = ContentType('multipart', 'form-data',
+        parameters: {'boundary': boundary});
 
     void writePart(String fieldName, String filename, List<int> content) {
       req.write('--$boundary\r\n');
