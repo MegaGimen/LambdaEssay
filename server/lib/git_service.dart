@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
 import 'dart:typed_data';
+import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:uuid/uuid.dart';
 import 'models.dart';
@@ -634,4 +635,52 @@ Future<void> initTrackingService() async {
     final name = p.basename(d.path);
     await _startWatcher(name);
   }
+}
+
+Future<void> ensureRemoteRepoExists(String repoName, String token) async {
+  final url = Uri.parse('http://47.242.109.145:3920/api/v1/user/repos');
+  try {
+    final resp = await http.post(
+      url,
+      headers: {
+        'Authorization': 'token $token',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'name': repoName,
+        'private': false,
+      }),
+    );
+    if (resp.statusCode == 201) {
+      // Created
+    } else if (resp.statusCode == 409) {
+      // Already exists
+    } else {
+      throw Exception(
+          'Failed to create remote repo: ${resp.statusCode} ${resp.body}');
+    }
+  } catch (e) {
+    throw Exception('Failed to connect to remote: $e');
+  }
+}
+
+Future<void> pushToRemote(
+    String repoPath, String username, String token) async {
+  final repoName = p.basename(repoPath);
+  await ensureRemoteRepoExists(repoName, token);
+
+  final remoteUrl =
+      'http://$username:$token@47.242.109.145:3920/$username/$repoName.git';
+
+  await _runGit(['push', '--all', remoteUrl], repoPath);
+}
+
+Future<void> pullFromRemote(
+    String repoPath, String username, String token) async {
+  final repoName = p.basename(repoPath);
+  final remoteUrl =
+      'http://$username:$token@47.242.109.145:3920/$username/$repoName.git';
+
+  await _runGit(['pull', remoteUrl], repoPath);
+  clearCache();
 }
