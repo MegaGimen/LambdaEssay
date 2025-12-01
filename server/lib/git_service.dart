@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:async';
 import 'dart:typed_data';
 import 'package:path/path.dart' as p;
+import 'package:uuid/uuid.dart';
 import 'models.dart';
 
 final Map<String, GraphResponse> _graphCache = <String, GraphResponse>{};
@@ -157,7 +158,7 @@ Future<void> switchBranch(String projectName, String branchName) async {
     if (src.existsSync()) {
       try {
         // This might fail if Word has the file open and locked
-        await src.copy(dst.path);
+        await dst.writeAsBytes(await src.readAsBytes());
       } catch (e) {
         // If copy fails, we should probably warn the user or try to rollback checkout?
         // But checkout is already done.
@@ -424,8 +425,9 @@ Future<Map<String, dynamic>> createTrackingProject(
   if (docxPath != null && docxPath.trim().isNotEmpty) {
     final src = File(docxPath);
     if (src.existsSync()) {
-      repoDocxPath = p.normalize(p.join(projDir, p.basename(docxPath)));
-      await src.copy(repoDocxPath);
+      final uuid = const Uuid().v4();
+      repoDocxPath = p.normalize(p.join(projDir, '$uuid.docx'));
+      await File(repoDocxPath).writeAsBytes(await src.readAsBytes());
     }
   }
   final tracking = await _readTracking(name);
@@ -479,8 +481,11 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
   }
   String? repoDocxPath = tracking['repoDocxPath'] as String?;
   if (repoDocxPath == null || repoDocxPath.trim().isEmpty) {
-    repoDocxPath =
-        _findRepoDocx(projDir) ?? p.join(projDir, p.basename(sourcePath));
+    repoDocxPath = _findRepoDocx(projDir);
+    if (repoDocxPath == null) {
+      final uuid = const Uuid().v4();
+      repoDocxPath = p.join(projDir, '$uuid.docx');
+    }
     tracking['repoDocxPath'] = repoDocxPath;
   }
   await _writeTracking(name, tracking);
@@ -524,7 +529,7 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
 
   if (!restored) {
     // If we didn't restore (either different from HEAD, or new file), we update the working copy
-    await src.copy(repoDocxPath);
+    await File(repoDocxPath).writeAsBytes(await src.readAsBytes());
   }
 
   final diff = await _runGit(
