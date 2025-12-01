@@ -732,13 +732,16 @@ Future<Map<String, dynamic>> pullFromRemote(
     try {
       final statusLines = await _runGit(['status', '--porcelain'], projDir);
       if (statusLines.isNotEmpty) {
-        throw Exception(
-            'Local repository has uncommitted changes. Please commit or discard them before pulling.');
+        return {
+          'status': 'error',
+          'errorType': 'uncommitted',
+          'path': projDir,
+          'message':
+              'Local repository has uncommitted changes. Please commit or discard them before pulling.'
+        };
       }
     } catch (e) {
-      // If repo is broken, maybe allow overwrite? But safer to warn.
-      if (e.toString().contains('uncommitted')) rethrow;
-      // else proceed (maybe not a git repo, will be overwritten)
+      // If repo is broken, maybe allow overwrite?
     }
 
     // 2. Check if local is newer than remote
@@ -760,14 +763,16 @@ Future<Map<String, dynamic>> pullFromRemote(
       // exitCode 0 means true (is ancestor)
       // exitCode 1 means false (not ancestor)
       if (mergeBaseRes.exitCode != 0) {
-        throw Exception(
-            'Local branch is ahead of remote or diverged. Please push your changes first to avoid losing work.');
+        return {
+          'status': 'error',
+          'errorType': 'ahead',
+          'path': projDir,
+          'message':
+              'Local branch is ahead of remote or diverged. Please push your changes first to avoid losing work.'
+        };
       }
     } catch (e) {
-      if (e.toString().contains('Local branch is ahead')) rethrow;
-      // If fetch fails, we might be offline or repo deleted.
-      // We can choose to proceed or fail.
-      // Given "thorough pull", if remote is gone, we probably fail at clone anyway.
+      // If fetch fails, ignore here, will likely fail at clone step if network issue
     }
 
     // Preserve tracking info
@@ -884,6 +889,7 @@ Future<Map<String, dynamic>> pullFromRemote(
   await _startWatcher(repoName);
   clearCache();
   return {
+    'status': 'success',
     'path': projDir,
     'isFresh': isFresh,
   };
