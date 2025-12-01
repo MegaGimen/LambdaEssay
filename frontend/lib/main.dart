@@ -141,12 +141,12 @@ class _GraphPageState extends State<GraphPage> {
     });
     try {
       final resp = await http.post(
-        Uri.parse('http://47.242.109.145:3920/create_user'),
+        Uri.parse('http://localhost:8080/create_user'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'username': u, 'password': p}),
       );
       if (resp.statusCode != 200) {
-        throw Exception('登录失败: ${resp.body}');
+        throw Exception('登录失败(${resp.statusCode}): ${resp.body}');
       }
       final body = jsonDecode(resp.body) as Map<String, dynamic>;
       final token = body['token'] as String;

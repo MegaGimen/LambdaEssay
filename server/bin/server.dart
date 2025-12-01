@@ -6,6 +6,7 @@ import 'package:shelf/shelf_io.dart';
 import 'package:shelf_router/shelf_router.dart';
 import 'package:path/path.dart' as p;
 import '../lib/git_service.dart';
+import 'package:http/http.dart' as http;
 
 Response _cors(Response r) {
   return r.change(headers: {
@@ -428,6 +429,26 @@ Future<void> main(List<String> args) async {
     } catch (e) {
       return _cors(Response(500,
           body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/create_user', (Request req) async {
+    try {
+      final body = await req.readAsString();
+      final url = Uri.parse('http://47.242.109.145:3920/create_user');
+      final resp = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: body,
+      );
+      // Forward status and body
+      return _cors(Response(resp.statusCode,
+          body: resp.body,
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': 'Proxy failed: $e'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
   });

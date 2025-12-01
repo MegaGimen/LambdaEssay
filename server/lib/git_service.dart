@@ -638,7 +638,8 @@ Future<void> initTrackingService() async {
 }
 
 Future<void> ensureRemoteRepoExists(String repoName, String token) async {
-  final url = Uri.parse('http://47.242.109.145:3920/api/v1/user/repos');
+  print("Ensuriing exist");
+  final url = Uri.parse('http://47.242.109.145:3000/api/v1/user/repos');
   try {
     final resp = await http.post(
       url,
@@ -648,7 +649,7 @@ Future<void> ensureRemoteRepoExists(String repoName, String token) async {
       },
       body: jsonEncode({
         'name': repoName,
-        'private': false,
+        'private': true,
       }),
     );
     if (resp.statusCode == 201) {
@@ -666,11 +667,12 @@ Future<void> ensureRemoteRepoExists(String repoName, String token) async {
 
 Future<void> pushToRemote(
     String repoPath, String username, String token) async {
+  print("pussying");
   final repoName = p.basename(repoPath);
   await ensureRemoteRepoExists(repoName, token);
 
   final remoteUrl =
-      'http://$username:$token@47.242.109.145:3920/$username/$repoName.git';
+      'http://$username:$token@47.242.109.145:3000/$username/$repoName.git';
 
   await _runGit(['push', '--all', remoteUrl], repoPath);
 }
@@ -679,7 +681,7 @@ Future<void> pullFromRemote(
     String repoPath, String username, String token) async {
   final repoName = p.basename(repoPath);
   final remoteUrl =
-      'http://$username:$token@47.242.109.145:3920/$username/$repoName.git';
+      'http://$username:$token@47.242.109.145:3000/$username/$repoName.git';
 
   await _runGit(['pull', remoteUrl], repoPath);
   clearCache();
