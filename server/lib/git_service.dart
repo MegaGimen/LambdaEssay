@@ -231,17 +231,17 @@ List<String> _parseRefs(String decoration) {
   if (start < 0 || end < 0 || end <= start) return <String>[];
   final inner = s.substring(start + 1, end);
   final items = inner.split(',');
-  final refs = <String>[];
+  final refs = <String>{};
   for (var i in items) {
     final t = i.trim();
     if (t.isEmpty) continue;
     final cleaned = t
         .replaceAll(RegExp(r'^HEAD ->\s*'), '')
         .replaceAll(RegExp(r'^tag:\s*'), '')
-        .replaceAll(RegExp(r'^origin/'), 'origin/');
+        .replaceAll(RegExp(r'^origin/'), '');
     refs.add(cleaned);
   }
-  return refs;
+  return refs.toList();
 }
 
 Future<Map<String, List<String>>> getBranchChains(
@@ -684,21 +684,86 @@ Future<String> pullFromRemote(
   final remoteUrl =
       'http://$username:$token@47.242.109.145:3000/$username/$repoName.git';
 
-  if (!dir.existsSync()) {
-    // Clone
-    final base = Directory(_baseDir());
-    if (!base.existsSync()) {
-      base.createSync(recursive: true);
+  Map<String, dynamic>? savedTracking;
+  if (dir.existsSync()) {
+    // Preserve tracking info
+    savedTracking = await _readTracking(repoName);
+    // Delete existing directory for a "thorough" clean pull
+    try {
+      dir.deleteSync(recursive: true);
+    } catch (e) {
+      throw Exception('Failed to clean existing directory: $e');
     }
-    // git clone <url> <dir>
-    final res = await Process.run(
+  }
+
+  // Clone
+  final base = Directory(_baseDir());
+  if (!base.existsSync()) {
+    base.createSync(recursive: true);
+  }
+  // git clone <url> <dir>
+  final res = await Process.run(
+    'git',
+    ['clone', remoteUrl, projDir],
+    runInShell: true,
+  );
+  if (res.exitCode != 0) {
+    throw Exception('Clone failed: ${res.stderr}');
+  }
+
+  // Fetch all remote branches and create local tracking branches
+  try {
+    // Get list of remote branches
+    final branchesRes = await Process.run(
       'git',
-      ['clone', remoteUrl, projDir],
+      ['branch', '-r'],
+      workingDirectory: projDir,
       runInShell: true,
     );
-    if (res.exitCode != 0) {
-      throw Exception('Clone failed: ${res.stderr}');
+    if (branchesRes.exitCode == 0) {
+      final lines = (branchesRes.stdout as String).split('\n');
+      for (final line in lines) {
+        final trimmed = line.trim();
+        if (trimmed.isEmpty) continue;
+        if (trimmed.contains('->')) continue; // Skip HEAD -> origin/master
+
+        // trimmed is like "origin/feature-a"
+        final parts = trimmed.split('/');
+        if (parts.length < 2) continue;
+
+        // Assuming remote name is always the first part (origin)
+        // branch name is the rest
+        final branchName = parts.sublist(1).join('/');
+
+        // Check if local branch already exists (e.g. master)
+        final localCheck = await Process.run(
+          'git',
+          ['rev-parse', '--verify', branchName],
+          workingDirectory: projDir,
+          runInShell: true,
+        );
+
+        if (localCheck.exitCode != 0) {
+          // Local branch does not exist, create it tracking the remote
+          // git branch --track <name> <remote>/<name>
+          await Process.run(
+            'git',
+            ['branch', '--track', branchName, trimmed],
+            workingDirectory: projDir,
+            runInShell: true,
+          );
+        }
+      }
     }
+  } catch (e) {
+    print('Warning: Failed to restore remote branches: $e');
+    // Non-fatal, we at least have the clone
+  }
+
+  // Restore or Init tracking
+  if (savedTracking != null && savedTracking.isNotEmpty) {
+    await _writeTracking(repoName, savedTracking);
+  } else {
     // Ensure tracking exists
     final tracking = await _readTracking(repoName);
     if (tracking.isEmpty) {
@@ -712,16 +777,8 @@ Future<String> pullFromRemote(
       }
       await _writeTracking(repoName, tracking);
     }
-    await _startWatcher(repoName);
-  } else {
-    // Pull
-    // Check if it is a git repo
-    final gitDir = Directory(p.join(projDir, '.git'));
-    if (!gitDir.existsSync()) {
-      throw Exception('Directory exists but is not a git repository');
-    }
-    await _runGit(['pull', remoteUrl], projDir);
   }
+  await _startWatcher(repoName);
   clearCache();
   return projDir;
 }
