@@ -255,11 +255,54 @@ class _GraphPageState extends State<GraphPage> {
         'username': _username,
         'token': _token,
       });
-      final path = resp['path'] as String;
+
+      final status = resp['status'] as String?;
+      final path = resp['path'] as String?;
+
+      // Auto open repo if path is available
+      if (path != null && path.isNotEmpty) {
+        setState(() {
+          pathCtrl.text = path;
+        });
+        await _load();
+      }
+
+      if (status == 'error') {
+        final errorType = resp['errorType'];
+        final message = resp['message'] ?? 'Unknown error';
+
+        if (errorType == 'ahead' || errorType == 'uncommitted') {
+          final bool isAhead = errorType == 'ahead';
+          showDialog(
+            context: context,
+            builder: (_) => AlertDialog(
+              title: const Text('无法拉取'),
+              content: Text(message),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('取消'),
+                ),
+                if (isAhead)
+                  ElevatedButton(
+                    onPressed: () {
+                      Navigator.pop(context);
+                      _onPush();
+                    },
+                    child: const Text('立即推送'),
+                  ),
+              ],
+            ),
+          );
+        } else {
+          setState(() => error = '拉取失败: $message');
+        }
+        return;
+      }
+
       final isFresh = resp['isFresh'] == true;
 
       setState(() {
-        pathCtrl.text = path;
         // If fresh clone, user needs to set up tracking document
         if (isFresh) {
           currentProjectName = repoName;
@@ -320,7 +363,8 @@ class _GraphPageState extends State<GraphPage> {
         }
       }
 
-      await _load(); // Reload graph
+      // Reload again to update graph if needed (e.g. fresh clone or new commits)
+      await _load();
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('拉取成功')));
     } catch (e) {
