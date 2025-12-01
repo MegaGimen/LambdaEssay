@@ -23,18 +23,33 @@ Future<List<String>> _runGit(List<String> args, String repoPath) async {
     repoPath,
     ...args,
   ];
-  final res = await Process.run(
-    'git',
-    fullArgs,
-    stdoutEncoding: utf8,
-    stderrEncoding: utf8,
-  );
-  if (res.exitCode != 0) {
-    throw Exception(res.stderr is String ? res.stderr : 'git error');
+  try {
+    final res = await Process.run(
+      'git',
+      fullArgs,
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8,
+    );
+    if (res.exitCode != 0) {
+      throw Exception(res.stderr is String ? res.stderr : 'git error');
+    }
+    final out =
+        res.stdout is String ? res.stdout as String : utf8.decode(res.stdout);
+    return LineSplitter.split(out).toList();
+  } on FormatException {
+    // Fallback for non-UTF8 output (e.g. windows system locale)
+    final res = await Process.run(
+      'git',
+      fullArgs,
+      stdoutEncoding: systemEncoding,
+      stderrEncoding: systemEncoding,
+    );
+    if (res.exitCode != 0) {
+      throw Exception(res.stderr is String ? res.stderr : 'git error');
+    }
+    final out = res.stdout as String;
+    return LineSplitter.split(out).toList();
   }
-  final out =
-      res.stdout is String ? res.stdout as String : utf8.decode(res.stdout);
-  return LineSplitter.split(out).toList();
 }
 
 Future<List<Branch>> getBranches(String repoPath) async {
