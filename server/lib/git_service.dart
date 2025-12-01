@@ -677,12 +677,51 @@ Future<void> pushToRemote(
   await _runGit(['push', '--all', remoteUrl], repoPath);
 }
 
-Future<void> pullFromRemote(
-    String repoPath, String username, String token) async {
-  final repoName = p.basename(repoPath);
+Future<String> pullFromRemote(
+    String repoName, String username, String token) async {
+  final projDir = _projectDir(repoName);
+  final dir = Directory(projDir);
   final remoteUrl =
       'http://$username:$token@47.242.109.145:3000/$username/$repoName.git';
 
-  await _runGit(['pull', remoteUrl], repoPath);
+  if (!dir.existsSync()) {
+    // Clone
+    final base = Directory(_baseDir());
+    if (!base.existsSync()) {
+      base.createSync(recursive: true);
+    }
+    // git clone <url> <dir>
+    final res = await Process.run(
+      'git',
+      ['clone', remoteUrl, projDir],
+      runInShell: true,
+    );
+    if (res.exitCode != 0) {
+      throw Exception('Clone failed: ${res.stderr}');
+    }
+    // Ensure tracking exists
+    final tracking = await _readTracking(repoName);
+    if (tracking.isEmpty) {
+      tracking['name'] = repoName;
+      // Try to find docx
+      final found = _findRepoDocx(projDir);
+      if (found != null) {
+        tracking['docxPath'] =
+            found; // Initial guess, user might want to change
+        tracking['repoDocxPath'] = found;
+      }
+      await _writeTracking(repoName, tracking);
+    }
+    await _startWatcher(repoName);
+  } else {
+    // Pull
+    // Check if it is a git repo
+    final gitDir = Directory(p.join(projDir, '.git'));
+    if (!gitDir.existsSync()) {
+      throw Exception('Directory exists but is not a git repository');
+    }
+    await _runGit(['pull', remoteUrl], projDir);
+  }
   clearCache();
+  return projDir;
 }
