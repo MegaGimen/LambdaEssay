@@ -88,6 +88,8 @@ def compare_docs(doc1_source, doc2_source):
         content2 = extract_content(doc2_source)
         print(content1)
         print(content2)
+
+        print(content1==content2)
         
         if content1 == content2:
             return True, "No differences found."
