@@ -214,20 +214,50 @@ class _GraphPageState extends State<GraphPage> {
       setState(() => error = '请先登录');
       return;
     }
-    final repoPath = pathCtrl.text.trim();
-    if (repoPath.isEmpty) {
-      setState(() => error = '请输入本地仓库路径');
+    final nameCtrl = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('拉取仓库'),
+        content: SizedBox(
+          width: 360,
+          child: TextField(
+            controller: nameCtrl,
+            decoration: const InputDecoration(labelText: '仓库名称'),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('拉取'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final repoName = nameCtrl.text.trim();
+    if (repoName.isEmpty) {
+      setState(() => error = '请输入仓库名称');
       return;
     }
+
     setState(() {
       loading = true;
       error = null;
     });
     try {
-      await _postJson('http://localhost:8080/pull', {
-        'repoPath': repoPath,
+      final resp = await _postJson('http://localhost:8080/pull', {
+        'repoName': repoName,
         'username': _username,
         'token': _token,
+      });
+      final path = resp['path'] as String;
+      setState(() {
+        pathCtrl.text = path;
       });
       await _load(); // Reload graph
       ScaffoldMessenger.of(context)
