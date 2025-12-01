@@ -1,9 +1,9 @@
 import 'dart:convert';
 import 'dart:math' as math;
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'visualize.dart';
 
 void main() {
@@ -109,9 +109,134 @@ class _GraphPageState extends State<GraphPage> {
   String? currentProjectName;
   WorkingState? working;
 
+  final TextEditingController userCtrl = TextEditingController();
+  final TextEditingController passCtrl = TextEditingController();
+  String? _username;
+  String? _token;
+
   @override
   void initState() {
     super.initState();
+    _checkLogin();
+  }
+
+  Future<void> _checkLogin() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _username = prefs.getString('git_username');
+      _token = prefs.getString('git_token');
+    });
+  }
+
+  Future<void> _doLogin() async {
+    final u = userCtrl.text.trim();
+    final p = passCtrl.text.trim();
+    if (u.isEmpty || p.isEmpty) {
+      setState(() => error = '请输入用户名和密码');
+      return;
+    }
+    setState(() {
+      loading = true;
+      error = null;
+    });
+    try {
+      final resp = await http.post(
+        Uri.parse('http://47.242.109.145:3920/create_user'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'username': u, 'password': p}),
+      );
+      if (resp.statusCode != 200) {
+        throw Exception('登录失败: ${resp.body}');
+      }
+      final body = jsonDecode(resp.body) as Map<String, dynamic>;
+      final token = body['token'] as String;
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('git_username', u);
+      await prefs.setString('git_token', token);
+
+      setState(() {
+        _username = u;
+        _token = token;
+        loading = false;
+      });
+    } catch (e) {
+      setState(() {
+        error = e.toString();
+        loading = false;
+      });
+    }
+  }
+
+  Future<void> _doLogout() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('git_username');
+    await prefs.remove('git_token');
+    setState(() {
+      _username = null;
+      _token = null;
+      userCtrl.clear();
+      passCtrl.clear();
+    });
+  }
+
+  Future<void> _onPush() async {
+    if (_username == null || _token == null) {
+      setState(() => error = '请先登录');
+      return;
+    }
+    final repoPath = pathCtrl.text.trim();
+    if (repoPath.isEmpty) {
+      setState(() => error = '请输入本地仓库路径');
+      return;
+    }
+    setState(() {
+      loading = true;
+      error = null;
+    });
+    try {
+      await _postJson('http://localhost:8080/push', {
+        'repoPath': repoPath,
+        'username': _username,
+        'token': _token,
+      });
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('推送成功')));
+    } catch (e) {
+      setState(() => error = '推送失败: $e');
+    } finally {
+      setState(() => loading = false);
+    }
+  }
+
+  Future<void> _onPull() async {
+    if (_username == null || _token == null) {
+      setState(() => error = '请先登录');
+      return;
+    }
+    final repoPath = pathCtrl.text.trim();
+    if (repoPath.isEmpty) {
+      setState(() => error = '请输入本地仓库路径');
+      return;
+    }
+    setState(() {
+      loading = true;
+      error = null;
+    });
+    try {
+      await _postJson('http://localhost:8080/pull', {
+        'repoPath': repoPath,
+        'username': _username,
+        'token': _token,
+      });
+      await _load(); // Reload graph
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('拉取成功')));
+    } catch (e) {
+      setState(() => error = '拉取失败: $e');
+    } finally {
+      setState(() => loading = false);
+    }
   }
 
   Future<Map<String, dynamic>> _postJson(
@@ -467,6 +592,39 @@ class _GraphPageState extends State<GraphPage> {
       appBar: AppBar(title: const Text('Git Graph 可视化')),
       body: Column(
         children: [
+          if (_username == null)
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: Row(
+                children: [
+                  Expanded(
+                      child: TextField(
+                          controller: userCtrl,
+                          decoration: const InputDecoration(labelText: '用户名'))),
+                  const SizedBox(width: 8),
+                  Expanded(
+                      child: TextField(
+                          controller: passCtrl,
+                          obscureText: true,
+                          decoration: const InputDecoration(labelText: '密码'))),
+                  const SizedBox(width: 8),
+                  ElevatedButton(
+                      onPressed: loading ? null : _doLogin,
+                      child: const Text('登录/注册')),
+                ],
+              ),
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: Row(children: [
+                Text('当前用户: $_username'),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                    onPressed: loading ? null : _doLogout,
+                    child: const Text('登出'))
+              ]),
+            ),
           Padding(
             padding: const EdgeInsets.all(8),
             child: Row(
@@ -484,6 +642,16 @@ class _GraphPageState extends State<GraphPage> {
                 ElevatedButton(
                   onPressed: loading ? null : _onUpdateRepo,
                   child: const Text('更新git仓库'),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: loading ? null : _onPush,
+                  child: const Text('推送'),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: loading ? null : _onPull,
+                  child: const Text('拉取'),
                 ),
                 const SizedBox(width: 8),
                 if (currentProjectName != null)
