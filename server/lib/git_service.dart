@@ -490,7 +490,17 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
   if (!src.existsSync()) {
     return {'needDocx': true, 'repoPath': projDir};
   }
-  await src.copy(repoDocxPath);
+
+  // Check if files are semantically identical using Heidegger service
+  bool isIdentical = false;
+  if (File(repoDocxPath).existsSync()) {
+    isIdentical = await _checkDocxIdentical(sourcePath, repoDocxPath);
+  }
+
+  if (!isIdentical) {
+    await src.copy(repoDocxPath);
+  }
+
   final diff = await _runGit(
       ['diff', '--name-only', '--', p.basename(repoDocxPath)], projDir);
   final head = await getHead(projDir);
@@ -500,6 +510,45 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
     'repoPath': projDir,
     'head': head,
   };
+}
+
+Future<bool> _checkDocxIdentical(String path1, String path2) async {
+  try {
+    final f1 = File(path1);
+    final f2 = File(path2);
+    if (!f1.existsSync() || !f2.existsSync()) return false;
+
+    final client = HttpClient();
+    final req = await client.post('localhost', 5000, '/compare');
+    final boundary = '---gitbin-boundary-${DateTime.now().millisecondsSinceEpoch}';
+    req.headers.contentType =
+        ContentType('multipart', 'form-data', parameters: {'boundary': boundary});
+
+    void writePart(String fieldName, String filename, List<int> content) {
+      req.write('--$boundary\r\n');
+      req.write(
+          'Content-Disposition: form-data; name="$fieldName"; filename="$filename"\r\n');
+      req.write(
+          'Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document\r\n\r\n');
+      req.add(content);
+      req.write('\r\n');
+    }
+
+    writePart('file1', p.basename(path1), await f1.readAsBytes());
+    writePart('file2', p.basename(path2), await f2.readAsBytes());
+    req.write('--$boundary--\r\n');
+
+    final resp = await req.close();
+    if (resp.statusCode != 200) {
+      return false;
+    }
+    final bodyStr = await utf8.decodeStream(resp);
+    final body = jsonDecode(bodyStr) as Map<String, dynamic>;
+    return body['identical'] == true;
+  } catch (e) {
+    // Service might be down or error, fallback to safe "not identical" -> triggering copy & git diff
+    return false;
+  }
 }
 
 Future<String?> getHead(String repoPath) async {
