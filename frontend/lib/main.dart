@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
@@ -126,6 +128,38 @@ class _GraphPageState extends State<GraphPage> {
   String? _token;
 
   static const String baseUrl = 'http://localhost:8080';
+  StreamSubscription<FileSystemEvent>? _fileWatcher;
+  Timer? _watcherDebounce;
+
+  @override
+  void dispose() {
+    _fileWatcher?.cancel();
+    _watcherDebounce?.cancel();
+    pathCtrl.dispose();
+    limitCtrl.dispose();
+    docxPathCtrl.dispose();
+    super.dispose();
+  }
+
+  void _startWatching(String path) {
+    _fileWatcher?.cancel();
+    _fileWatcher = null;
+    if (path.isEmpty) return;
+    try {
+      final f = File(path);
+      if (!f.existsSync()) return;
+      _fileWatcher = f.watch(events: FileSystemEvent.modify).listen((event) {
+        _watcherDebounce?.cancel();
+        _watcherDebounce = Timer(const Duration(seconds: 2), () {
+          if (mounted) {
+            _onUpdateRepo();
+          }
+        });
+      });
+    } catch (e) {
+      debugPrint('Error watching file: $e');
+    }
+  }
 
   @override
   void initState() {
@@ -1092,6 +1126,7 @@ class _GraphPageState extends State<GraphPage> {
         );
       });
       await _load();
+      _startWatching(docx);
     } catch (e) {
       setState(() => error = e.toString());
     }
@@ -1178,6 +1213,7 @@ class _GraphPageState extends State<GraphPage> {
       await _load();
       // Auto update after opening/selecting repo to sync latest status
       await _onUpdateRepoAction(forcePull: true);
+      _startWatching(docxPath ?? '');
     } catch (e) {
       setState(() => error = e.toString());
     }
@@ -1363,6 +1399,7 @@ class _GraphPageState extends State<GraphPage> {
               baseId: up['head'] as String?,
             );
           });
+          _startWatching(docx);
         }
       } else {
         setState(() {
@@ -1602,6 +1639,7 @@ class _GraphPageState extends State<GraphPage> {
           );
         });
         await _load();
+        _startWatching(newPath);
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(const SnackBar(content: Text('路径已更新')));
