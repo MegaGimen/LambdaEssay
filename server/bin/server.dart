@@ -37,14 +37,46 @@ String _sanitizePath(String? raw) {
   return t;
 }
 
+Future<void> _killPort(int port) async {
+  try {
+    final result = await Process.run('netstat', ['-ano']);
+    if (result.exitCode != 0) return;
+    final lines = (result.stdout as String).split(RegExp(r'\r?\n'));
+    final pids = <String>{};
+    for (final line in lines) {
+      if (line.contains(':$port')) {
+        final parts = line.trim().split(RegExp(r'\s+'));
+        if (parts.length >= 5 && parts[1].endsWith(':$port')) {
+          pids.add(parts.last);
+        }
+      }
+    }
+    for (final pid in pids) {
+      if (pid == '0') continue;
+      print('Killing process $pid occupying port $port...');
+      await Process.run('taskkill', ['/F', '/PID', pid]);
+    }
+  } catch (e) {
+    print('Failed to clean up port $port: $e');
+  }
+}
+
 Future<void> main(List<String> args) async {
   // Start Heidegger service in background
   try {
     final scriptDir = p.dirname(Platform.script.toFilePath());
     final heideggerPath = p.join(scriptDir, 'Heidegger.exe');
     if (File(heideggerPath).existsSync()) {
+      await _killPort(5000);
       print('Starting Heidegger service from $heideggerPath...');
-      await Process.start(heideggerPath, [], mode: ProcessStartMode.detached);
+      final process =
+          await Process.start(heideggerPath, [], mode: ProcessStartMode.normal);
+      process.stdout
+          .transform(utf8.decoder)
+          .listen((data) => stdout.write('[Heidegger] $data'));
+      process.stderr
+          .transform(utf8.decoder)
+          .listen((data) => stderr.write('[Heidegger Error] $data'));
     } else {
       print('Heidegger.exe not found at $heideggerPath');
     }
