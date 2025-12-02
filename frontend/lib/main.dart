@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/gestures.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -231,6 +232,11 @@ class _GraphPageState extends State<GraphPage> {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('git_username', resp['username'] ?? u);
         await prefs.setString('git_token', token);
+
+        if (tokens != null) {
+          await prefs.setString('git_tokens_list', jsonEncode(tokens));
+        }
+
         setState(() {
           _username = resp['username'] ?? u;
           _token = token;
@@ -268,6 +274,7 @@ class _GraphPageState extends State<GraphPage> {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('git_username', username);
       await prefs.setString('git_token', token);
+      await prefs.setString('git_tokens_list', jsonEncode(tokens));
 
       setState(() {
         _username = username;
@@ -284,12 +291,68 @@ class _GraphPageState extends State<GraphPage> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('git_username');
     await prefs.remove('git_token');
+    await prefs.remove('git_tokens_list');
     setState(() {
       _username = null;
       _token = null;
       userCtrl.clear();
       passCtrl.clear();
     });
+  }
+
+  Future<void> _showTokensDialog() async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonStr = prefs.getString('git_tokens_list');
+    List<dynamic> tokens = [];
+    if (jsonStr != null) {
+      try {
+        tokens = jsonDecode(jsonStr) as List;
+      } catch (_) {}
+    }
+
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('当前授权码列表'),
+        content: SizedBox(
+          width: 400,
+          height: 300,
+          child: tokens.isEmpty
+              ? const Center(child: Text('暂无保存的 Token 信息'))
+              : ListView.separated(
+                  itemCount: tokens.length,
+                  separatorBuilder: (_, __) => const Divider(),
+                  itemBuilder: (context, index) {
+                    final t = tokens[index];
+                    final remark = t['remark'] ?? '无备注';
+                    final sha1 = t['sha1'] ?? '???';
+                    final isCurrent = sha1 == _token;
+                    return ListTile(
+                      title: Text(remark,
+                          style: const TextStyle(fontWeight: FontWeight.bold)),
+                      subtitle: Text(sha1,
+                          style: const TextStyle(fontFamily: 'monospace')),
+                      trailing: isCurrent
+                          ? const Icon(Icons.check, color: Colors.green)
+                          : null,
+                      onTap: () {
+                        Clipboard.setData(ClipboardData(text: sha1));
+                        ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Token已复制')));
+                      },
+                    );
+                  },
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _onPush({bool force = false}) async {
@@ -1060,6 +1123,9 @@ class _GraphPageState extends State<GraphPage> {
               padding: const EdgeInsets.all(8),
               child: Row(children: [
                 Text('当前用户: $_username'),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                    onPressed: _showTokensDialog, child: const Text('查看授权码')),
                 const SizedBox(width: 8),
                 ElevatedButton(
                     onPressed: loading ? null : _doLogout,
