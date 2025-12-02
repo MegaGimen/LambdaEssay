@@ -1234,6 +1234,122 @@ class _GraphViewState extends State<_GraphView> {
     await _doSwitchBranch(name);
   }
 
+  void _showNodeActionDialog(CommitNode node) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('操作: ${node.id.substring(0, 7)}'),
+        content: Text('提交信息: ${node.subject}'),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _previewVersion(node);
+            },
+            child: const Text('预览这个版本'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _rollbackVersion(node);
+            },
+            child: const Text('回退到这个版本'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('我点错了'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _previewVersion(CommitNode node) async {
+    try {
+      final resp = await http.post(
+        Uri.parse('http://localhost:8080/preview'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'repoPath': widget.repoPath,
+          'commitId': node.id,
+        }),
+      );
+      if (resp.statusCode != 200) {
+        throw Exception('预览失败: ${resp.body}');
+      }
+      final bytes = resp.bodyBytes;
+      if (!mounted) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => VisualizeDocxPage(
+            initialBytes: bytes,
+            title: '预览: ${node.id.substring(0, 7)}',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e')),
+      );
+    }
+  }
+
+  Future<void> _rollbackVersion(CommitNode node) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('确认回退'),
+        content: Text('确定要将工作区文档回退到版本 ${node.id.substring(0, 7)} 吗？\n'
+            '当前未提交的更改可能会丢失。\n'
+            '请确保 Word 文档已关闭。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('正在回退...')));
+
+    try {
+      final resp = await http.post(
+        Uri.parse('http://localhost:8080/rollback'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'projectName': widget.projectName ?? '',
+          'commitId': node.id,
+        }),
+      );
+      if (resp.statusCode != 200) {
+        throw Exception('回退失败: ${resp.body}');
+      }
+
+      if (widget.onRefresh != null) {
+        widget.onRefresh!();
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('回退成功')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Error: $e')));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     _branchColors ??= _assignBranchColors(widget.data.branches);
@@ -1294,87 +1410,6 @@ class _GraphViewState extends State<_GraphView> {
               _rightPanStart = null;
             },
             child: GestureDetector(
-              onDoubleTapDown: (d) {
-                final scene = _toScene(d.localPosition);
-                final hit = _hitTest(scene, widget.data);
-                if (hit != null) {
-                  final branches =
-                      widget.data.branches.map((b) => b.name).toSet();
-                  final targets =
-                      hit.refs.where((r) => branches.contains(r)).toList();
-                  if (targets.isNotEmpty) {
-                    final current = widget.data.currentBranch;
-                    final others = targets.where((t) => t != current).toList();
-
-                    if (others.length == 1) {
-                      _doSwitchBranch(others.first);
-                    } else if (others.length > 1) {
-                      showDialog(
-                        context: context,
-                        builder: (_) => SimpleDialog(
-                          title: const Text('选择分支'),
-                          children: others
-                              .map(
-                                (b) => SimpleDialogOption(
-                                  onPressed: () {
-                                    Navigator.pop(context);
-                                    _doSwitchBranch(b);
-                                  },
-                                  child: Text(b),
-                                ),
-                              )
-                              .toList(),
-                        ),
-                      );
-                    } else {
-                      if (targets.contains(current)) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('已经是当前分支')),
-                        );
-                      }
-                    }
-                  }
-                } else {
-                  // Check if edge is hit
-                  final edgeHit = _hitEdge(scene, widget.data);
-                  if (edgeHit != null && edgeHit.branches.isNotEmpty) {
-                    final current = widget.data.currentBranch;
-                    final others =
-                        edgeHit.branches.where((b) => b != current).toList();
-
-                    if (others.isEmpty) {
-                      if (edgeHit.branches.contains(current)) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('已经是当前分支')),
-                        );
-                      }
-                      return;
-                    }
-
-                    if (others.length == 1) {
-                      _doSwitchBranch(others.first);
-                    } else {
-                      showDialog(
-                        context: context,
-                        builder: (_) => SimpleDialog(
-                          title: const Text('选择分支'),
-                          children: others
-                              .map(
-                                (b) => SimpleDialogOption(
-                                  onPressed: () {
-                                    Navigator.pop(context);
-                                    _doSwitchBranch(b);
-                                  },
-                                  child: Text(b),
-                                ),
-                              )
-                              .toList(),
-                        ),
-                      );
-                    }
-                  }
-                }
-              },
               onTapUp: (d) {
                 final scene = _toScene(d.localPosition);
                 final hit = _hitTest(scene, widget.data);
@@ -1399,20 +1434,29 @@ class _GraphViewState extends State<_GraphView> {
                 maxScale: 4,
                 constrained: false,
                 boundaryMargin: const EdgeInsets.all(2000),
-                child: SizedBox(
-                  width: _canvasSize!.width,
-                  height: _canvasSize!.height,
-                  child: CustomPaint(
-                    painter: GraphPainter(
-                      widget.data,
-                      _branchColors!,
-                      _hoverEdgeKey(),
-                      _laneWidth,
-                      _rowHeight,
-                      working: widget.working,
-                      selectedNodes: _selectedNodes,
+                child: GestureDetector(
+                  onDoubleTap: () {},
+                  onDoubleTapDown: (d) {
+                    final hit = _hitTest(d.localPosition, widget.data);
+                    if (hit != null) {
+                      _showNodeActionDialog(hit);
+                    }
+                  },
+                  child: SizedBox(
+                    width: _canvasSize!.width,
+                    height: _canvasSize!.height,
+                    child: CustomPaint(
+                      painter: GraphPainter(
+                        widget.data,
+                        _branchColors!,
+                        _hoverEdgeKey(),
+                        _laneWidth,
+                        _rowHeight,
+                        working: widget.working,
+                        selectedNodes: _selectedNodes,
+                      ),
+                      size: _canvasSize!,
                     ),
-                    size: _canvasSize!,
                   ),
                 ),
               ),
