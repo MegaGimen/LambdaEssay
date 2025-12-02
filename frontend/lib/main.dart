@@ -1530,8 +1530,7 @@ class _GraphViewState extends State<_GraphView> {
                 child: GestureDetector(
                   onDoubleTap: () {},
                   onDoubleTapDown: (d) {
-                    final scene = _toScene(d.localPosition);
-                    final hit = _hitTest(scene, widget.data);
+                    final hit = _hitTest(d.localPosition, widget.data);
                     if (hit != null) {
                       _showNodeActionDialog(hit);
                     }
