@@ -671,9 +671,15 @@ class _GraphPageState extends State<GraphPage> {
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode(body),
     );
-    if (resp.statusCode != 200) {
+    if (resp.statusCode == 204) {
+      // No Content, return empty map
+      return {};
+    }
+    if (resp.statusCode != 200 && resp.statusCode != 201) {
+      // Allow 201 Created as well
       throw Exception(resp.body);
     }
+    if (resp.body.isEmpty) return {};
     return jsonDecode(resp.body) as Map<String, dynamic>;
   }
 
