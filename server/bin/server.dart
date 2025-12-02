@@ -592,6 +592,63 @@ Future<void> main(List<String> args) async {
     }
   });
 
+  router.post('/request_code', (Request req) async {
+    try {
+      final body = await req.readAsString();
+      final url = Uri.parse('http://47.242.109.145:3920/request_code');
+      final resp = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: body,
+      );
+      return _cors(Response(resp.statusCode,
+          body: resp.body,
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': 'Proxy failed: $e'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/register', (Request req) async {
+    try {
+      final body = await req.readAsString();
+      final url = Uri.parse('http://47.242.109.145:3920/register');
+      final resp = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: body,
+      );
+      return _cors(Response(resp.statusCode,
+          body: resp.body,
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': 'Proxy failed: $e'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/login', (Request req) async {
+    try {
+      final body = await req.readAsString();
+      final url = Uri.parse('http://47.242.109.145:3920/login');
+      final resp = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: body,
+      );
+      return _cors(Response(resp.statusCode,
+          body: resp.body,
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': 'Proxy failed: $e'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
   router.post('/create_user', (Request req) async {
     try {
       final body = await req.readAsString();
