@@ -291,6 +291,52 @@ Future<void> main(List<String> args) async {
     }
   });
 
+  router.post('/preview', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoPath = _sanitizePath(data['repoPath'] as String?);
+    final commitId = data['commitId'] as String?;
+
+    if (repoPath.isEmpty || commitId == null) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoPath, commitId required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      final pdf = await previewVersion(repoPath, commitId);
+      return _cors(Response.ok(pdf, headers: {
+        'Content-Type': 'application/pdf',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/rollback', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final projectName = (data['projectName'] as String?)?.trim() ?? '';
+    final commitId = data['commitId'] as String?;
+
+    if (projectName.isEmpty || commitId == null) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'projectName, commitId required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      await rollbackVersion(projectName, commitId);
+      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
   router.post('/convert', (Request req) async {
     final ct = req.headers['content-type'] ?? '';
     final b = _boundaryOf(ct);

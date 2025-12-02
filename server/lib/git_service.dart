@@ -498,6 +498,11 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
 Future<Map<String, dynamic>?> getTrackingInfo(String repoPath) async {
   final base = Directory(_baseDir());
   if (!base.existsSync()) return null;
+  // ... existing code ...
+  // Since I can't easily see the end of the function in the previous read,
+  // I will append the new functions at the end of the file.
+  // But SearchReplace needs context.
+  // Let me read the end of the file first.
   final normalized = p.normalize(repoPath);
 
   // Check if repoPath is directly a project dir in baseDir
@@ -640,6 +645,82 @@ Future<bool> _checkDocxIdentical(String path1, String path2) async {
     // Service might be down or error, fallback to safe "not identical" -> triggering copy & git diff
     return false;
   }
+}
+
+Future<Uint8List> previewVersion(String repoPath, String commitId) async {
+  final docxAbs = _findRepoDocx(repoPath);
+  if (docxAbs == null) {
+    throw Exception('No .docx file found in repository');
+  }
+  final docxRel = p.relative(docxAbs, from: repoPath);
+
+  final tmpDir = await Directory.systemTemp.createTemp('gitdocx_prev_');
+  try {
+    final p1 = p.join(tmpDir.path, 'preview.docx');
+    final pdf = p.join(tmpDir.path, 'preview.pdf');
+
+    await _runGitToFile(['show', '$commitId:$docxRel'], repoPath, p1);
+
+    final scriptPath = p.fromUri(Platform.script);
+    final repoRoot = p.dirname(p.dirname(p.dirname(scriptPath)));
+    final ps1Path = p.join(repoRoot, 'frontend', 'lib', 'docx2pdf.ps1');
+
+    if (!File(ps1Path).existsSync()) {
+      throw Exception('docx2pdf.ps1 not found at $ps1Path');
+    }
+
+    final res = await Process.run('powershell', [
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      ps1Path,
+      '-InputPath',
+      p1,
+      '-OutputPath',
+      pdf
+    ]);
+
+    if (res.exitCode != 0 || !File(pdf).existsSync()) {
+      throw Exception(
+          'Preview generation failed: ${res.stdout}\n${res.stderr}');
+    }
+
+    return await File(pdf).readAsBytes();
+  } finally {
+    try {
+      if (tmpDir.existsSync()) {
+        tmpDir.deleteSync(recursive: true);
+      }
+    } catch (_) {}
+  }
+}
+
+Future<void> rollbackVersion(String projectName, String commitId) async {
+  final repoPath = _projectDir(projectName);
+  final docxAbs = _findRepoDocx(repoPath);
+  if (docxAbs == null) {
+    throw Exception('No .docx file found in repository');
+  }
+  final docxRel = p.relative(docxAbs, from: repoPath);
+
+  // Checkout the file from the specific commit
+  await _runGit(['checkout', commitId, '--', docxRel], repoPath);
+
+  // Sync to external
+  final tracking = await _readTracking(projectName);
+  final docxPath = tracking['docxPath'] as String?;
+
+  if (docxPath != null) {
+    final src = File(docxAbs);
+    final dst = File(docxPath);
+    try {
+      await dst.writeAsBytes(await src.readAsBytes());
+    } catch (e) {
+      throw Exception(
+          'Rollback successful in repo, but failed to update external file (is Word open?): $e');
+    }
+  }
+  clearCache();
 }
 
 Future<String?> getHead(String repoPath) async {
