@@ -561,9 +561,18 @@ Future<void> main(List<String> args) async {
       final client = HttpClient();
       final uri = Uri.parse('http://47.242.109.145:3920/list_repos');
       final request = await client.openUrl('GET', uri);
+
+      // For GET requests, HttpClient defaults contentLength to 0 or -1 depending on implementation,
+      // but usually doesn't expect body. We must explicitly set it to allow writing body.
+      final bodyJson = jsonEncode({'authKey': token});
+      final bodyBytes = utf8.encode(bodyJson);
+
       request.headers.contentType = ContentType.json;
-      request.write(jsonEncode({'authKey': token}));
+      request.contentLength = bodyBytes.length;
+      request.add(bodyBytes);
+
       final response = await request.close();
+
       final respBody = await utf8.decodeStream(response);
 
       if (response.statusCode != 200) {
