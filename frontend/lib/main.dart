@@ -244,22 +244,28 @@ class _GraphPageState extends State<GraphPage> {
       return;
     }
 
-    // Use fetchProjectList if user wants to pull an existing local project?
-    // No, pull is usually from remote.
-    // But wait, the user said "list all repositories in appdata/gitdocx".
-    // If I am pulling from REMOTE, why would I list LOCAL repos?
-    // Ah! If I am pulling, I might be updating an EXISTING local repo?
-    // Or maybe the user wants to pick a repo name that matches a local one to update it?
-    // OR, maybe the user wants to see what they have locally to avoid duplicates?
-
-    // BUT, the requirement says: "provide a dropdown list ... listing all repositories in appdata/gitdocx".
-    // This strongly suggests selecting an EXISTING LOCAL REPO.
-    // If `_onPull` is "Clone/Pull", then selecting an existing one implies "Pull (Update) existing".
-
-    // So yes, I should use the list.
-
     setState(() => loading = true);
-    final projects = await _fetchProjectList();
+    List<String> projects = [];
+    try {
+      final resp = await http.post(
+        Uri.parse('http://localhost:8080/remote/list'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'token': _token}),
+      );
+      if (resp.statusCode != 200) {
+        throw Exception(resp.body);
+      }
+      final body = jsonDecode(resp.body);
+      if (body is List) {
+        projects = body.cast<String>();
+      }
+    } catch (e) {
+      setState(() {
+        loading = false;
+        error = '获取远程列表失败: $e';
+      });
+      return;
+    }
     setState(() => loading = false);
 
     String? selected = projects.isNotEmpty ? projects.first : null;
@@ -268,16 +274,16 @@ class _GraphPageState extends State<GraphPage> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
-          title: const Text('拉取仓库'),
+          title: const Text('拉取远程仓库'),
           content: SizedBox(
             width: 360,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Text('选择本地存在的仓库进行拉取，或者输入新名称(尚未支持输入)'),
+                const Text('选择要拉取的远程仓库'),
                 const SizedBox(height: 8),
                 projects.isEmpty
-                    ? const Text('没有找到任何项目 (appdata/gitdocx)')
+                    ? const Text('未找到任何远程仓库')
                     : DropdownButton<String>(
                         isExpanded: true,
                         value: selected,
@@ -310,8 +316,6 @@ class _GraphPageState extends State<GraphPage> {
     );
     if (ok != true || selected == null) return;
     final repoName = selected!;
-
-    // ... rest
 
     setState(() {
       loading = true;

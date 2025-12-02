@@ -545,6 +545,44 @@ Future<void> main(List<String> args) async {
     }
   });
 
+  router.post('/remote/list', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final token = data['token'] as String?;
+
+    if (token == null || token.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'token required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+
+    try {
+      // User requested GET request with JSON body
+      final client = HttpClient();
+      final uri = Uri.parse('http://47.242.109.145:3920/list_repos');
+      final request = await client.openUrl('GET', uri);
+      request.headers.contentType = ContentType.json;
+      request.write(jsonEncode({'authKey': token}));
+      final response = await request.close();
+      final respBody = await utf8.decodeStream(response);
+
+      if (response.statusCode != 200) {
+        return _cors(Response(response.statusCode,
+            body: respBody,
+            headers: {'Content-Type': 'application/json; charset=utf-8'}));
+      }
+
+      // The python code returns a list of strings directly
+      return _cors(Response.ok(respBody, headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': 'Remote list failed: $e'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
   router.post('/create_user', (Request req) async {
     try {
       final body = await req.readAsString();
