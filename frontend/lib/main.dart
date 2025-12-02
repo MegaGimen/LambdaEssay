@@ -984,8 +984,16 @@ class _GraphViewState extends State<_GraphView> {
 
   Future<void> _onCompare() async {
     if (_selectedNodes.length != 2) return;
+    if (_comparing) return;
     setState(() => _comparing = true);
     try {
+      // Show loading dialog
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => const Center(child: CircularProgressIndicator()),
+      );
+
       final nodes = _selectedNodes.toList();
       final commits = widget.data.commits;
       int idx1 = commits.indexWhere((c) => c.id == nodes[0]);
@@ -1013,6 +1021,10 @@ class _GraphViewState extends State<_GraphView> {
           'commit2': newC,
         }),
       );
+
+      // Pop loading dialog
+      if (mounted) Navigator.pop(context);
+
       if (resp.statusCode != 200) {
         throw Exception(resp.body);
       }
@@ -1029,6 +1041,9 @@ class _GraphViewState extends State<_GraphView> {
         ),
       );
     } catch (e) {
+      // Ensure loading dialog is closed if error occurs
+      if (mounted && _comparing) Navigator.pop(context);
+
       if (mounted) {
         ScaffoldMessenger.of(
           context,
@@ -1302,7 +1317,16 @@ class _GraphViewState extends State<_GraphView> {
   }
 
   Future<void> _previewVersion(CommitNode node) async {
+    if (_comparing) return;
+    setState(() => _comparing = true);
     try {
+      // Show loading dialog
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => const Center(child: CircularProgressIndicator()),
+      );
+
       final resp = await http.post(
         Uri.parse('http://localhost:8080/preview'),
         headers: {'Content-Type': 'application/json'},
@@ -1311,6 +1335,10 @@ class _GraphViewState extends State<_GraphView> {
           'commitId': node.id,
         }),
       );
+
+      // Pop loading dialog
+      if (mounted) Navigator.pop(context);
+
       if (resp.statusCode != 200) {
         throw Exception('预览失败: ${resp.body}');
       }
@@ -1326,10 +1354,14 @@ class _GraphViewState extends State<_GraphView> {
         ),
       );
     } catch (e) {
+      // Ensure loading dialog is closed if error occurs
+      if (mounted && _comparing) Navigator.pop(context);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error: $e')),
       );
+    } finally {
+      if (mounted) setState(() => _comparing = false);
     }
   }
 
