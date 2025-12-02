@@ -583,6 +583,7 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
 }
 
 Future<bool> _checkDocxIdentical(String path1, String path2) async {
+  print("comparing");
   try {
     final f1 = File(path1);
     final f2 = File(path2);

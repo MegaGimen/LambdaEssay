@@ -1317,7 +1317,9 @@ class _GraphPageState extends State<GraphPage> {
                 ? const Center(child: Text('输入路径并点击加载'))
                 : _GraphView(
                     data: data!,
-                    working: working,
+                    working: (data!.commits.isEmpty && working != null)
+                        ? WorkingState(changed: true, baseId: working!.baseId)
+                        : working,
                     repoPath: pathCtrl.text.trim(),
                     projectName: currentProjectName,
                     onRefresh: _load,
@@ -2918,8 +2920,15 @@ class GraphPainter extends CustomPainter {
       final overlayMargin = 40.0;
       final overlayWidth = 240.0;
       final overlayX = graphWidth + overlayMargin;
+
+      // Fix for empty project: ensure staging area has height
+      double overlayHeight = graphHeight;
+      if (commits.isEmpty) {
+        overlayHeight = rowHeight;
+      }
+
       canvas.drawRect(
-        Rect.fromLTWH(overlayX, 0, overlayWidth, graphHeight),
+        Rect.fromLTWH(overlayX, 0, overlayWidth, overlayHeight),
         borderPaint,
       );
       final baseId = working?.baseId;
