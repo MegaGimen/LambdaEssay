@@ -212,6 +212,8 @@ class _GraphPageState extends State<GraphPage> {
       // { "success": true, "userid": "...", "username": "...", "tokens": [], ... }
 
       final tokens = resp['tokens'] as List?;
+      print("doLogin");
+      print(tokens);
       String? token;
 
       if (tokens != null && tokens.isNotEmpty) {
@@ -254,6 +256,8 @@ class _GraphPageState extends State<GraphPage> {
 
       // { "tokens": [ { "remark": "...", "sha1": "..." } ], "source": "..." }
       final tokens = resp['tokens'] as List;
+      print("_createGiteaUserAndSave");
+      print(tokens);
       if (tokens.isEmpty) throw Exception('无法获取Token');
 
       final t = tokens[0];
