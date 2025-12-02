@@ -1163,6 +1163,36 @@ class _GraphViewState extends State<_GraphView> {
     }
   }
 
+  Future<void> _doSwitchBranch(String name) async {
+    try {
+      final resp = await http.post(
+        Uri.parse('http://localhost:8080/branch/switch'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'projectName': widget.projectName ?? '',
+          'branchName': name,
+        }),
+      );
+      if (resp.statusCode != 200) throw Exception(resp.body);
+      if (widget.onUpdate != null) {
+        await widget.onUpdate!();
+      } else {
+        widget.onRefresh?.call();
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('已切换到分支: $name')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('切换失败: $e')));
+      }
+    }
+  }
+
   Future<void> _onSwitchBranch() async {
     final nameCtrl = TextEditingController();
     final ok = await showDialog<bool>(
@@ -1174,22 +1204,13 @@ class _GraphViewState extends State<_GraphView> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (widget.working?.changed == true)
-                const Text(
-                  '⚠️ 当前有未提交的更改！切换操作将被拒绝。请先提交。',
-                  style: TextStyle(
-                    color: Colors.red,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              const SizedBox(height: 8),
               TextField(
                 controller: nameCtrl,
                 decoration: const InputDecoration(labelText: '目标分支名称'),
               ),
               const SizedBox(height: 8),
               const Text(
-                '注意：如果没有未提交更改，切换时将直接替换当前文档。请确保Word已关闭。',
+                '提示：双击图表中的分支节点或右侧列表可快速切换。',
                 style: TextStyle(fontSize: 12, color: Colors.grey),
               ),
             ],
@@ -1210,34 +1231,7 @@ class _GraphViewState extends State<_GraphView> {
     if (ok != true) return;
     final name = nameCtrl.text.trim();
     if (name.isEmpty) return;
-
-    if (widget.working?.changed == true) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('请先提交更改再切换分支')));
-      return;
-    }
-
-    try {
-      final resp = await http.post(
-        Uri.parse('http://localhost:8080/branch/switch'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'projectName': widget.projectName ?? '',
-          'branchName': name,
-        }),
-      );
-      if (resp.statusCode != 200) throw Exception(resp.body);
-      if (widget.onUpdate != null) {
-        await widget.onUpdate!();
-      } else {
-        widget.onRefresh?.call();
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('切换失败: $e')));
-    }
+    await _doSwitchBranch(name);
   }
 
   @override
@@ -1300,6 +1294,87 @@ class _GraphViewState extends State<_GraphView> {
               _rightPanStart = null;
             },
             child: GestureDetector(
+              onDoubleTapDown: (d) {
+                final scene = _toScene(d.localPosition);
+                final hit = _hitTest(scene, widget.data);
+                if (hit != null) {
+                  final branches =
+                      widget.data.branches.map((b) => b.name).toSet();
+                  final targets =
+                      hit.refs.where((r) => branches.contains(r)).toList();
+                  if (targets.isNotEmpty) {
+                    final current = widget.data.currentBranch;
+                    final others = targets.where((t) => t != current).toList();
+
+                    if (others.length == 1) {
+                      _doSwitchBranch(others.first);
+                    } else if (others.length > 1) {
+                      showDialog(
+                        context: context,
+                        builder: (_) => SimpleDialog(
+                          title: const Text('选择分支'),
+                          children: others
+                              .map(
+                                (b) => SimpleDialogOption(
+                                  onPressed: () {
+                                    Navigator.pop(context);
+                                    _doSwitchBranch(b);
+                                  },
+                                  child: Text(b),
+                                ),
+                              )
+                              .toList(),
+                        ),
+                      );
+                    } else {
+                      if (targets.contains(current)) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('已经是当前分支')),
+                        );
+                      }
+                    }
+                  }
+                } else {
+                  // Check if edge is hit
+                  final edgeHit = _hitEdge(scene, widget.data);
+                  if (edgeHit != null && edgeHit.branches.isNotEmpty) {
+                    final current = widget.data.currentBranch;
+                    final others =
+                        edgeHit.branches.where((b) => b != current).toList();
+
+                    if (others.isEmpty) {
+                      if (edgeHit.branches.contains(current)) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('已经是当前分支')),
+                        );
+                      }
+                      return;
+                    }
+
+                    if (others.length == 1) {
+                      _doSwitchBranch(others.first);
+                    } else {
+                      showDialog(
+                        context: context,
+                        builder: (_) => SimpleDialog(
+                          title: const Text('选择分支'),
+                          children: others
+                              .map(
+                                (b) => SimpleDialogOption(
+                                  onPressed: () {
+                                    Navigator.pop(context);
+                                    _doSwitchBranch(b);
+                                  },
+                                  child: Text(b),
+                                ),
+                              )
+                              .toList(),
+                        ),
+                      );
+                    }
+                  }
+                }
+              },
               onTapUp: (d) {
                 final scene = _toScene(d.localPosition);
                 final hit = _hitTest(scene, widget.data);
@@ -1490,22 +1565,44 @@ class _GraphViewState extends State<_GraphView> {
                   ),
                   const SizedBox(height: 6),
                   for (final b in widget.data.branches)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 2),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Container(
-                            width: 12,
-                            height: 12,
-                            decoration: BoxDecoration(
-                              color: _branchColors![b.name]!,
-                              shape: BoxShape.circle,
+                    InkWell(
+                      onDoubleTap: () => _doSwitchBranch(b.name),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 12,
+                              height: 12,
+                              decoration: BoxDecoration(
+                                color: _branchColors![b.name]!,
+                                shape: BoxShape.circle,
+                              ),
                             ),
-                          ),
-                          const SizedBox(width: 6),
-                          Text(b.name),
-                        ],
+                            const SizedBox(width: 6),
+                            Text(
+                              b.name,
+                              style: TextStyle(
+                                fontWeight: b.name == widget.data.currentBranch
+                                    ? FontWeight.bold
+                                    : FontWeight.normal,
+                                color: b.name == widget.data.currentBranch
+                                    ? Colors.blue[900]
+                                    : Colors.black,
+                              ),
+                            ),
+                            if (b.name == widget.data.currentBranch)
+                              const Padding(
+                                padding: EdgeInsets.only(left: 4),
+                                child: Icon(
+                                  Icons.check_circle,
+                                  size: 14,
+                                  color: Colors.green,
+                                ),
+                              ),
+                          ],
+                        ),
                       ),
                     ),
                   if (_hasUnknownEdges())
@@ -2021,6 +2118,16 @@ class GraphPainter extends CustomPainter {
     }
 
     // 绘制节点
+    String? currentHeadId;
+    if (data.currentBranch != null) {
+      for (final b in data.branches) {
+        if (b.name == data.currentBranch) {
+          currentHeadId = b.head;
+          break;
+        }
+      }
+    }
+
     for (final c in commits) {
       final row = rowOf[c.id]!;
       final lane = laneOf[c.id]!;
@@ -2031,6 +2138,15 @@ class GraphPainter extends CustomPainter {
           childIds.map((id) => _colorOfCommit(id, colorMemo)).toSet();
       final isSplit = childIds.length >= 2 && childColors.length >= 2;
       final r = isSplit ? nodeRadius * 1.6 : nodeRadius;
+
+      if (c.id == currentHeadId) {
+        final paintCurHead = Paint()
+          ..color = Colors.green
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 3.0;
+        canvas.drawCircle(Offset(x, y), r + 5, paintCurHead);
+      }
+
       canvas.drawCircle(Offset(x, y), r, paintNode);
       if (isSplit) {
         canvas.drawCircle(Offset(x, y), r, paintBorder);
@@ -2084,8 +2200,21 @@ class GraphPainter extends CustomPainter {
           py,
         );
         paintEdge.color = bcolor;
-        paintEdge.strokeWidth =
-            (hoverPairKey != null && hoverPairKey == key) ? 3.0 : 2.0;
+        bool isCurrent = data.currentBranch == bname;
+        bool isHover = hoverPairKey != null && hoverPairKey == key;
+
+        paintEdge.strokeWidth = isCurrent ? 4.0 : (isHover ? 3.0 : 2.0);
+
+        if (isCurrent) {
+          // Draw a glow/shadow for current branch
+          final paintGlow = Paint()
+            ..color = bcolor.withValues(alpha: 0.4)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 8.0
+            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
+          canvas.drawPath(path, paintGlow);
+        }
+
         canvas.drawPath(path, paintEdge);
       }
     }
