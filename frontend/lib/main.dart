@@ -234,10 +234,12 @@ class _GraphPageState extends State<GraphPage> {
         setState(() {
           _username = resp['username'] ?? u;
           _token = token;
+          loading = false;
         });
       } else {
         // No token found, try to create/generate one
         await _createGiteaUserAndSave(u, p);
+        // loading = false is handled in _createGiteaUserAndSave
       }
     } catch (e) {
       setState(() {
@@ -270,8 +272,10 @@ class _GraphPageState extends State<GraphPage> {
       setState(() {
         _username = username;
         _token = token;
+        loading = false;
       });
     } catch (e) {
+      // Don't handle loading = false here, let caller handle or throw
       throw Exception('创建用户/获取Token失败: $e');
     }
   }
