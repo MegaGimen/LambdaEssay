@@ -484,6 +484,19 @@ Future<void> main(List<String> args) async {
     }
   });
 
+  router.get('/track/list', (Request req) async {
+    try {
+      final list = await listProjects();
+      return _cors(Response.ok(jsonEncode({'projects': list}), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
   router.post('/reset_branch', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;

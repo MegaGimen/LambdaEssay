@@ -1014,3 +1014,18 @@ Future<Map<String, dynamic>> pullFromRemote(
     'isFresh': isFresh,
   };
 }
+
+Future<List<String>> listProjects() async {
+  final base = Directory(_baseDir());
+  if (!base.existsSync()) return [];
+  final projects = <String>[];
+  try {
+    final ents = base.listSync().whereType<Directory>();
+    for (final d in ents) {
+      final name = p.basename(d.path);
+      if (name.startsWith('.') || name.toLowerCase() == 'cache') continue;
+      projects.add(name);
+    }
+  } catch (_) {}
+  return projects;
+}
