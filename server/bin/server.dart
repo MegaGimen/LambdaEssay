@@ -557,34 +557,51 @@ Future<void> main(List<String> args) async {
     }
 
     try {
-      // User requested GET request with JSON body
-      final client = HttpClient();
-      final uri = Uri.parse('http://47.242.109.145:3920/list_repos');
-      final request = await client.openUrl('GET', uri);
+      final giteaUrl = 'http://47.242.109.145:3000';
+      final headers = {
+        'Authorization': 'token $token',
+        'Content-Type': 'application/json',
+      };
 
-      // For GET requests, HttpClient defaults contentLength to 0 or -1 depending on implementation,
-      // but usually doesn't expect body. We must explicitly set it to allow writing body.
-      final bodyJson = jsonEncode({'authKey': token});
-      final bodyBytes = utf8.encode(bodyJson);
+      // Fetch owned repos
+      final respOwned = await http.get(
+        Uri.parse('$giteaUrl/api/v1/user/repos'),
+        headers: headers,
+      );
 
-      request.headers.contentType = ContentType.json;
-      request.contentLength = bodyBytes.length;
-      request.add(bodyBytes);
+      // Fetch member repos
+      final respMember = await http.get(
+        Uri.parse('$giteaUrl/api/v1/user/repos?type=member'),
+        headers: headers,
+      );
 
-      final response = await request.close();
+      if (respOwned.statusCode == 200 && respMember.statusCode == 200) {
+        final owned = jsonDecode(respOwned.body) as List;
+        final member = jsonDecode(respMember.body) as List;
 
-      final respBody = await utf8.decodeStream(response);
+        final allRepos = [...owned, ...member];
+        // Deduplicate by name just in case
+        final repoNames =
+            allRepos.map((r) => r['name'] as String).toSet().toList();
 
-      if (response.statusCode != 200) {
-        return _cors(Response(response.statusCode,
-            body: respBody,
+        return _cors(Response.ok(jsonEncode(repoNames), headers: {
+          'Content-Type': 'application/json; charset=utf-8',
+        }));
+      } else if (respOwned.statusCode != 200) {
+        return _cors(Response(respOwned.statusCode,
+            body: jsonEncode({
+              'error': 'Failed to fetch owned repos',
+              'details': respOwned.body
+            }),
+            headers: {'Content-Type': 'application/json; charset=utf-8'}));
+      } else {
+        return _cors(Response(respMember.statusCode,
+            body: jsonEncode({
+              'error': 'Failed to fetch member repos',
+              'details': respMember.body
+            }),
             headers: {'Content-Type': 'application/json; charset=utf-8'}));
       }
-
-      // The python code returns a list of strings directly
-      return _cors(Response.ok(respBody, headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
     } catch (e) {
       return _cors(Response(500,
           body: jsonEncode({'error': 'Remote list failed: $e'}),
