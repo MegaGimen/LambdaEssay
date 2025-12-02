@@ -1567,7 +1567,77 @@ class _GraphViewState extends State<_GraphView> {
                   onDoubleTapDown: (d) {
                     final hit = _hitTest(d.localPosition, widget.data);
                     if (hit != null) {
-                      _showNodeActionDialog(hit);
+                      final branches =
+                          widget.data.branches.map((b) => b.name).toSet();
+                      final targets =
+                          hit.refs.where((r) => branches.contains(r)).toList();
+                      if (targets.isNotEmpty) {
+                        final current = widget.data.currentBranch;
+                        final others =
+                            targets.where((t) => t != current).toList();
+                        if (others.length == 1) {
+                          _doSwitchBranch(others.first);
+                        } else if (others.length > 1) {
+                          showDialog(
+                            context: context,
+                            builder: (_) => SimpleDialog(
+                              title: const Text('选择分支'),
+                              children: others
+                                  .map((b) => SimpleDialogOption(
+                                        onPressed: () {
+                                          Navigator.pop(context);
+                                          _doSwitchBranch(b);
+                                        },
+                                        child: Text(b),
+                                      ))
+                                  .toList(),
+                            ),
+                          );
+                        } else {
+                          if (targets.contains(current)) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('已经是当前分支')),
+                            );
+                          }
+                        }
+                      } else {
+                        _showNodeActionDialog(hit);
+                      }
+                    } else {
+                      final edgeHit = _hitEdge(d.localPosition, widget.data);
+                      if (edgeHit != null && edgeHit.branches.isNotEmpty) {
+                        final current = widget.data.currentBranch;
+                        final others = edgeHit.branches
+                            .where((b) => b != current)
+                            .toList();
+                        if (others.isEmpty) {
+                          if (edgeHit.branches.contains(current)) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('已经是当前分支')),
+                            );
+                          }
+                          return;
+                        }
+                        if (others.length == 1) {
+                          _doSwitchBranch(others.first);
+                        } else {
+                          showDialog(
+                            context: context,
+                            builder: (_) => SimpleDialog(
+                              title: const Text('选择分支'),
+                              children: others
+                                  .map((b) => SimpleDialogOption(
+                                        onPressed: () {
+                                          Navigator.pop(context);
+                                          _doSwitchBranch(b);
+                                        },
+                                        child: Text(b),
+                                      ))
+                                  .toList(),
+                            ),
+                          );
+                        }
+                      }
                     }
                   },
                   child: SizedBox(
