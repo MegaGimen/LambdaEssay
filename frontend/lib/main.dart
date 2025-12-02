@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter/gestures.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -331,59 +330,70 @@ class _GraphPageState extends State<GraphPage> {
     });
   }
 
-  Future<void> _showTokensDialog() async {
-    final prefs = await SharedPreferences.getInstance();
-    final jsonStr = prefs.getString('git_tokens_list');
-    List<dynamic> tokens = [];
-    if (jsonStr != null) {
-      try {
-        tokens = jsonDecode(jsonStr) as List;
-      } catch (_) {}
+  Future<void> _showShareDialog() async {
+    if (_username == null || _token == null || currentProjectName == null) {
+      setState(() => error = '请先登录并打开一个项目');
+      return;
     }
 
-    if (!mounted) return;
-    showDialog(
+    final userCtrl = TextEditingController();
+    final ok = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('当前授权码列表'),
+      builder: (_) => AlertDialog(
+        title: const Text('分享仓库'),
         content: SizedBox(
           width: 400,
-          height: 300,
-          child: tokens.isEmpty
-              ? const Center(child: Text('暂无保存的 Token 信息'))
-              : ListView.separated(
-                  itemCount: tokens.length,
-                  separatorBuilder: (_, __) => const Divider(),
-                  itemBuilder: (context, index) {
-                    final t = tokens[index];
-                    final remark = t['remark'] ?? '无备注';
-                    final sha1 = t['sha1'] ?? '???';
-                    final isCurrent = sha1 == _token;
-                    return ListTile(
-                      title: Text(remark,
-                          style: const TextStyle(fontWeight: FontWeight.bold)),
-                      subtitle: Text(sha1,
-                          style: const TextStyle(fontFamily: 'monospace')),
-                      trailing: isCurrent
-                          ? const Icon(Icons.check, color: Colors.green)
-                          : null,
-                      onTap: () {
-                        Clipboard.setData(ClipboardData(text: sha1));
-                        ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Token已复制')));
-                      },
-                    );
-                  },
-                ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('输入要分享的用户名（对方将获得写权限）'),
+              const SizedBox(height: 8),
+              TextField(
+                controller: userCtrl,
+                decoration: const InputDecoration(labelText: '用户名'),
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('关闭'),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('分享'),
           ),
         ],
       ),
     );
+
+    if (ok == true) {
+      final targetUser = userCtrl.text.trim();
+      if (targetUser.isEmpty) return;
+
+      setState(() {
+        loading = true;
+        error = null;
+      });
+
+      try {
+        await _postJson('$baseUrl/share', {
+          'owner': _username,
+          'repo': currentProjectName,
+          'username': targetUser,
+          'token': _token,
+        });
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('已成功分享给 $targetUser')),
+        );
+      } catch (e) {
+        setState(() => error = '分享失败: $e');
+      } finally {
+        setState(() => loading = false);
+      }
+    }
   }
 
   Future<void> _onPush({bool force = false}) async {
@@ -1156,7 +1166,7 @@ class _GraphPageState extends State<GraphPage> {
                 Text('当前用户: $_username'),
                 const SizedBox(width: 8),
                 ElevatedButton(
-                    onPressed: _showTokensDialog, child: const Text('查看授权码')),
+                    onPressed: _showShareDialog, child: const Text('分享仓库')),
                 const SizedBox(width: 8),
                 ElevatedButton(
                     onPressed: loading ? null : _doLogout,
