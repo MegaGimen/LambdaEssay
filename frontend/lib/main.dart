@@ -1218,11 +1218,14 @@ class _GraphViewState extends State<_GraphView> {
         }),
       );
       if (resp.statusCode != 200) throw Exception(resp.body);
+
+      // Force update repo status after switch (to check diff against new branch)
       if (widget.onUpdate != null) {
         await widget.onUpdate!();
       } else {
         widget.onRefresh?.call();
       }
+
       if (mounted) {
         ScaffoldMessenger.of(
           context,
