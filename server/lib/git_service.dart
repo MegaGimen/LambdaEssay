@@ -161,29 +161,12 @@ Future<void> createBranch(String repoPath, String branchName) async {
 
 Future<void> switchBranch(String projectName, String branchName) async {
   final repoPath = _projectDir(projectName);
-  await _runGit(['checkout', branchName], repoPath);
+  // Force checkout to overwrite local repo changes.
+  // User requested to keep external files intact ("not replace files"),
+  // so we DO NOT sync back from repo to external docx here.
+  // The subsequent 'Update Repo' action will handle the sync (External -> Repo).
+  await _runGit(['checkout', '-f', branchName], repoPath);
 
-  // Sync back to external docx
-  final tracking = await _readTracking(projectName);
-  final docxPath = tracking['docxPath'] as String?;
-  final repoDocxPath = tracking['repoDocxPath'] as String?;
-
-  if (docxPath != null && repoDocxPath != null) {
-    final src = File(repoDocxPath);
-    final dst = File(docxPath);
-    if (src.existsSync()) {
-      try {
-        // This might fail if Word has the file open and locked
-        await dst.writeAsBytes(await src.readAsBytes());
-      } catch (e) {
-        // If copy fails, we should probably warn the user or try to rollback checkout?
-        // But checkout is already done.
-        // Let's just rethrow so frontend can show alert "Checkout done but file sync failed. Please close Word and try update."
-        throw Exception(
-            'Switch successful, but failed to update external file (is Word open?): $e');
-      }
-    }
-  }
   clearCache();
 }
 
