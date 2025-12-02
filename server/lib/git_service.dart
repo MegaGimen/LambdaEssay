@@ -648,6 +648,19 @@ Future<bool> _checkDocxIdentical(String path1, String path2) async {
 }
 
 Future<Uint8List> previewVersion(String repoPath, String commitId) async {
+  // 1. Check cache
+  final cacheDir = Directory(p.join(_baseDir(), 'cache'));
+  if (!cacheDir.existsSync()) {
+    cacheDir.createSync(recursive: true);
+  }
+  final cacheName = '$commitId.pdf';
+  final cachePath = p.join(cacheDir.path, cacheName);
+  final cacheFile = File(cachePath);
+  if (cacheFile.existsSync()) {
+    return await cacheFile.readAsBytes();
+  }
+
+  // 2. Generate if not cached
   final docxAbs = _findRepoDocx(repoPath);
   if (docxAbs == null) {
     throw Exception('No .docx file found in repository');
@@ -685,6 +698,9 @@ Future<Uint8List> previewVersion(String repoPath, String commitId) async {
           'Preview generation failed: ${res.stdout}\n${res.stderr}');
     }
 
+    // 3. Save to cache
+    await File(pdf).copy(cachePath);
+
     return await File(pdf).readAsBytes();
   } finally {
     try {
@@ -693,6 +709,32 @@ Future<Uint8List> previewVersion(String repoPath, String commitId) async {
       }
     } catch (_) {}
   }
+}
+
+Future<void> resetBranch(String projectName, String commitId) async {
+  final repoPath = _projectDir(projectName);
+  final docxAbs = _findRepoDocx(repoPath);
+
+  // Reset HEAD to commitId, discarding all changes after it
+  await _runGit(['reset', '--hard', commitId], repoPath);
+
+  // Sync to external
+  final tracking = await _readTracking(projectName);
+  final docxPath = tracking['docxPath'] as String?;
+
+  if (docxPath != null && docxAbs != null) {
+    final src = File(docxAbs);
+    final dst = File(docxPath);
+    if (src.existsSync()) {
+      try {
+        await dst.writeAsBytes(await src.readAsBytes());
+      } catch (e) {
+        throw Exception(
+            'Reset successful in repo, but failed to update external file: $e');
+      }
+    }
+  }
+  clearCache();
 }
 
 Future<void> rollbackVersion(String projectName, String commitId) async {
@@ -805,8 +847,8 @@ Future<void> ensureRemoteRepoExists(String repoName, String token) async {
   }
 }
 
-Future<void> pushToRemote(
-    String repoPath, String username, String token) async {
+Future<void> pushToRemote(String repoPath, String username, String token,
+    {bool force = false}) async {
   print("pussying");
   final repoName = p.basename(repoPath);
   await ensureRemoteRepoExists(repoName, token);
@@ -814,7 +856,11 @@ Future<void> pushToRemote(
   final remoteUrl =
       'http://$username:$token@47.242.109.145:3000/$username/$repoName.git';
 
-  await _runGit(['push', '--all', remoteUrl], repoPath);
+  final args = ['push'];
+  if (force) args.add('--force');
+  args.addAll(['--all', remoteUrl]);
+
+  await _runGit(args, repoPath);
 }
 
 Future<Map<String, dynamic>> pullFromRemote(

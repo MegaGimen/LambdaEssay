@@ -180,7 +180,7 @@ class _GraphPageState extends State<GraphPage> {
     });
   }
 
-  Future<void> _onPush() async {
+  Future<void> _onPush({bool force = false}) async {
     if (_username == null || _token == null) {
       setState(() => error = '请先登录');
       return;
@@ -199,10 +199,39 @@ class _GraphPageState extends State<GraphPage> {
         'repoPath': repoPath,
         'username': _username,
         'token': _token,
+        'force': force,
       });
+      if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('推送成功')));
     } catch (e) {
+      final msg = e.toString();
+      if (msg.contains('non-fast-forward') || msg.contains('fetch first')) {
+        if (!mounted) return;
+        final ok = await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text('推送被拒绝'),
+            content: const Text('远程分支比本地分支新，或本地分支历史与远程不一致（可能因为回滚）。\n'
+                '是否强制推送？（这将覆盖远程分支的更改，可能导致他人工作丢失）'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('取消'),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('强制推送'),
+              ),
+            ],
+          ),
+        );
+        if (ok == true) {
+          await _onPush(force: true);
+          return;
+        }
+      }
       setState(() => error = '推送失败: $e');
     } finally {
       setState(() => loading = false);
@@ -1253,7 +1282,15 @@ class _GraphViewState extends State<_GraphView> {
               Navigator.pop(ctx);
               _rollbackVersion(node);
             },
-            child: const Text('回退到这个版本'),
+            child: const Text('回退到这个版本 (仅文件)'),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            onPressed: () {
+              Navigator.pop(ctx);
+              _resetBranch(node);
+            },
+            child: const Text('回退分支到此 (危险)'),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx),
@@ -1350,6 +1387,62 @@ class _GraphViewState extends State<_GraphView> {
     }
   }
 
+  Future<void> _resetBranch(CommitNode node) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('危险：重置分支'),
+        content: Text('确定要将当前分支重置到版本 ${node.id.substring(0, 7)} 吗？\n'
+            '此操作将【永久删除】该版本之后的所有提交记录！\n'
+            '当前工作区的文档也将被回退到该版本。\n'
+            '请务必确保 Word 文档已关闭。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('确定重置'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('正在重置分支...')));
+
+    try {
+      final resp = await http.post(
+        Uri.parse('http://localhost:8080/reset_branch'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'projectName': widget.projectName ?? '',
+          'commitId': node.id,
+        }),
+      );
+      if (resp.statusCode != 200) {
+        throw Exception('重置失败: ${resp.body}');
+      }
+
+      if (widget.onRefresh != null) {
+        widget.onRefresh!();
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('分支重置成功')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Error: $e')));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     _branchColors ??= _assignBranchColors(widget.data.branches);
@@ -1437,7 +1530,8 @@ class _GraphViewState extends State<_GraphView> {
                 child: GestureDetector(
                   onDoubleTap: () {},
                   onDoubleTapDown: (d) {
-                    final hit = _hitTest(d.localPosition, widget.data);
+                    final scene = _toScene(d.localPosition);
+                    final hit = _hitTest(scene, widget.data);
                     if (hit != null) {
                       _showNodeActionDialog(hit);
                     }
