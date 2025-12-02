@@ -484,12 +484,36 @@ Future<void> main(List<String> args) async {
     }
   });
 
+  router.post('/reset_branch', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final projectName = (data['projectName'] as String?)?.trim() ?? '';
+    final commitId = data['commitId'] as String?;
+
+    if (projectName.isEmpty || commitId == null) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'projectName, commitId required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      await resetBranch(projectName, commitId);
+      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
   router.post('/push', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
     final repoPath = _sanitizePath(data['repoPath'] as String?);
     final username = (data['username'] as String?)?.trim() ?? '';
     final token = (data['token'] as String?)?.trim() ?? '';
+    final force = data['force'] == true;
 
     if (repoPath.isEmpty || username.isEmpty || token.isEmpty) {
       return _cors(Response(400,
@@ -497,7 +521,7 @@ Future<void> main(List<String> args) async {
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
-      await pushToRemote(repoPath, username, token);
+      await pushToRemote(repoPath, username, token, force: force);
       return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
         'Content-Type': 'application/json; charset=utf-8',
       }));
