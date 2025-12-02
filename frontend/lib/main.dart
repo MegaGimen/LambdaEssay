@@ -111,8 +111,14 @@ class _GraphPageState extends State<GraphPage> {
 
   final TextEditingController userCtrl = TextEditingController();
   final TextEditingController passCtrl = TextEditingController();
+  final TextEditingController emailCtrl = TextEditingController();
+  final TextEditingController verifyCodeCtrl = TextEditingController();
+  bool _isRegisterMode = false;
+
   String? _username;
   String? _token;
+
+  static const String baseUrl = 'http://localhost:8080';
 
   @override
   void initState() {
@@ -128,11 +134,10 @@ class _GraphPageState extends State<GraphPage> {
     });
   }
 
-  Future<void> _doLogin() async {
-    final u = userCtrl.text.trim();
-    final p = passCtrl.text.trim();
-    if (u.isEmpty || p.isEmpty) {
-      setState(() => error = '请输入用户名和密码');
+  Future<void> _sendCode() async {
+    final email = emailCtrl.text.trim();
+    if (email.isEmpty) {
+      setState(() => error = '请输入邮箱');
       return;
     }
     setState(() {
@@ -140,31 +145,130 @@ class _GraphPageState extends State<GraphPage> {
       error = null;
     });
     try {
-      final resp = await http.post(
-        Uri.parse('http://localhost:8080/create_user'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'username': u, 'password': p}),
+      await _postJson('$baseUrl/request_code', {'email': email});
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('验证码已发送，请检查邮箱')),
       );
-      if (resp.statusCode != 200) {
-        throw Exception('登录失败(${resp.statusCode}): ${resp.body}');
+    } catch (e) {
+      setState(() => error = '发送验证码失败: $e');
+    } finally {
+      setState(() => loading = false);
+    }
+  }
+
+  Future<void> _doRegister() async {
+    final email = emailCtrl.text.trim();
+    final username = userCtrl.text.trim();
+    final password = passCtrl.text.trim();
+    final code = verifyCodeCtrl.text.trim();
+
+    if (email.isEmpty || username.isEmpty || password.isEmpty || code.isEmpty) {
+      setState(() => error = '请填写完整注册信息');
+      return;
+    }
+
+    setState(() {
+      loading = true;
+      error = null;
+    });
+
+    try {
+      // 1. Register
+      await _postJson('$baseUrl/register', {
+        'email': email,
+        'username': username,
+        'password': password,
+        'verification_code': code,
+      });
+
+      // 2. Create Gitea User & Get Token
+      await _createGiteaUserAndSave(username, password);
+    } catch (e) {
+      setState(() => error = '注册失败: $e');
+    } finally {
+      setState(() => loading = false);
+    }
+  }
+
+  Future<void> _doLogin() async {
+    final u = userCtrl.text.trim();
+    final p = passCtrl.text.trim();
+    if (u.isEmpty || p.isEmpty) {
+      setState(() => error = '请输入用户名/邮箱和密码');
+      return;
+    }
+    setState(() {
+      loading = true;
+      error = null;
+    });
+    try {
+      final resp = await _postJson('$baseUrl/login', {
+        'username': u,
+        'password': p,
+      });
+
+      // The login response contains tokens.
+      // { "success": true, "userid": "...", "username": "...", "tokens": [], ... }
+
+      final tokens = resp['tokens'] as List?;
+      String? token;
+
+      if (tokens != null && tokens.isNotEmpty) {
+        // Use the first token? Or find one?
+        // Just pick the first one for now.
+        // Tokens structure: [{ "remark": "...", "sha1": "..." }]
+        final firstToken = tokens[0];
+        if (firstToken is Map) {
+          token = firstToken['sha1'];
+        }
       }
-      final body = jsonDecode(resp.body) as Map<String, dynamic>;
-      final token = body['token'] as String;
+
+      if (token != null) {
+        // Save directly
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('git_username', resp['username'] ?? u);
+        await prefs.setString('git_token', token);
+        setState(() {
+          _username = resp['username'] ?? u;
+          _token = token;
+        });
+      } else {
+        // No token found, try to create/generate one
+        await _createGiteaUserAndSave(u, p);
+      }
+    } catch (e) {
+      setState(() {
+        error = '登录失败: $e';
+        loading = false;
+      });
+    }
+  }
+
+  Future<void> _createGiteaUserAndSave(String username, String password) async {
+    try {
+      final resp = await _postJson('$baseUrl/create_user', {
+        'username': username,
+        'password': password,
+      });
+
+      // { "tokens": [ { "remark": "...", "sha1": "..." } ], "source": "..." }
+      final tokens = resp['tokens'] as List;
+      if (tokens.isEmpty) throw Exception('无法获取Token');
+
+      final t = tokens[0];
+      final token = t['sha1'];
 
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('git_username', u);
+      await prefs.setString('git_username', username);
       await prefs.setString('git_token', token);
 
       setState(() {
-        _username = u;
+        _username = username;
         _token = token;
-        loading = false;
       });
     } catch (e) {
-      setState(() {
-        error = e.toString();
-        loading = false;
-      });
+      throw Exception('创建用户/获取Token失败: $e');
     }
   }
 
@@ -870,24 +974,78 @@ class _GraphPageState extends State<GraphPage> {
           if (_username == null)
             Padding(
               padding: const EdgeInsets.all(8),
-              child: Row(
-                children: [
-                  Expanded(
-                      child: TextField(
-                          controller: userCtrl,
-                          decoration: const InputDecoration(labelText: '用户名'))),
-                  const SizedBox(width: 8),
-                  Expanded(
-                      child: TextField(
-                          controller: passCtrl,
-                          obscureText: true,
-                          decoration: const InputDecoration(labelText: '密码'))),
-                  const SizedBox(width: 8),
-                  ElevatedButton(
-                      onPressed: loading ? null : _doLogin,
-                      child: const Text('登录/注册')),
-                ],
-              ),
+              child: _isRegisterMode
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(children: [
+                          Expanded(
+                              child: TextField(
+                                  controller: emailCtrl,
+                                  decoration:
+                                      const InputDecoration(labelText: '邮箱'))),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                              onPressed: loading ? null : _sendCode,
+                              child: const Text('发送验证码')),
+                          const SizedBox(width: 8),
+                          Expanded(
+                              child: TextField(
+                                  controller: verifyCodeCtrl,
+                                  decoration:
+                                      const InputDecoration(labelText: '验证码'))),
+                        ]),
+                        const SizedBox(height: 8),
+                        Row(children: [
+                          Expanded(
+                              child: TextField(
+                                  controller: userCtrl,
+                                  decoration:
+                                      const InputDecoration(labelText: '用户名'))),
+                          const SizedBox(width: 8),
+                          Expanded(
+                              child: TextField(
+                                  controller: passCtrl,
+                                  obscureText: true,
+                                  decoration:
+                                      const InputDecoration(labelText: '密码'))),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                              onPressed: loading ? null : _doRegister,
+                              child: const Text('注册')),
+                          const SizedBox(width: 8),
+                          TextButton(
+                              onPressed: () =>
+                                  setState(() => _isRegisterMode = false),
+                              child: const Text('返回登录')),
+                        ]),
+                      ],
+                    )
+                  : Row(
+                      children: [
+                        Expanded(
+                            child: TextField(
+                                controller: userCtrl,
+                                decoration: const InputDecoration(
+                                    labelText: '用户名/邮箱'))),
+                        const SizedBox(width: 8),
+                        Expanded(
+                            child: TextField(
+                                controller: passCtrl,
+                                obscureText: true,
+                                decoration:
+                                    const InputDecoration(labelText: '密码'))),
+                        const SizedBox(width: 8),
+                        ElevatedButton(
+                            onPressed: loading ? null : _doLogin,
+                            child: const Text('登录')),
+                        const SizedBox(width: 8),
+                        TextButton(
+                            onPressed: () =>
+                                setState(() => _isRegisterMode = true),
+                            child: const Text('去注册')),
+                      ],
+                    ),
             )
           else
             Padding(
