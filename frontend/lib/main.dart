@@ -129,10 +129,36 @@ class _GraphPageState extends State<GraphPage> {
 
   Future<void> _checkLogin() async {
     final prefs = await SharedPreferences.getInstance();
+    final username = prefs.getString('git_username');
+    final password = prefs.getString('git_password');
+    final token = prefs.getString('git_token');
+
     setState(() {
-      _username = prefs.getString('git_username');
-      _token = prefs.getString('git_token');
+      _username = username;
+      _token = token;
     });
+
+    if (username != null && password != null) {
+      // Refresh tokens automatically
+      try {
+        final resp = await _postJson('$baseUrl/create_user', {
+          'username': username,
+          'password': password,
+        });
+
+        final tokens = resp['tokens'] as List?;
+        if (tokens != null) {
+          await prefs.setString('git_tokens_list', jsonEncode(tokens));
+          print("Tokens refreshed automatically");
+        }
+      } catch (e) {
+        print("Failed to refresh tokens: $e");
+        // If refresh fails (e.g. password changed or network error),
+        // maybe we should not logout automatically to let user work offline if needed,
+        // but usually auth error means we should logout.
+        // For now just log error.
+      }
+    }
   }
 
   Future<void> _sendCode() async {
@@ -231,6 +257,8 @@ class _GraphPageState extends State<GraphPage> {
         // Save directly
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('git_username', resp['username'] ?? u);
+        await prefs.setString(
+            'git_password', p); // Save password for auto-refresh
         await prefs.setString('git_token', token);
 
         if (tokens != null) {
@@ -273,6 +301,8 @@ class _GraphPageState extends State<GraphPage> {
 
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('git_username', username);
+      await prefs.setString(
+          'git_password', password); // Save password for auto-refresh
       await prefs.setString('git_token', token);
       await prefs.setString('git_tokens_list', jsonEncode(tokens));
 
@@ -290,6 +320,7 @@ class _GraphPageState extends State<GraphPage> {
   Future<void> _doLogout() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('git_username');
+    await prefs.remove('git_password');
     await prefs.remove('git_token');
     await prefs.remove('git_tokens_list');
     setState(() {
