@@ -1009,50 +1009,32 @@ Future<Map<String, dynamic>> pullFromRemote(
 
   // Fetch all remote branches and create local tracking branches
   try {
-    // Get list of remote branches
-    final branchesRes = await Process.run(
-      'git',
-      ['branch', '-r'],
-      workingDirectory: projDir,
-      runInShell: true,
-    );
-    if (branchesRes.exitCode == 0) {
-      // Use utf8.decode to handle non-ASCII characters properly
-      final out = branchesRes.stdout is String
-          ? branchesRes.stdout as String
-          : utf8.decode(branchesRes.stdout as List<int>);
-      final lines = LineSplitter.split(out).toList();
+    // Get list of remote branches using _runGit to handle encoding and quotepath
+    final lines = await _runGit(['branch', '-r'], projDir);
 
-      for (final line in lines) {
-        final trimmed = line.trim();
-        if (trimmed.isEmpty) continue;
-        if (trimmed.contains('->')) continue; // Skip HEAD -> origin/master
+    // Get local branches to check for existence efficiently
+    final localBranches = await getBranches(projDir);
+    final localBranchNames = localBranches.map((b) => b.name).toSet();
 
-        // trimmed is like "origin/feature-a"
-        final parts = trimmed.split('/');
-        if (parts.length < 2) continue;
+    for (final line in lines) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty) continue;
+      if (trimmed.contains('->')) continue; // Skip HEAD -> origin/master
 
-        // Assuming remote name is always the first part (origin)
-        // branch name is the rest (e.g. "feature/a" or "资产阶级")
-        final branchName = parts.sublist(1).join('/');
+      // trimmed is like "origin/feature-a" or "origin/中文分支"
+      final parts = trimmed.split('/');
+      if (parts.length < 2) continue;
 
-        // Check if local branch already exists (e.g. master)
-        final localCheck = await Process.run(
-          'git',
-          ['rev-parse', '--verify', branchName],
-          workingDirectory: projDir,
-          runInShell: true,
-        );
+      // Assuming remote name is always the first part (origin)
+      // branch name is the rest
+      final branchName = parts.sublist(1).join('/');
 
-        if (localCheck.exitCode != 0) {
-          // Local branch does not exist, create it tracking the remote
-          // git branch --track <name> <remote>/<name>
-          await Process.run(
-            'git',
-            ['branch', '--track', branchName, trimmed],
-            workingDirectory: projDir,
-            runInShell: true,
-          );
+      if (!localBranchNames.contains(branchName)) {
+        // Local branch does not exist, create it tracking the remote
+        try {
+          await _runGit(['branch', '--track', branchName, trimmed], projDir);
+        } catch (e) {
+          print('Failed to create tracking branch $branchName: $e');
         }
       }
     }
