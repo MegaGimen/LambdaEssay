@@ -130,11 +130,13 @@ class _GraphPageState extends State<GraphPage> {
     final prefs = await SharedPreferences.getInstance();
     final username = prefs.getString('git_username');
     final password = prefs.getString('git_password');
-    final token = prefs.getString('git_token');
+
+    // 不再从 SharedPreferences 读取 token
+    // final token = prefs.getString('git_token');
 
     setState(() {
       _username = username;
-      _token = token;
+      // _token = token;
     });
 
     if (username != null && password != null) {
@@ -146,9 +148,20 @@ class _GraphPageState extends State<GraphPage> {
         });
 
         final tokens = resp['tokens'] as List?;
-        if (tokens != null) {
-          await prefs.setString('git_tokens_list', jsonEncode(tokens));
-          print("Tokens refreshed automatically");
+        if (tokens != null && tokens.isNotEmpty) {
+          // 取第一个 token 的 sha1 当作 token (authKey)
+          final firstToken = tokens[0];
+          String? newToken;
+          if (firstToken is Map) {
+            newToken = firstToken['sha1'];
+          }
+
+          if (newToken != null) {
+            setState(() {
+              _token = newToken;
+            });
+            print("AuthKey refreshed automatically: $_token");
+          }
         }
       } catch (e) {
         print("Failed to refresh tokens: $e");
@@ -158,6 +171,36 @@ class _GraphPageState extends State<GraphPage> {
         // For now just log error.
       }
     }
+  }
+
+  Future<bool> _ensureToken() async {
+    if (_token != null) return true;
+    final prefs = await SharedPreferences.getInstance();
+    final username = prefs.getString('git_username');
+    final password = prefs.getString('git_password');
+    if (username != null && password != null) {
+      // Try to get token
+      try {
+        final resp = await _postJson('$baseUrl/create_user', {
+          'username': username,
+          'password': password,
+        });
+        final tokens = resp['tokens'] as List?;
+        if (tokens != null && tokens.isNotEmpty) {
+          final firstToken = tokens[0];
+          if (firstToken is Map) {
+            setState(() {
+              _token = firstToken['sha1'];
+              _username = username; // Ensure username is set
+            });
+            return true;
+          }
+        }
+      } catch (e) {
+        print("ensureToken failed: $e");
+      }
+    }
+    return false;
   }
 
   Future<void> _sendCode() async {
@@ -209,7 +252,7 @@ class _GraphPageState extends State<GraphPage> {
       });
 
       // 2. Create Gitea User & Get Token
-      await _createGiteaUserAndSave(username, password);
+      await _createGiteaUserAndSetToken(username, password);
     } catch (e) {
       setState(() => error = '注册失败: $e');
     } finally {
@@ -258,11 +301,10 @@ class _GraphPageState extends State<GraphPage> {
         await prefs.setString('git_username', resp['username'] ?? u);
         await prefs.setString(
             'git_password', p); // Save password for auto-refresh
-        await prefs.setString('git_token', token);
-
-        if (tokens != null) {
-          await prefs.setString('git_tokens_list', jsonEncode(tokens));
-        }
+        // await prefs.setString('git_token', token); // Don't save token
+        // if (tokens != null) {
+        //   await prefs.setString('git_tokens_list', jsonEncode(tokens));
+        // }
 
         setState(() {
           _username = resp['username'] ?? u;
@@ -271,8 +313,8 @@ class _GraphPageState extends State<GraphPage> {
         });
       } else {
         // No token found, try to create/generate one
-        await _createGiteaUserAndSave(u, p);
-        // loading = false is handled in _createGiteaUserAndSave
+        await _createGiteaUserAndSetToken(u, p);
+        // loading = false is handled in _createGiteaUserAndSetToken
       }
     } catch (e) {
       setState(() {
@@ -282,7 +324,8 @@ class _GraphPageState extends State<GraphPage> {
     }
   }
 
-  Future<void> _createGiteaUserAndSave(String username, String password) async {
+  Future<void> _createGiteaUserAndSetToken(
+      String username, String password) async {
     try {
       final resp = await _postJson('$baseUrl/create_user', {
         'username': username,
@@ -291,7 +334,7 @@ class _GraphPageState extends State<GraphPage> {
 
       // { "tokens": [ { "remark": "...", "sha1": "..." } ], "source": "..." }
       final tokens = resp['tokens'] as List;
-      print("_createGiteaUserAndSave");
+      print("_createGiteaUserAndSetToken");
       print(tokens);
       if (tokens.isEmpty) throw Exception('无法获取Token');
 
@@ -302,8 +345,8 @@ class _GraphPageState extends State<GraphPage> {
       await prefs.setString('git_username', username);
       await prefs.setString(
           'git_password', password); // Save password for auto-refresh
-      await prefs.setString('git_token', token);
-      await prefs.setString('git_tokens_list', jsonEncode(tokens));
+      // await prefs.setString('git_token', token); // Don't save token
+      // await prefs.setString('git_tokens_list', jsonEncode(tokens)); // Don't save
 
       setState(() {
         _username = username;
@@ -320,8 +363,8 @@ class _GraphPageState extends State<GraphPage> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('git_username');
     await prefs.remove('git_password');
-    await prefs.remove('git_token');
-    await prefs.remove('git_tokens_list');
+    await prefs.remove('git_token'); // Clean up legacy
+    await prefs.remove('git_tokens_list'); // Clean up legacy
     setState(() {
       _username = null;
       _token = null;
@@ -331,7 +374,7 @@ class _GraphPageState extends State<GraphPage> {
   }
 
   Future<void> _showShareDialog() async {
-    if (_username == null || _token == null || currentProjectName == null) {
+    if (!await _ensureToken() || currentProjectName == null) {
       setState(() => error = '请先登录并打开一个项目');
       return;
     }
@@ -397,7 +440,7 @@ class _GraphPageState extends State<GraphPage> {
   }
 
   Future<void> _onPush({bool force = false}) async {
-    if (_username == null || _token == null) {
+    if (!await _ensureToken()) {
       setState(() => error = '请先登录');
       return;
     }
@@ -455,7 +498,7 @@ class _GraphPageState extends State<GraphPage> {
   }
 
   Future<void> _onPull() async {
-    if (_username == null || _token == null) {
+    if (!await _ensureToken()) {
       setState(() => error = '请先登录');
       return;
     }

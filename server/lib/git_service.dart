@@ -279,8 +279,9 @@ String _baseDir() {
 }
 
 File _trackingFile(String name) {
-  final dir = p.join(_baseDir(), '.configs');
-  return File(p.join(dir, '$name.json'));
+  // tracking.json is now stored inside the repo directory directly, not in .configs
+  final dir = _projectDir(name);
+  return File(p.join(dir, 'tracking.json'));
 }
 
 Future<Map<String, dynamic>> _readTracking(String name) async {
@@ -293,29 +294,20 @@ Future<Map<String, dynamic>> _readTracking(String name) async {
       return <String, dynamic>{};
     }
   }
-  // Migration: Check old location inside repo
-  final oldPath = p.join(_projectDir(name), 'tracking.json');
-  final oldFile = File(oldPath);
-  if (oldFile.existsSync()) {
-    try {
-      final s = await oldFile.readAsString();
-      final data = jsonDecode(s) as Map<String, dynamic>;
-      // Migrate to new location
-      await _writeTracking(name, data);
-      return data;
-    } catch (_) {
-      return <String, dynamic>{};
-    }
-  }
   return <String, dynamic>{};
 }
 
 Future<void> _writeTracking(String name, Map<String, dynamic> data) async {
-  final dir = Directory(p.dirname(_trackingFile(name).path));
+  final f = _trackingFile(name);
+  // Ensure project dir exists
+  final dir = Directory(p.dirname(f.path));
   if (!dir.existsSync()) {
     dir.createSync(recursive: true);
   }
-  final f = _trackingFile(name);
+
+  // We want to exclude tracking.json from git if it's not already ignored?
+  // The init function adds it to .gitignore.
+
   await f.writeAsString(jsonEncode(data));
 }
 
@@ -830,14 +822,67 @@ Future<void> ensureRemoteRepoExists(String repoName, String token) async {
   }
 }
 
+Future<String> _resolveRepoOwner(String repoName, String token) async {
+  final giteaUrl = 'http://47.242.109.145:3000';
+  final headers = {
+    'Authorization': 'token $token',
+    'Content-Type': 'application/json',
+  };
+
+  String? findOwnerInList(List<dynamic> list) {
+    for (final repo in list) {
+      if (repo['name'] == repoName) {
+        return repo['owner']['login'] as String;
+      }
+    }
+    return null;
+  }
+
+  // 1. Check owned repos
+  try {
+    final resp = await http.get(Uri.parse('$giteaUrl/api/v1/user/repos'),
+        headers: headers);
+    if (resp.statusCode == 200) {
+      final owner = findOwnerInList(jsonDecode(resp.body));
+      if (owner != null) return owner;
+    }
+  } catch (e) {
+    print('Error checking owned repos: $e');
+  }
+
+  // 2. Check member repos
+  try {
+    final resp = await http.get(
+        Uri.parse('$giteaUrl/api/v1/user/repos?type=member'),
+        headers: headers);
+    if (resp.statusCode == 200) {
+      final owner = findOwnerInList(jsonDecode(resp.body));
+      if (owner != null) return owner;
+    }
+  } catch (e) {
+    print('Error checking member repos: $e');
+  }
+
+  throw Exception(
+      'Repository $repoName not found in your account access list.');
+}
+
 Future<void> pushToRemote(String repoPath, String username, String token,
     {bool force = false}) async {
   print("pussying");
   final repoName = p.basename(repoPath);
-  await ensureRemoteRepoExists(repoName, token);
+
+  String owner;
+  try {
+    owner = await _resolveRepoOwner(repoName, token);
+  } catch (_) {
+    // Not found, create it
+    await ensureRemoteRepoExists(repoName, token);
+    owner = username;
+  }
 
   final remoteUrl =
-      'http://$username:$token@47.242.109.145:3000/$username/$repoName.git';
+      'http://$username:$token@47.242.109.145:3000/$owner/$repoName.git';
 
   final args = ['push'];
   if (force) args.add('--force');
@@ -850,28 +895,59 @@ Future<Map<String, dynamic>> pullFromRemote(
     String repoName, String username, String token) async {
   final projDir = _projectDir(repoName);
   final dir = Directory(projDir);
+  // Check if git repo exists inside. If dir exists but no .git, it's also considered fresh/broken.
+  final gitDir = Directory(p.join(projDir, '.git'));
+
+  final owner = await _resolveRepoOwner(repoName, token);
   final remoteUrl =
-      'http://$username:$token@47.242.109.145:3000/$username/$repoName.git';
+      'http://$username:$token@47.242.109.145:3000/$owner/$repoName.git';
 
   Map<String, dynamic>? savedTracking;
-  bool isFresh = !dir.existsSync();
+  bool isFresh = !dir.existsSync() || !gitDir.existsSync();
 
   if (!isFresh) {
     // Check safety before destroying
-    // 1. Check uncommitted changes
+
+    // 1. Use our semantic check (updateTrackingProject) instead of raw git status
+    // If updateTrackingProject says "workingChanged": true, it means we have meaningful changes (content diff)
+    // If false, it means files are identical to HEAD (even if metadata changed), so it's safe to overwrite.
     try {
-      final statusLines = await _runGit(['status', '--porcelain'], projDir);
-      if (statusLines.isNotEmpty) {
-        return {
-          'status': 'error',
-          'errorType': 'uncommitted',
-          'path': projDir,
-          'message':
-              'Local repository has uncommitted changes. Please commit or discard them before pulling.'
-        };
+      // Check if tracking.json exists first
+      final trackingFile = _trackingFile(repoName);
+      if (trackingFile.existsSync()) {
+        print("Debug tracking file");
+        print(trackingFile);
+        // We call updateTrackingProject to perform the comparison (External vs Repo HEAD)
+        // This also handles the case where external file metadata changed but content is same.
+        // Note: updateTrackingProject will update the repo file if content changed, or restore it if identical.
+        // So after this call, git status should be clean if content is identical.
+        await updateTrackingProject(repoName);
+
+        // Check if there are still uncommitted changes in git
+        final statusLines = await _runGit(['status', '--porcelain'], projDir);
+
+        // If git status is dirty AND updateResult confirms working changed (or just rely on git status after update)
+        // Actually, updateTrackingProject tries to restore working copy if identical.
+        // So if statusLines is not empty here, it means there are REAL changes.
+        if (statusLines.isNotEmpty) {
+          return {
+            'status': 'error',
+            'errorType': 'uncommitted',
+            'path': projDir,
+            'message':
+                'Local repository has uncommitted changes (content modified). Please commit or discard them before pulling.'
+          };
+        }
+      } else {
+        // If tracking.json doesn't exist, we assume it's a fresh state or broken tracking.
+        // In this case, we skip the check and allow pull to proceed (force pull behavior as requested).
+        print(
+            "No tracking.json found for $repoName, skipping local changes check.");
       }
     } catch (e) {
-      // If repo is broken, maybe allow overwrite?
+      // If update failed, maybe repo is broken, proceed with caution or fail?
+      // Let's assume if we can't verify, we block to be safe, unless it's just a minor error.
+      print("Pre-pull check warning: $e");
     }
 
     // 2. Check if local is newer than remote
@@ -940,7 +1016,12 @@ Future<Map<String, dynamic>> pullFromRemote(
       runInShell: true,
     );
     if (branchesRes.exitCode == 0) {
-      final lines = (branchesRes.stdout as String).split('\n');
+      // Use utf8.decode to handle non-ASCII characters properly
+      final out = branchesRes.stdout is String
+          ? branchesRes.stdout as String
+          : utf8.decode(branchesRes.stdout as List<int>);
+      final lines = LineSplitter.split(out).toList();
+
       for (final line in lines) {
         final trimmed = line.trim();
         if (trimmed.isEmpty) continue;
@@ -951,7 +1032,7 @@ Future<Map<String, dynamic>> pullFromRemote(
         if (parts.length < 2) continue;
 
         // Assuming remote name is always the first part (origin)
-        // branch name is the rest
+        // branch name is the rest (e.g. "feature/a" or "资产阶级")
         final branchName = parts.sublist(1).join('/');
 
         // Check if local branch already exists (e.g. master)
@@ -980,16 +1061,17 @@ Future<Map<String, dynamic>> pullFromRemote(
   }
 
   // Post-pull cleanup & sync
-  // 1. If tracking.json exists in repo (from remote), delete it to avoid confusion
-  final legacyTracking = File(p.join(projDir, 'tracking.json'));
-  if (legacyTracking.existsSync()) {
-    try {
-      legacyTracking.deleteSync();
-    } catch (_) {}
-  }
+  // tracking.json handling:
+  // We DO NOT touch tracking.json here. It should be ignored by git (.gitignore).
+  // If it exists locally, it stays. If it doesn't, we don't create it here (createTrackingProject does that).
+  // We also DO NOT sync savedTracking back to disk because tracking.json is local config.
 
   if (!isFresh && savedTracking != null && savedTracking.isNotEmpty) {
-    // Sync Repo Docx -> External Docx
+    // Restore Docx path if needed?
+    // Actually, if we just pulled, we might have new content in repoDocxPath.
+    // But we don't want to overwrite tracking.json.
+
+    // However, we DO want to sync Repo Docx -> External Docx (the file content)
     final repoDocxPath = savedTracking['repoDocxPath'] as String?;
     final docxPath = savedTracking['docxPath'] as String?;
 
