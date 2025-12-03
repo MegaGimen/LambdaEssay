@@ -546,6 +546,8 @@ class _GraphPageState extends State<GraphPage> {
     } finally {
       setState(() => loading = false);
     }
+    // Auto update after push
+    await _onUpdateRepo();
   }
 
   Future<void> _onPull() async {
@@ -743,12 +745,48 @@ class _GraphPageState extends State<GraphPage> {
 
       // Reload again to update graph if needed (e.g. fresh clone or new commits)
       await _load();
+      // Force repo update after pull to sync semantic changes
+      await _onUpdateRepo();
+
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('拉取成功')));
     } catch (e) {
       setState(() => error = '拉取失败: $e');
     } finally {
       setState(() => loading = false);
+    }
+  }
+
+  Future<void> _onUpdateRepo() async {
+    final name = currentProjectName;
+    if (name == null || name.isEmpty) return;
+
+    try {
+      final resp = await _postJson('http://localhost:8080/track/update', {
+        'name': name,
+      });
+      final needDocx = resp['needDocx'] == true;
+
+      if (!needDocx) {
+        final workingChanged = resp['workingChanged'] == true;
+        final repoPath = resp['repoPath'] as String;
+        final head = resp['head'] as String?;
+
+        // Now load graph
+        final data = await _loadGraph(repoPath);
+
+        setState(() {
+          pathCtrl.text = repoPath;
+          working = WorkingState(
+            changed: workingChanged,
+            baseId: head,
+          );
+          this.data = data;
+          error = null;
+        });
+      }
+    } catch (e) {
+      print('Auto-update failed: $e');
     }
   }
 
@@ -773,9 +811,28 @@ class _GraphPageState extends State<GraphPage> {
     return jsonDecode(resp.body) as Map<String, dynamic>;
   }
 
+  Future<GraphData> _loadGraph(String repoPath) async {
+    final limit = int.tryParse(limitCtrl.text.trim());
+    // Reset cache on server first? Not strictly needed but good for consistency
+    await http.post(
+      Uri.parse('http://localhost:8080/reset'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'ts': DateTime.now().millisecondsSinceEpoch}),
+    );
+    final resp = await http.post(
+      Uri.parse('http://localhost:8080/graph'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'repoPath': repoPath, 'limit': limit}),
+    );
+    if (resp.statusCode != 200) {
+      throw Exception('后端错误: ${resp.body}');
+    }
+    final j = jsonDecode(resp.body) as Map<String, dynamic>;
+    return GraphData.fromJson(j);
+  }
+
   Future<void> _load() async {
     final path = pathCtrl.text.trim();
-    final limit = int.tryParse(limitCtrl.text.trim());
     if (path.isEmpty) {
       setState(() => error = '请输入本地仓库路径');
       return;
@@ -807,25 +864,7 @@ class _GraphPageState extends State<GraphPage> {
     }
 
     try {
-      await http.post(
-        Uri.parse('http://localhost:8080/reset'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'ts': DateTime.now().millisecondsSinceEpoch}),
-      );
-      final resp = await http.post(
-        Uri.parse('http://localhost:8080/graph'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'repoPath': path, 'limit': limit}),
-      );
-      if (resp.statusCode != 200) {
-        setState(() {
-          error = '后端错误: ${resp.body}';
-          loading = false;
-        });
-        return;
-      }
-      final j = jsonDecode(resp.body) as Map<String, dynamic>;
-      final gd = GraphData.fromJson(j);
+      final gd = await _loadGraph(path);
       setState(() {
         data = gd;
         loading = false;
@@ -993,7 +1032,7 @@ class _GraphPageState extends State<GraphPage> {
     }
   }
 
-  Future<void> _onUpdateRepo() async {
+  Future<void> _onUpdateRepoAction() async {
     String? name = currentProjectName;
     if (name == null || name.isEmpty) {
       setState(() => loading = true);
@@ -1370,7 +1409,7 @@ class _GraphPageState extends State<GraphPage> {
                     repoPath: pathCtrl.text.trim(),
                     projectName: currentProjectName,
                     onRefresh: _load,
-                    onUpdate: _onUpdateRepo,
+                    onUpdate: _onUpdateRepoAction,
                   ),
           ),
         ],
@@ -1602,10 +1641,12 @@ class _GraphViewState extends State<_GraphView> {
         }),
       );
       if (resp.statusCode != 200) throw Exception(resp.body);
+      // Use onUpdate which should map to _onUpdateRepo in parent
       if (widget.onUpdate != null) {
         await widget.onUpdate!();
       } else {
-        widget.onRefresh?.call();
+        // Fallback if onUpdate not provided (should not happen in main usage)
+        if (widget.onRefresh != null) widget.onRefresh!();
       }
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -1659,7 +1700,7 @@ class _GraphViewState extends State<_GraphView> {
       if (widget.onUpdate != null) {
         await widget.onUpdate!();
       } else {
-        widget.onRefresh?.call();
+        if (widget.onRefresh != null) widget.onRefresh!();
       }
     } catch (e) {
       ScaffoldMessenger.of(
@@ -1895,8 +1936,10 @@ class _GraphViewState extends State<_GraphView> {
         throw Exception('回退失败: ${resp.body}');
       }
 
-      if (widget.onRefresh != null) {
-        widget.onRefresh!();
+      if (widget.onUpdate != null) {
+        await widget.onUpdate!();
+      } else {
+        if (widget.onRefresh != null) widget.onRefresh!();
       }
 
       if (!mounted) return;
@@ -1966,8 +2009,10 @@ class _GraphViewState extends State<_GraphView> {
         throw Exception('重置失败: ${resp.body}');
       }
 
-      if (widget.onRefresh != null) {
-        widget.onRefresh!();
+      if (widget.onUpdate != null) {
+        await widget.onUpdate!();
+      } else {
+        if (widget.onRefresh != null) widget.onRefresh!();
       }
 
       if (!mounted) return;
