@@ -2892,13 +2892,9 @@ class _GraphViewState extends State<_GraphView> {
       final laneP = laneOf[parent]!;
       final px = laneP * laneWidth + laneWidth / 2;
       final py = rowP * rowHeight + rowHeight / 2;
-      final dLane = (laneC - laneP).abs();
-      var bendBase = (dLane * 8.0).clamp(8.0, 24.0);
-      bendBase += _obstacleCount(child, parent, laneOf, rowOf) * 16.0;
-      final dir = laneC <= laneP ? 1.0 : -1.0;
-      final c1 = Offset(x + dir * bendBase, (y + py) / 2);
-      final c2 = Offset(px - dir * bendBase, (y + py) / 2);
-      final d = _distToCubic(sceneP, Offset(x, y), c1, c2, Offset(px, py));
+
+      // Simple straight line hit test (distance to segment)
+      final d = _distPointToSegment(sceneP, Offset(x, y), Offset(px, py));
       if (d < best) {
         best = d;
         bestInfo = EdgeInfo(
@@ -2910,33 +2906,6 @@ class _GraphViewState extends State<_GraphView> {
     }
     if (bestInfo != null && best <= 8.0) return bestInfo;
     return null;
-  }
-
-  double _distToCubic(Offset p, Offset a, Offset c1, Offset c2, Offset b) {
-    const steps = 24;
-    Offset prev = a;
-    double minD = double.infinity;
-    for (var i = 1; i <= steps; i++) {
-      final t = i / steps;
-      final pt = _cubicPoint(a, c1, c2, b, t);
-      final d = _distPointToSegment(p, prev, pt);
-      if (d < minD) minD = d;
-      prev = pt;
-    }
-    return minD;
-  }
-
-  Offset _cubicPoint(Offset a, Offset c1, Offset c2, Offset b, double t) {
-    final mt = 1 - t;
-    final x = mt * mt * mt * a.dx +
-        3 * mt * mt * t * c1.dx +
-        3 * mt * t * t * c2.dx +
-        t * t * t * b.dx;
-    final y = mt * mt * mt * a.dy +
-        3 * mt * mt * t * c1.dy +
-        3 * mt * t * t * c2.dy +
-        t * t * t * b.dy;
-    return Offset(x, y);
   }
 
   double _distPointToSegment(Offset p, Offset a, Offset b) {
@@ -2954,33 +2923,6 @@ class _GraphViewState extends State<_GraphView> {
     final dx = p.dx - cx;
     final dy = p.dy - cy;
     return math.sqrt(dx * dx + dy * dy);
-  }
-
-  int _obstacleCount(
-    String child,
-    String parent,
-    Map<String, int> laneOf,
-    Map<String, int> rowOf,
-  ) {
-    final rc = rowOf[child]!;
-    final rp = rowOf[parent]!;
-    final lc = laneOf[child]!;
-    final lp = laneOf[parent]!;
-    final rmin = math.min(rc, rp);
-    final rmax = math.max(rc, rp);
-    final lmin = math.min(lc, lp);
-    final lmax = math.max(lc, lp);
-    var cnt = 0;
-    for (final e in rowOf.entries) {
-      final id = e.key;
-      if (id == child || id == parent) continue;
-      final r = e.value;
-      if (r <= rmin || r >= rmax) continue;
-      final l = laneOf[id];
-      if (l == null) continue;
-      if (l >= lmin && l <= lmax) cnt++;
-    }
-    return cnt;
   }
 }
 
@@ -3114,23 +3056,21 @@ class GraphPainter extends CustomPainter {
         final total = pairCount[key] ?? 1;
         final done = pairDrawn[key] ?? 0;
         pairDrawn[key] = done + 1;
-        // 将并行边按顺序左右分开，靠得很近
-        final midY = (y + py) / 2;
-        final dLane = (laneC - laneP).abs();
-        var bendBase = (dLane * 8.0).clamp(8.0, 24.0);
-        bendBase += _obstacleCount(child, parent, laneOf, rowOf) * 16.0;
-        final dir = laneC <= laneP ? 1.0 : -1.0;
-        final spread = (done - (total - 1) / 2.0) * 3.0; // -..0..+
+        // Simple straight lines with slight spread for parallel edges
+        final spread = (done - (total - 1) / 2.0) * 4.0;
+
         final path = Path();
-        path.moveTo(x, y);
-        path.cubicTo(
-          x + dir * (bendBase + spread),
-          midY,
-          px - dir * (bendBase + spread),
-          midY,
-          px,
-          py,
-        );
+        if (total == 1) {
+          path.moveTo(x, y);
+          path.lineTo(px, py);
+        } else {
+          // If multiple branches connect same nodes, offset them slightly
+          // perpendicular to the line? Or just horizontal offset?
+          // Horizontal offset is simpler and works for vertical/diagonal.
+          path.moveTo(x + spread, y);
+          path.lineTo(px + spread, py);
+        }
+
         paintEdge.color = bcolor;
         bool isCurrent = data.currentBranch == bname;
         bool isHover = hoverPairKey != null && hoverPairKey == key;
@@ -3224,33 +3164,6 @@ class GraphPainter extends CustomPainter {
       textPainter.layout();
       textPainter.paint(canvas, Offset(cx + 10, cy - 8));
     }
-  }
-
-  int _obstacleCount(
-    String child,
-    String parent,
-    Map<String, int> laneOf,
-    Map<String, int> rowOf,
-  ) {
-    final rc = rowOf[child]!;
-    final rp = rowOf[parent]!;
-    final lc = laneOf[child]!;
-    final lp = laneOf[parent]!;
-    final rmin = math.min(rc, rp);
-    final rmax = math.max(rc, rp);
-    final lmin = math.min(lc, lp);
-    final lmax = math.max(lc, lp);
-    var cnt = 0;
-    for (final e in rowOf.entries) {
-      final id = e.key;
-      if (id == child || id == parent) continue;
-      final r = e.value;
-      if (r <= rmin || r >= rmax) continue;
-      final l = laneOf[id];
-      if (l == null) continue;
-      if (l >= lmin && l <= lmax) cnt++;
-    }
-    return cnt;
   }
 
   Color _colorOfCommit(String id, Map<String, Color> memo) {
