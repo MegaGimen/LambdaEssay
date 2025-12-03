@@ -1055,6 +1055,7 @@ Future<Map<String, dynamic>> pullFromRemote(
         // If git status is dirty AND updateResult confirms working changed (or just rely on git status after update)
         // Actually, updateTrackingProject tries to restore working copy if identical.
         // So if statusLines is not empty here, it means there are REAL changes.
+        /* 
         if (statusLines.isNotEmpty) {
           return {
             'status': 'error',
@@ -1063,6 +1064,11 @@ Future<Map<String, dynamic>> pullFromRemote(
             'message':
                 'Local repository has uncommitted changes (content modified). Please commit or discard them before pulling.'
           };
+        }
+        */
+        if (statusLines.isNotEmpty) {
+          print(
+              "Warning: Pulling with uncommitted changes, these will be overwritten.");
         }
       } else {
         // If tracking.json doesn't exist, we assume it's a fresh state or broken tracking.
