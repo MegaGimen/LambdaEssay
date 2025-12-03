@@ -1629,6 +1629,7 @@ class _GraphViewState extends State<_GraphView> {
   static const Duration _rightPanDelay = Duration(milliseconds: 200);
   final Set<String> _selectedNodes = {};
   bool _comparing = false;
+  bool _isMerging = false;
 
   void _resetView() {
     setState(() {
@@ -2298,11 +2299,7 @@ class _GraphViewState extends State<_GraphView> {
     if (!mounted) return;
 
     // Step 2: Prepare Merge
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const Center(child: CircularProgressIndicator()),
-    );
+    setState(() => _isMerging = true);
 
     try {
       final resp = await http.post(
@@ -2314,7 +2311,7 @@ class _GraphViewState extends State<_GraphView> {
         }),
       );
 
-      if (mounted) Navigator.pop(context); // Hide loading
+      setState(() => _isMerging = false); // Hide loading
 
       if (resp.statusCode != 200) {
         throw Exception('准备合并失败: ${resp.body}');
@@ -2345,7 +2342,22 @@ class _GraphViewState extends State<_GraphView> {
         ),
       );
 
-      if (confirm != true) return;
+      if (confirm != true) {
+        // Restore logic if cancelled
+        setState(() => _isMerging = true);
+        await http.post(
+          Uri.parse('http://localhost:8080/restore_docx'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'repoName': widget.projectName ?? ''}),
+        );
+        setState(() => _isMerging = false);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('合并已取消，文档已还原')),
+          );
+        }
+        return;
+      }
 
       // Step 4: Double Confirmation
       final doubleCheck = await showDialog<bool>(
@@ -2367,14 +2379,25 @@ class _GraphViewState extends State<_GraphView> {
         ),
       );
 
-      if (doubleCheck != true) return;
+      if (doubleCheck != true) {
+        // Restore logic if cancelled
+        setState(() => _isMerging = true);
+        await http.post(
+          Uri.parse('http://localhost:8080/restore_docx'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'repoName': widget.projectName ?? ''}),
+        );
+        setState(() => _isMerging = false);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('合并已取消，文档已还原')),
+          );
+        }
+        return;
+      }
 
       if (!mounted) return;
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => const Center(child: CircularProgressIndicator()),
-      );
+      setState(() => _isMerging = true);
 
       // Step 5: Auto Update Repo (Sync)
       if (widget.onUpdate != null) {
@@ -2391,7 +2414,7 @@ class _GraphViewState extends State<_GraphView> {
         }),
       );
 
-      if (mounted) Navigator.pop(context); // Hide loading
+      setState(() => _isMerging = false); // Hide loading
 
       if (resp2.statusCode != 200) {
         throw Exception('完成合并失败: ${resp2.body}');
@@ -2408,9 +2431,7 @@ class _GraphViewState extends State<_GraphView> {
         );
       }
     } catch (e) {
-      if (mounted && Navigator.canPop(context)) {
-        Navigator.pop(context);
-      }
+      if (mounted) setState(() => _isMerging = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error: $e')),
@@ -2915,6 +2936,13 @@ class _GraphViewState extends State<_GraphView> {
                   textStyle: const TextStyle(fontSize: 16),
                 ),
               ),
+            ),
+          ),
+        if (_isMerging)
+          Positioned.fill(
+            child: Container(
+              color: Colors.black.withValues(alpha: 0.3),
+              child: const Center(child: CircularProgressIndicator()),
             ),
           ),
       ],

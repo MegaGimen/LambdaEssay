@@ -1440,6 +1440,11 @@ Future<void> prepareMerge(String repoName, String targetBranch) async {
 
     // 4. Overwrite tracking file (docxPath) with diffTemp
     if (await diffTemp.exists()) {
+      // Backup original file before overwriting
+      final backupFile = File('$docxPath.bak');
+      if (await currentFile.exists()) {
+        await currentFile.copy(backupFile.path);
+      }
       await currentFile.writeAsBytes(await diffTemp.readAsBytes());
     } else {
       throw Exception('Comparison script did not generate output file');
@@ -1449,6 +1454,33 @@ Future<void> prepareMerge(String repoName, String targetBranch) async {
     if (await targetTemp.exists()) await targetTemp.delete();
     if (await currentTemp.exists()) await currentTemp.delete();
     if (await diffTemp.exists()) await diffTemp.delete();
+  }
+}
+
+Future<void> restoreDocx(String repoName) async {
+  final projDir = _projectDir(repoName);
+  final trackingFile = File(p.join(projDir, 'tracking.json'));
+
+  if (!trackingFile.existsSync()) {
+    throw Exception('Tracking configuration not found');
+  }
+
+  final savedTracking = jsonDecode(await trackingFile.readAsString());
+  final docxPath = savedTracking['docxPath'] as String?;
+
+  if (docxPath == null) {
+    throw Exception('Tracking configuration invalid (docxPath missing)');
+  }
+
+  final backupFile = File('$docxPath.bak');
+  final currentFile = File(docxPath);
+
+  if (await backupFile.exists()) {
+    await backupFile.copy(currentFile.path);
+    await backupFile.delete();
+  } else {
+    // If no backup exists, maybe it was already restored or never created.
+    // We can treat this as success or ignore.
   }
 }
 
@@ -1467,6 +1499,12 @@ Future<void> completeMerge(String repoName, String targetBranch) async {
       final repoFile = File(repoDocxPath);
       if (extFile.existsSync()) {
         await repoFile.writeAsBytes(await extFile.readAsBytes());
+      }
+
+      // Cleanup backup file if exists
+      final backupFile = File('$docxPath.bak');
+      if (await backupFile.exists()) {
+        await backupFile.delete();
       }
     }
   }
