@@ -664,10 +664,6 @@ class _GraphPageState extends State<GraphPage> {
               ),
             ),
             actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('跳过'),
-              ),
               ElevatedButton(
                 onPressed: () => Navigator.pop(context, true),
                 child: const Text('确定'),
