@@ -468,86 +468,231 @@ class _GraphPageState extends State<GraphPage> {
       final msg = e.toString();
       if (msg.contains('non-fast-forward') || msg.contains('fetch first')) {
         if (!mounted) return;
-
-        // 第一重确认
-        final ok1 = await showDialog<bool>(
-          context: context,
-          builder: (_) => AlertDialog(
-            title: const Text('推送被拒绝'),
-            content: const Text('远程分支比本地分支新，或本地分支历史与远程不一致（可能因为回滚）。\n'
-                '是否强制推送？（这将覆盖远程分支的更改，可能导致他人工作丢失）'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('取消'),
-              ),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('强制推送'),
-              ),
-            ],
-          ),
-        );
-        if (ok1 != true) return;
-
-        if (!mounted) return;
-        // 第二重确认
-        final ok2 = await showDialog<bool>(
-          context: context,
-          builder: (_) => AlertDialog(
-            title: const Text('危险操作确认'),
-            content: const Text('您确定要强制推送吗？\n'
-                '此操作将【永久覆盖】远程仓库的历史记录，无法撤销！'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('取消'),
-              ),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('我确定要覆盖'),
-              ),
-            ],
-          ),
-        );
-        if (ok2 != true) return;
-
-        if (!mounted) return;
-        // 第三重确认
-        final ok3 = await showDialog<bool>(
-          context: context,
-          builder: (_) => AlertDialog(
-            title: const Text('最后一次确认'),
-            content: const Text('请再次确认：\n'
-                '您是否清楚这会导致远程仓库的提交丢失？\n'
-                '如果这是多人协作项目，请务必通知其他成员！'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('取消'),
-              ),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('执行强制推送'),
-              ),
-            ],
-          ),
-        );
-
-        if (ok3 == true) {
-          await _onPush(force: true);
-          return;
-        }
+        await _showPushRejectedDialog(msg);
+        return;
       }
       setState(() => error = '推送失败: $e');
     } finally {
       setState(() => loading = false);
     }
-    // Auto update after push, but do NOT auto-pull (forcePull: false) to avoid undoing the push or state confusion
-    await _onUpdateRepoAction(forcePull: false);
+  }
+
+  Future<void> _showPushRejectedDialog(String message) async {
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('推送被拒绝'),
+        content: Text('远程分支包含您本地没有的更改。\n\n'
+            '$message\n\n'
+            '推荐使用“解决冲突”来保留双方更改。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'cancel'),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'force'),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('强制推送 (覆盖远程)'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, 'resolve'),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+            child: const Text('把差异作为一个新的commit (推荐)'),
+          ),
+        ],
+      ),
+    );
+
+    if (choice == 'force') {
+      // Proceed with existing force push logic (3 confirmations)
+      // We can just recall _onPush(force: true) but that skips the 3 confirmations?
+      // No, _onPush(force: true) executes directly.
+      // But the requirement was "if rejected, user has 2 choices".
+      // The user also mentioned "Force push" logic exists.
+      // Let's reuse the triple confirmation by just returning 'force' to caller?
+      // But caller is _onPush which is async.
+      // Let's implement the sub-dialogs here.
+      await _confirmForcePush();
+    } else if (choice == 'resolve') {
+      await _showResolveConflictDialog(isPush: true);
+    }
+  }
+
+  Future<void> _confirmForcePush() async {
+    // 第一重确认
+    final ok1 = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('危险操作确认'),
+        content: const Text('您选择了强制推送。\n'
+            '此操作将【永久覆盖】远程仓库的历史记录，无法撤销！\n'
+            '建议您先尝试“解决冲突”选项。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('我确定要覆盖'),
+          ),
+        ],
+      ),
+    );
+    if (ok1 != true) return;
+
+    // 第二重确认
+    final ok2 = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('最后一次确认'),
+        content: const Text('请再次确认：\n'
+            '您是否清楚这会导致远程仓库的提交丢失？\n'
+            '如果这是多人协作项目，请务必通知其他成员！'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('执行强制推送'),
+          ),
+        ],
+      ),
+    );
+
+    if (ok2 == true) {
+      await _onPush(force: true);
+    }
+  }
+
+  Future<void> _showResolveConflictDialog({required bool isPush}) async {
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('选择解决方式'),
+        content: const Text('请选择如何处理本地与远程的差异：'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'cancel'),
+            child: const Text('取消'),
+          ),
+          OutlinedButton(
+            onPressed: () => Navigator.pop(ctx, 'fork'),
+            child: const Text('分叉 (Branch Off)'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, 'rebase'),
+            child: const Text('在远程提交后附着 (Rebase)'),
+          ),
+        ],
+      ),
+    );
+
+    if (choice == 'rebase') {
+      await _doRebasePull(isPush: isPush);
+    } else if (choice == 'fork') {
+      await _doForkLocal(isPush: isPush);
+    }
+  }
+
+  Future<void> _doRebasePull({required bool isPush}) async {
+    setState(() => loading = true);
+    try {
+      // Rebase pull
+      await _postJson('http://localhost:8080/pull_rebase', {
+        'repoName': currentProjectName,
+        'username': _username,
+        'token': _token,
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('附着成功 (Rebase Success)')),
+        );
+      }
+
+      // If this was triggered by Push, we should try to push again?
+      // User said "attach local... then push".
+      if (isPush) {
+        // Push again (normal push, should succeed now if no conflict)
+        await _onPush();
+      } else {
+        // Just reload
+        await _load();
+        await _onUpdateRepoAction(forcePull: false);
+      }
+    } catch (e) {
+      setState(() => error = '附着失败: $e');
+    } finally {
+      setState(() => loading = false);
+    }
+  }
+
+  Future<void> _doForkLocal({required bool isPush}) async {
+    final nameCtrl = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('分叉分支'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('请输入新分支名称 (将包含您的本地修改)'),
+            TextField(
+              controller: nameCtrl,
+              decoration: const InputDecoration(labelText: '新分支名称'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+
+    if (ok != true) return;
+    final newBranch = nameCtrl.text.trim();
+    if (newBranch.isEmpty) return;
+
+    setState(() => loading = true);
+    try {
+      await _postJson('http://localhost:8080/fork_local', {
+        'repoName': currentProjectName,
+        'newBranch': newBranch,
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('已分叉到 $newBranch')),
+        );
+      }
+
+      // Reload to reflect branch switch
+      await _load();
+      await _onUpdateRepoAction(forcePull: false);
+
+      // If Push, push the NEW branch
+      if (isPush) {
+        // We are now on newBranch. Push it.
+        await _onPush();
+      }
+    } catch (e) {
+      setState(() => error = '分叉失败: $e');
+    } finally {
+      setState(() => loading = false);
+    }
   }
 
   Future<void> _onPull() async {
@@ -657,27 +802,24 @@ class _GraphPageState extends State<GraphPage> {
 
         if (errorType == 'ahead' || errorType == 'uncommitted') {
           final bool isAhead = errorType == 'ahead';
-          showDialog(
-            context: context,
-            builder: (_) => AlertDialog(
-              title: const Text('无法拉取'),
-              content: Text(message),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('取消'),
-                ),
-                if (isAhead)
-                  ElevatedButton(
-                    onPressed: () {
-                      Navigator.pop(context);
-                      _onPush();
-                    },
-                    child: const Text('立即推送'),
+          if (isAhead) {
+            // Show resolve options for Ahead/Diverged
+            await _showResolveConflictDialog(isPush: false);
+          } else {
+            showDialog(
+              context: context,
+              builder: (_) => AlertDialog(
+                title: const Text('无法拉取'),
+                content: Text(message),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('取消'),
                   ),
-              ],
-            ),
-          );
+                ],
+              ),
+            );
+          }
         } else {
           setState(() => error = '拉取失败: $message');
         }

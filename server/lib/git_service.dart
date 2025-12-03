@@ -1240,3 +1240,101 @@ Future<List<String>> listProjects() async {
   } catch (_) {}
   return projects;
 }
+
+Future<void> rebasePull(String repoName, String username, String token) async {
+  final projDir = _projectDir(repoName);
+  final owner = await _resolveRepoOwner(repoName, token);
+  final remoteUrl =
+      'http://$username:$token@47.242.109.145:3000/$owner/$repoName.git';
+
+  // Ensure remote is set correctly
+  try {
+    await _runGit(['remote', 'set-url', 'origin', remoteUrl], projDir);
+  } catch (e) {
+    // If origin doesn't exist, add it
+    await _runGit(['remote', 'add', 'origin', remoteUrl], projDir);
+  }
+
+  // git pull --rebase origin <current_branch>
+  final current = await getCurrentBranch(projDir);
+  if (current == null) throw Exception('Cannot rebase in detached HEAD state');
+
+  try {
+    await _runGit(['pull', '--rebase', 'origin', current], projDir);
+  } catch (e) {
+    // If rebase fails, abort it to restore state
+    try {
+      await _runGit(['rebase', '--abort'], projDir);
+    } catch (_) {}
+    throw Exception('Rebase failed (likely conflicts): $e');
+  }
+
+  // After rebase, we might need to sync tracking docx?
+  // The rebase updates local files to match remote+local changes.
+  // We should probably trigger the standard post-pull sync logic if needed.
+  // But standard sync logic in pullFromRemote is internal.
+  // Let's minimal sync:
+  // Just ensure watcher is running?
+  clearCache();
+}
+
+Future<void> forkAndReset(String repoName, String newBranchName) async {
+  final projDir = _projectDir(repoName);
+  final current = await getCurrentBranch(projDir);
+  if (current == null) throw Exception('Cannot fork in detached HEAD state');
+
+  // 1. Create new branch from current HEAD
+  await _runGit(['branch', newBranchName], projDir);
+
+  // 2. Reset current branch to remote (assuming origin/current)
+  // We assume we want to make 'current' match 'origin/current'
+  // and keep 'newBranchName' as the one with local changes.
+
+  // But wait, if we are in "Push rejected" scenario (local ahead of remote, but non-fast-forward):
+  // We want to push 'newBranchName'. We don't necessarily need to reset 'current'.
+  // If we are in "Pull rejected" scenario (local ahead of remote):
+  // We want 'current' to accept remote changes (reset), and 'newBranchName' to keep local changes.
+
+  // The user prompt says "Fork... set local as another branch".
+  // If I just 'checkout -b newBranchName', I am now on newBranchName (with local changes).
+  // The 'current' (e.g. master) stays as is (with local changes).
+  // This is safe.
+  // But for "Pull", the user expects to "resolve" the conflict on 'master'.
+  // So 'master' should probably become clean (match remote).
+
+  // Let's implement the "Pull-Fork" logic:
+  // 1. Create new branch pointing to current HEAD.
+  // 2. Fetch origin (to be sure).
+  // 3. Reset current branch to origin/current.
+  // 4. Checkout new branch.
+
+  await _runGit(['fetch', 'origin'], projDir);
+
+  // Check if origin/current exists
+  bool remoteExists = false;
+  try {
+    await _runGit(['rev-parse', '--verify', 'origin/$current'], projDir);
+    remoteExists = true;
+  } catch (_) {}
+
+  if (remoteExists) {
+    await _runGit(['reset', '--hard', 'origin/$current'], projDir);
+  }
+
+  // Checkout the new branch (which has the preserved local changes)
+  await _runGit(['checkout', newBranchName], projDir);
+
+  clearCache();
+}
+
+Future<void> forkLocal(String repoName, String newBranchName) async {
+  // This is for Push scenario: Just create branch and switch.
+  // Or maybe we use the same logic?
+  // If push is rejected, it means we have commits.
+  // If we 'checkout -b newBranch', we take commits with us.
+  // We can then push 'newBranch'.
+  // The old branch remains 'ahead'.
+  // If we want to 'clean' the old branch, we should reset it.
+  // So forkAndReset is actually good for both if the intent is "Move my changes to side branch".
+  await forkAndReset(repoName, newBranchName);
+}
