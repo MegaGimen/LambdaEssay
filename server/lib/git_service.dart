@@ -890,15 +890,58 @@ Future<void> pushToRemote(String repoPath, String username, String token,
   if (force) args.add('--force');
   // Explicitly specify the remote URL and ensure local branches are mapped to remote branches with same name
   args.add(remoteUrl);
-  args.add('refs/heads/*:refs/heads/*');
 
-  final output = await _runGit(args, repoPath);
+  // Get list of all local branches
+  final localBranches = <String>[];
+  try {
+    final lines = await _runGit(
+        ['for-each-ref', '--format=%(refname:short)', 'refs/heads'], repoPath);
+    for (final l in lines) {
+      if (l.trim().isNotEmpty) localBranches.add(l.trim());
+    }
+  } catch (e) {
+    print('Failed to list local branches: $e');
+  }
+
+  if (localBranches.isEmpty) {
+    // Fallback if no branches (empty repo?)
+    args.add('refs/heads/*:refs/heads/*');
+  } else {
+    // Add refspec for each branch explicitly
+    for (final b in localBranches) {
+      args.add('refs/heads/$b:refs/heads/$b');
+    }
+  }
+
+  print('Executing git push with args: $args');
+  List<String> output = [];
+  try {
+    output = await _runGit(args, repoPath);
+    print('Git push output: ${output.join('\n')}');
+  } catch (e) {
+    print('Git push failed with error: $e');
+    // If push failed, it might be because of non-fast-forward (rejected).
+    // Even if the error message is localized (e.g. Chinese), we should check the repo state.
+    if (!force) {
+      await _checkIfBehind(repoPath, remoteUrl);
+    }
+    // If _checkIfBehind didn't throw (meaning not behind), we rethrow the original error.
+    rethrow;
+  }
+
+  // Force update local remote refs to match reality
+  try {
+    await _runGit(['fetch', remoteUrl], repoPath);
+  } catch (e) {
+    print('Fetch after push failed: $e');
+  }
 
   // Check for implicit rejection (Everything up-to-date but local is actually behind/different)
   // If force is true, we don't care, git would have forced update unless it failed with other error.
   if (!force) {
     final outStr = output.join('\n');
     if (outStr.contains('Everything up-to-date')) {
+      // Only check if we are behind if git says up-to-date.
       await _checkIfBehind(repoPath, remoteUrl);
     }
   }
@@ -939,14 +982,37 @@ Future<void> _checkIfBehind(String repoPath, String remoteUrl) async {
   for (final branch in localRefs.keys) {
     final localHash = localRefs[branch];
     final remoteHash = remoteRefs[branch];
+
+    // Only throw if local != remote AND local is an ancestor of remote (behind).
+    // If local is ahead (remote is ancestor of local), that's fine, but then git push shouldn't have said "Everything up-to-date".
+    // Wait, if local is ahead, git push SHOULD update remote.
+    // So if git push says "Everything up-to-date", it means remote is ALREADY at localHash (equal),
+    // OR local is behind remote (and git refused to update but printed up-to-date? No, usually git prints nothing or rejects).
+    // Actually, if local is behind remote, 'git push' without force does nothing and says 'Everything up-to-date' because fast-forward is not possible in reverse?
+    // No, if behind, git push usually says 'Everything up-to-date' only if it thinks there's nothing to push.
+
     if (remoteHash != null && localHash != remoteHash) {
-      // Hashes are different, but push said up-to-date.
-      // This implies local is an ancestor of remote (behind), so git refused to update (implicit).
-      // We throw an error containing 'non-fast-forward' to trigger the frontend warning.
-      throw Exception(
-          'Push rejected: Local branch "$branch" is behind remote (non-fast-forward). '
-          'Local: ${localHash!.substring(0, 7)}, Remote: ${remoteHash.substring(0, 7)}. '
-          'You need to force push to overwrite remote changes.');
+      // We need to verify if local is BEHIND remote.
+      // If local is AHEAD, git push should have worked. Why did it fail/say up-to-date?
+      // Maybe network issue or refspec issue?
+      // But here we just want to detect the Reset/Rollback case (Local is Behind).
+
+      // Check if local is ancestor of remote
+      bool localIsBehind = false;
+      try {
+        await _runGit(
+            ['merge-base', '--is-ancestor', localHash!, remoteHash], repoPath);
+        localIsBehind = true;
+      } catch (_) {
+        localIsBehind = false;
+      }
+
+      if (localIsBehind) {
+        throw Exception(
+            'Push rejected: Local branch "$branch" is behind remote (non-fast-forward). '
+            'Local: ${localHash!.substring(0, 7)}, Remote: ${remoteHash.substring(0, 7)}. '
+            'You need to force push to overwrite remote changes.');
+      }
     }
   }
 }

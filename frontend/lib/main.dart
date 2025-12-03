@@ -463,6 +463,7 @@ class _GraphPageState extends State<GraphPage> {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('推送成功')));
+      await _load();
     } catch (e) {
       final msg = e.toString();
       if (msg.contains('non-fast-forward') || msg.contains('fetch first')) {
