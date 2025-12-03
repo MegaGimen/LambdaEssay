@@ -1260,7 +1260,9 @@ Future<void> rebasePull(String repoName, String username, String token) async {
   if (current == null) throw Exception('Cannot rebase in detached HEAD state');
 
   try {
-    await _runGit(['pull', '--rebase', 'origin', current], projDir);
+    print('Executing rebase pull with -X theirs (favoring local changes)...');
+    await _runGit(
+        ['pull', '--rebase', '-X', 'theirs', 'origin', current], projDir);
   } catch (e) {
     // If rebase fails, abort it to restore state
     try {
