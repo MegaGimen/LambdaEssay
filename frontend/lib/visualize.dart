@@ -35,13 +35,17 @@ class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
     // Add listeners to prevent browser zoom
     // This attempts to block the default browser zoom behavior when the user uses Ctrl+Scroll or Ctrl +/-
     // allowing the PDF viewer's internal zoom or just preventing UI scaling.
+    // ignore: undefined_prefixed_name
     html.window.addEventListener('wheel', _preventBrowserZoom, true);
+    // ignore: undefined_prefixed_name
     html.window.addEventListener('keydown', _preventBrowserKeyZoom, true);
   }
 
   @override
   void dispose() {
+    // ignore: undefined_prefixed_name
     html.window.removeEventListener('wheel', _preventBrowserZoom, true);
+    // ignore: undefined_prefixed_name
     html.window.removeEventListener('keydown', _preventBrowserKeyZoom, true);
     super.dispose();
   }
