@@ -1375,7 +1375,7 @@ Future<void> prepareMerge(String repoName, String targetBranch) async {
     final relPath =
         p.relative(repoDocxPath, from: projDir).replaceAll(r'\', '/');
     final result = await Process.run('git', ['show', '$targetBranch:$relPath'],
-        workingDirectory: projDir);
+        workingDirectory: projDir, stdoutEncoding: null);
     if (result.exitCode != 0) {
       throw Exception(
           'Failed to get file from target branch: ${result.stderr}');
@@ -1398,7 +1398,7 @@ Future<void> prepareMerge(String repoName, String targetBranch) async {
     final relPath =
         p.relative(repoDocxPath, from: projDir).replaceAll(r'\', '/');
     final result = await Process.run('git', ['show', 'HEAD:$relPath'],
-        workingDirectory: projDir);
+        workingDirectory: projDir, stdoutEncoding: null);
     if (result.exitCode != 0) {
       throw Exception('Failed to get file from HEAD: ${result.stderr}');
     }

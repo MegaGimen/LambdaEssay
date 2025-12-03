@@ -2210,37 +2210,77 @@ class _GraphViewState extends State<_GraphView> {
     }
   }
 
-  Future<void> _mergeToCurrent(CommitNode node) async {
-    final allBranches = widget.data.branches.map((b) => b.name).toSet();
-    final targets = node.refs.where((r) => allBranches.contains(r)).toList();
-    String? targetBranch;
-    if (targets.isNotEmpty) {
-      targetBranch = targets.first; // Default to first branch
-    } else {
-      // Ask user or just fail? The prompt says "Merge TARGET BRANCH".
-      // If node is not a branch head, maybe we can't merge "branch"?
-      // But we can merge "commit".
-      // However, git service uses branch name for git show <branch>:.
-      // If we pass commit ID to prepareMerge, we need to update git_service to support commit ID.
-      // Let's update git_service to support commit ID or branch name.
-      // Actually git show <commit>:path works same as <branch>:path.
-      // So we can use node.id as targetBranch.
-      targetBranch = node.id;
+  Future<void> _onMergeButton() async {
+    final current = widget.data.currentBranch;
+    final others = widget.data.branches
+        .where((b) => b.name != current)
+        .map((b) => b.name)
+        .toList();
+
+    if (others.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('没有其他分支可合并')),
+      );
+      return;
     }
 
-    // Ask user to confirm and pick branch if multiple?
-    // For simplicity, just use the node ID or prompt if it's a branch head.
+    String? selected = others.first;
 
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('合并分支'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('选择要合并到当前分支的目标分支：'),
+              const SizedBox(height: 8),
+              DropdownButton<String>(
+                isExpanded: true,
+                value: selected,
+                items: others
+                    .map((b) => DropdownMenuItem(
+                          value: b,
+                          child: Text(b),
+                        ))
+                    .toList(),
+                onChanged: (v) => setState(() => selected = v),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('合并'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (ok == true && selected != null) {
+      await _performMerge(selected!);
+    }
+  }
+
+  Future<void> _performMerge(String targetBranch) async {
     // Step 1: Warning
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('合并分支/提交'),
-        content: Text('您即将把 ${targetBranch!.substring(0, 7)} 合并到当前分支。\n\n'
+        content: Text(
+            '您即将把 ${targetBranch.length > 7 ? targetBranch.substring(0, 7) : targetBranch} 合并到当前分支。\n\n'
             '1. 请务必先【关闭 Word 文档】。\n'
-            '2. 系统将生成一个包含差异的文档 (Track Changes)。\n'
-            '3. 之后您需要手动在 Word 中处理差异并保存。\n'
-            '4. 最后确认合并。'),
+            '2. 系统将自动生成差异文档。\n'
+            '3. 您需要手动编辑差异文档以解决冲突。\n\n'
+            '是否继续？'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -2258,7 +2298,6 @@ class _GraphViewState extends State<_GraphView> {
     if (!mounted) return;
 
     // Step 2: Prepare Merge
-    // Show loading
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -2297,9 +2336,6 @@ class _GraphViewState extends State<_GraphView> {
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
               child: const Text('取消合并 (还原?)'),
-              // Ideally we should revert the file if cancelled.
-              // But user might have just wanted to pause.
-              // For now, cancel just stops the flow.
             ),
             ElevatedButton(
               onPressed: () => Navigator.pop(ctx, true),
@@ -2333,7 +2369,6 @@ class _GraphViewState extends State<_GraphView> {
 
       if (doubleCheck != true) return;
 
-      // Show loading
       if (!mounted) return;
       showDialog(
         context: context,
@@ -2342,12 +2377,8 @@ class _GraphViewState extends State<_GraphView> {
       );
 
       // Step 5: Auto Update Repo (Sync)
-      // We just call update repo logic.
-      // Actually complete_merge endpoint does sync.
-      // But user asked to "Update Git Repo" first.
       if (widget.onUpdate != null) {
-        await widget.onUpdate!(
-            forcePull: false); // Don't pull, we are merging locally
+        await widget.onUpdate!(forcePull: false);
       }
 
       // Step 6: Complete Merge
@@ -2378,9 +2409,7 @@ class _GraphViewState extends State<_GraphView> {
       }
     } catch (e) {
       if (mounted && Navigator.canPop(context)) {
-        // Try to pop loading if still showing (though we handled it above)
-        // This is tricky with multiple dialogs.
-        // Best effort.
+        // Try to pop loading if still showing
       }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -2388,6 +2417,18 @@ class _GraphViewState extends State<_GraphView> {
         );
       }
     }
+  }
+
+  Future<void> _mergeToCurrent(CommitNode node) async {
+    final allBranches = widget.data.branches.map((b) => b.name).toSet();
+    final targets = node.refs.where((r) => allBranches.contains(r)).toList();
+    String? targetBranch;
+    if (targets.isNotEmpty) {
+      targetBranch = targets.first;
+    } else {
+      targetBranch = node.id;
+    }
+    await _performMerge(targetBranch);
   }
 
   @override
@@ -2587,6 +2628,12 @@ class _GraphViewState extends State<_GraphView> {
                         onPressed: _onSwitchBranch,
                         icon: const Icon(Icons.swap_horiz),
                         label: const Text('切换分支'),
+                      ),
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        onPressed: _onMergeButton,
+                        icon: const Icon(Icons.call_merge),
+                        label: const Text('合并分支'),
                       ),
                     ],
                   ),
