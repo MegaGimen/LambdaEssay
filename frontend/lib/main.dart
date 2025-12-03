@@ -1177,6 +1177,7 @@ class _GraphPageState extends State<GraphPage> {
   }
 
   Future<void> _onUpdateRepoAction({bool forcePull = false}) async {
+    print("Updating repo...");
     String? name = currentProjectName;
     if (name == null || name.isEmpty) {
       setState(() => loading = true);
@@ -2420,9 +2421,13 @@ class _GraphViewState extends State<_GraphView> {
         throw Exception('完成合并失败: ${resp2.body}');
       }
 
-      // Refresh
+      // Step 7: Update repo (Refresh view only)
       if (widget.onUpdate != null) {
-        await widget.onUpdate!(forcePull: false);
+        // Add a small delay to ensure git process is fully completed and file system is synced
+        await Future.delayed(const Duration(milliseconds: 500));
+        if (mounted) {
+          await widget.onUpdate!(forcePull: false);
+        }
       }
 
       if (mounted) {
