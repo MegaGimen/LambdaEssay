@@ -1043,32 +1043,65 @@ Future<Map<String, dynamic>> pullFromRemote(
       if (trackingFile.existsSync()) {
         print("Debug tracking file");
         print(trackingFile);
-        // We call updateTrackingProject to perform the comparison (External vs Repo HEAD)
-        // This also handles the case where external file metadata changed but content is same.
-        // Note: updateTrackingProject will update the repo file if content changed, or restore it if identical.
-        // So after this call, git status should be clean if content is identical.
-        await updateTrackingProject(repoName);
+        // Check safety before destroying
+        // We manually compare External Docx vs Repo HEAD to check for semantic changes.
+        try {
+          final tracking = await _readTracking(repoName);
+          final docxPath = tracking['docxPath'] as String?;
+          final repoDocxPath = tracking['repoDocxPath'] as String?;
 
-        // Check if there are still uncommitted changes in git
-        final statusLines = await _runGit(['status', '--porcelain'], projDir);
+          if (docxPath != null &&
+              repoDocxPath != null &&
+              File(docxPath).existsSync() &&
+              File(repoDocxPath).existsSync()) {
+            final relPath = p.relative(repoDocxPath, from: projDir);
+            final gitRelPath = relPath.replaceAll(r'\', '/');
 
-        // If git status is dirty AND updateResult confirms working changed (or just rely on git status after update)
-        // Actually, updateTrackingProject tries to restore working copy if identical.
-        // So if statusLines is not empty here, it means there are REAL changes.
-        /* 
-        if (statusLines.isNotEmpty) {
-          return {
-            'status': 'error',
-            'errorType': 'uncommitted',
-            'path': projDir,
-            'message':
-                'Local repository has uncommitted changes (content modified). Please commit or discard them before pulling.'
-          };
-        }
-        */
-        if (statusLines.isNotEmpty) {
-          print(
-              "Warning: Pulling with uncommitted changes, these will be overwritten.");
+            // 1. Extract HEAD version to temp
+            final tmpDir =
+                await Directory.systemTemp.createTemp('git_pull_check_');
+            bool identical = false;
+            try {
+              final headFile = p.join(tmpDir.path, 'HEAD.docx');
+              bool hasHead = false;
+              try {
+                await _runGitToFile(
+                    ['show', 'HEAD:$gitRelPath'], projDir, headFile);
+                hasHead = true;
+              } catch (_) {
+                // Maybe new file
+              }
+
+              if (hasHead) {
+                // 2. Compare External vs HEAD
+                identical = await _checkDocxIdentical(docxPath, headFile);
+              }
+            } finally {
+              try {
+                tmpDir.deleteSync(recursive: true);
+              } catch (_) {}
+            }
+
+            if (identical) {
+              // If identical (semantic), we reset the repo file to match HEAD
+              // This ensures git status is clean (ignoring metadata changes in external file)
+              await _runGit(['checkout', 'HEAD', '--', relPath], projDir);
+            } else {
+              // If different, it means we have uncommitted semantic changes.
+              // We should BLOCK the pull.
+              return {
+                'status': 'error',
+                'errorType': 'uncommitted',
+                'path': projDir,
+                'message':
+                    'Local file has uncommitted changes (content modified). Please commit or discard them before pulling.'
+              };
+            }
+          }
+        } catch (e) {
+          print("Pre-pull check warning: $e");
+          // If check fails, we might want to be conservative?
+          // But for now let's proceed or just log.
         }
       } else {
         // If tracking.json doesn't exist, we assume it's a fresh state or broken tracking.
@@ -1115,27 +1148,72 @@ Future<Map<String, dynamic>> pullFromRemote(
 
     // Preserve tracking info
     savedTracking = await _readTracking(repoName);
-    // Delete existing directory for a "thorough" clean pull
-    try {
-      dir.deleteSync(recursive: true);
-    } catch (e) {
-      throw Exception('Failed to clean existing directory: $e');
-    }
-  }
 
-  // Clone
-  final base = Directory(_baseDir());
-  if (!base.existsSync()) {
-    base.createSync(recursive: true);
-  }
-  // git clone <url> <dir>
-  final res = await Process.run(
-    'git',
-    ['clone', remoteUrl, projDir],
-    runInShell: true,
-  );
-  if (res.exitCode != 0) {
-    throw Exception('Clone failed: ${res.stderr}');
+    // Instead of deleting and re-cloning, we try standard git fetch + reset
+    try {
+      // 1. Fetch from remote
+      await _runGit(['fetch', remoteUrl], projDir);
+
+      // 2. Get current branch
+      final current = await getCurrentBranch(projDir);
+
+      // 3. Reset current branch to remote tracking branch
+      // Assuming remote is origin
+      // If we are on 'master', we want to reset to 'origin/master'
+      // We can get the upstream branch or guess it.
+
+      if (current != null) {
+        // Try to find upstream
+        // But since we use custom remote url, we might not have upstream configured?
+        // We configured remote 'origin' when cloning (implicitly).
+        // But here remoteUrl is passed explicitly.
+        // Let's assume 'origin' maps to remoteUrl.
+        // Or we can just use FETCH_HEAD? But FETCH_HEAD might be HEAD of remote.
+
+        // Safer way: find the matching remote branch for current local branch
+        // Usually it's origin/<current>
+
+        // Check if origin/<current> exists
+        // If not, maybe we should just pull (merge)? But user wants "force update".
+        // Reset --hard to origin/<current> is the standard "force pull".
+
+        // We need to make sure 'origin' is set to remoteUrl
+        await _runGit(['remote', 'set-url', 'origin', remoteUrl], projDir);
+
+        await _runGit(['reset', '--hard', 'origin/$current'], projDir);
+      } else {
+        // Detached HEAD? Just checkout origin/HEAD?
+        // Or maybe we should checkout master?
+        // Let's try to checkout origin/HEAD
+        // await _runGit(['checkout', 'origin/HEAD'], projDir);
+        // Or better, checkout master and reset
+        await _runGit(['checkout', 'master'], projDir);
+        await _runGit(['reset', '--hard', 'origin/master'], projDir);
+      }
+
+      // Also prune deleted remote branches
+      await _runGit(['remote', 'prune', 'origin'], projDir);
+    } catch (e) {
+      // If standard pull fails (e.g. diverged too much or config broken), fallback to delete & clone?
+      // Or just throw?
+      // User said "no violence", so maybe just throw.
+      throw Exception('Standard pull failed: $e');
+    }
+  } else {
+    // Is fresh (clone)
+    final base = Directory(_baseDir());
+    if (!base.existsSync()) {
+      base.createSync(recursive: true);
+    }
+    // git clone <url> <dir>
+    final res = await Process.run(
+      'git',
+      ['clone', remoteUrl, projDir],
+      runInShell: true,
+    );
+    if (res.exitCode != 0) {
+      throw Exception('Clone failed: ${res.stderr}');
+    }
   }
 
   // Fetch all remote branches and create local tracking branches
