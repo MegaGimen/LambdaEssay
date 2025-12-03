@@ -68,7 +68,7 @@ Future<void> main(List<String> args) async {
     final scriptDir = p.dirname(Platform.script.toFilePath());
     final heideggerPath = p.join(scriptDir, 'Heidegger.exe');
     if (File(heideggerPath).existsSync()) {
-      await _killPort(5000);
+      await _killPort(3920);
       print('Starting Heidegger service from $heideggerPath...');
       final process =
           await Process.start(heideggerPath, [], mode: ProcessStartMode.normal);
