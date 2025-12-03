@@ -1032,65 +1032,13 @@ Future<Map<String, dynamic>> pullFromRemote(
       if (trackingFile.existsSync()) {
         print("Debug tracking file");
         print(trackingFile);
-        // Check safety before destroying
-        // We manually compare External Docx vs Repo HEAD to check for semantic changes.
+        // Force reset working directory to HEAD to allow pull
+        // This discards local repo changes, but external file changes are preserved
+        // and will be re-synced after pull.
         try {
-          final tracking = await _readTracking(repoName);
-          final docxPath = tracking['docxPath'] as String?;
-          final repoDocxPath = tracking['repoDocxPath'] as String?;
-
-          if (docxPath != null &&
-              repoDocxPath != null &&
-              File(docxPath).existsSync() &&
-              File(repoDocxPath).existsSync()) {
-            final relPath = p.relative(repoDocxPath, from: projDir);
-            final gitRelPath = relPath.replaceAll(r'\', '/');
-
-            // 1. Extract HEAD version to temp
-            final tmpDir =
-                await Directory.systemTemp.createTemp('git_pull_check_');
-            bool identical = false;
-            try {
-              final headFile = p.join(tmpDir.path, 'HEAD.docx');
-              bool hasHead = false;
-              try {
-                await _runGitToFile(
-                    ['show', 'HEAD:$gitRelPath'], projDir, headFile);
-                hasHead = true;
-              } catch (_) {
-                // Maybe new file
-              }
-
-              if (hasHead) {
-                // 2. Compare External vs HEAD
-                identical = await _checkDocxIdentical(docxPath, headFile);
-              }
-            } finally {
-              try {
-                tmpDir.deleteSync(recursive: true);
-              } catch (_) {}
-            }
-
-            if (identical) {
-              // If identical (semantic), we reset the repo file to match HEAD
-              // This ensures git status is clean (ignoring metadata changes in external file)
-              await _runGit(['checkout', 'HEAD', '--', relPath], projDir);
-            } else {
-              // If different, it means we have uncommitted semantic changes.
-              // We should BLOCK the pull.
-              return {
-                'status': 'error',
-                'errorType': 'uncommitted',
-                'path': projDir,
-                'message':
-                    'Local file has uncommitted changes (content modified). Please commit or discard them before pulling.'
-              };
-            }
-          }
+          await _runGit(['checkout', 'HEAD', '--', '.'], projDir);
         } catch (e) {
-          print("Pre-pull check warning: $e");
-          // If check fails, we might want to be conservative?
-          // But for now let's proceed or just log.
+          print("Force checkout failed (maybe no HEAD yet): $e");
         }
       } else {
         // If tracking.json doesn't exist, we assume it's a fresh state or broken tracking.
