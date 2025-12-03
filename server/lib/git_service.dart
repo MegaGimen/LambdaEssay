@@ -888,9 +888,67 @@ Future<void> pushToRemote(String repoPath, String username, String token,
 
   final args = ['push'];
   if (force) args.add('--force');
-  args.addAll(['--all', remoteUrl]);
+  // Explicitly specify the remote URL and ensure local branches are mapped to remote branches with same name
+  args.add(remoteUrl);
+  args.add('refs/heads/*:refs/heads/*');
 
-  await _runGit(args, repoPath);
+  final output = await _runGit(args, repoPath);
+
+  // Check for implicit rejection (Everything up-to-date but local is actually behind/different)
+  // If force is true, we don't care, git would have forced update unless it failed with other error.
+  if (!force) {
+    final outStr = output.join('\n');
+    if (outStr.contains('Everything up-to-date')) {
+      await _checkIfBehind(repoPath, remoteUrl);
+    }
+  }
+}
+
+Future<void> _checkIfBehind(String repoPath, String remoteUrl) async {
+  // 1. Get local heads
+  final localRefs = <String, String>{};
+  final localLines = await _runGit(
+      ['for-each-ref', '--format=%(refname:short)|%(objectname)', 'refs/heads'],
+      repoPath);
+  for (final line in localLines) {
+    final parts = line.split('|');
+    if (parts.length >= 2) {
+      localRefs[parts[0].trim()] = parts[1].trim();
+    }
+  }
+
+  // 2. Get remote heads
+  // git ls-remote --heads <url>
+  // Output: <hash>\trefs/heads/<name>
+  final remoteLines =
+      await _runGit(['ls-remote', '--heads', remoteUrl], repoPath);
+  final remoteRefs = <String, String>{};
+  for (final line in remoteLines) {
+    final parts = line.split(RegExp(r'\s+'));
+    if (parts.length >= 2) {
+      final hash = parts[0];
+      final ref = parts[1];
+      if (ref.startsWith('refs/heads/')) {
+        final name = ref.substring('refs/heads/'.length);
+        remoteRefs[name] = hash;
+      }
+    }
+  }
+
+  // 3. Compare
+  for (final branch in localRefs.keys) {
+    final localHash = localRefs[branch];
+    final remoteHash = remoteRefs[branch];
+    if (remoteHash != null && localHash != remoteHash) {
+      // Hashes are different, but push said up-to-date.
+      // This implies local is an ancestor of remote (behind), so git refused to update (implicit).
+      // We throw an error containing 'non-fast-forward' to trigger the frontend warning.
+      throw Exception(
+          'Push rejected: Local branch "$branch" is behind remote (non-fast-forward). '
+          'Local: ${localHash!.substring(0, 7)}, Remote: ${remoteHash.substring(0, 7)}. '
+          'You need to force push to overwrite remote changes.');
+    }
+  }
 }
 
 Future<Map<String, dynamic>> pullFromRemote(
