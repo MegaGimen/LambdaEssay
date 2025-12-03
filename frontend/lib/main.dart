@@ -467,7 +467,9 @@ class _GraphPageState extends State<GraphPage> {
       final msg = e.toString();
       if (msg.contains('non-fast-forward') || msg.contains('fetch first')) {
         if (!mounted) return;
-        final ok = await showDialog<bool>(
+
+        // 第一重确认
+        final ok1 = await showDialog<bool>(
           context: context,
           builder: (_) => AlertDialog(
             title: const Text('推送被拒绝'),
@@ -486,7 +488,55 @@ class _GraphPageState extends State<GraphPage> {
             ],
           ),
         );
-        if (ok == true) {
+        if (ok1 != true) return;
+
+        if (!mounted) return;
+        // 第二重确认
+        final ok2 = await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text('危险操作确认'),
+            content: const Text('您确定要强制推送吗？\n'
+                '此操作将【永久覆盖】远程仓库的历史记录，无法撤销！'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('取消'),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('我确定要覆盖'),
+              ),
+            ],
+          ),
+        );
+        if (ok2 != true) return;
+
+        if (!mounted) return;
+        // 第三重确认
+        final ok3 = await showDialog<bool>(
+          context: context,
+          builder: (_) => AlertDialog(
+            title: const Text('最后一次确认'),
+            content: const Text('请再次确认：\n'
+                '您是否清楚这会导致远程仓库的提交丢失？\n'
+                '如果这是多人协作项目，请务必通知其他成员！'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('取消'),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('执行强制推送'),
+              ),
+            ],
+          ),
+        );
+
+        if (ok3 == true) {
           await _onPush(force: true);
           return;
         }
@@ -1692,11 +1742,38 @@ class _GraphViewState extends State<_GraphView> {
   }
 
   void _showNodeActionDialog(CommitNode node) {
+    final allBranches = widget.data.branches.map((b) => b.name).toSet();
+    final targets = node.refs.where((r) => allBranches.contains(r)).toList();
+
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text('操作: ${node.id.substring(0, 7)}'),
-        content: Text('提交信息: ${node.subject}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('提交信息: ${node.subject}'),
+            if (targets.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              const Text('以此提交为头的分支:',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              Wrap(
+                spacing: 8,
+                children: targets
+                    .map((b) => ActionChip(
+                          label: Text(b),
+                          onPressed: () {
+                            Navigator.pop(ctx);
+                            _doSwitchBranch(b);
+                          },
+                          avatar: const Icon(Icons.swap_horiz, size: 16),
+                        ))
+                    .toList(),
+              ),
+            ],
+          ],
+        ),
         actions: [
           TextButton(
             onPressed: () {
@@ -1722,7 +1799,7 @@ class _GraphViewState extends State<_GraphView> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('我点错了'),
+            child: const Text('关闭'),
           ),
         ],
       ),
@@ -1977,42 +2054,7 @@ class _GraphViewState extends State<_GraphView> {
                   onDoubleTapDown: (d) {
                     final hit = _hitTest(d.localPosition, widget.data);
                     if (hit != null) {
-                      final branches =
-                          widget.data.branches.map((b) => b.name).toSet();
-                      final targets =
-                          hit.refs.where((r) => branches.contains(r)).toList();
-                      if (targets.isNotEmpty) {
-                        final current = widget.data.currentBranch;
-                        final others =
-                            targets.where((t) => t != current).toList();
-                        if (others.length == 1) {
-                          _doSwitchBranch(others.first);
-                        } else if (others.length > 1) {
-                          showDialog(
-                            context: context,
-                            builder: (_) => SimpleDialog(
-                              title: const Text('选择分支'),
-                              children: others
-                                  .map((b) => SimpleDialogOption(
-                                        onPressed: () {
-                                          Navigator.pop(context);
-                                          _doSwitchBranch(b);
-                                        },
-                                        child: Text(b),
-                                      ))
-                                  .toList(),
-                            ),
-                          );
-                        } else {
-                          if (targets.contains(current)) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('已经是当前分支')),
-                            );
-                          }
-                        }
-                      } else {
-                        _showNodeActionDialog(hit);
-                      }
+                      _showNodeActionDialog(hit);
                     } else {
                       final edgeHit = _hitEdge(d.localPosition, widget.data);
                       if (edgeHit != null && edgeHit.branches.isNotEmpty) {
