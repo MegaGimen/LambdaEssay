@@ -546,8 +546,8 @@ class _GraphPageState extends State<GraphPage> {
     } finally {
       setState(() => loading = false);
     }
-    // Auto update after push
-    await _onUpdateRepo();
+    // Auto update after push, but do NOT auto-pull (forcePull: false) to avoid undoing the push or state confusion
+    await _onUpdateRepoAction(forcePull: false);
   }
 
   Future<void> _onPull() async {
@@ -1034,7 +1034,7 @@ class _GraphPageState extends State<GraphPage> {
     }
   }
 
-  Future<void> _onUpdateRepoAction() async {
+  Future<void> _onUpdateRepoAction({bool forcePull = true}) async {
     String? name = currentProjectName;
     if (name == null || name.isEmpty) {
       setState(() => loading = true);
@@ -1089,43 +1089,35 @@ class _GraphPageState extends State<GraphPage> {
     if (name == null || name.isEmpty) return;
 
     // Auto pull logic when opening/updating repo to ensure freshness
-    try {
-      // Only pull if we have username/token
-      if (_username != null &&
-          _token != null &&
-          _username!.isNotEmpty &&
-          _token!.isNotEmpty) {
-        // We don't want to block the UI too much or show too many dialogs,
-        // but user requested "force pull".
-        // However, pullFromRemote requires repoName, username, token.
-        // We can try to pull quietly.
-        // Note: pullFromRemote now has safety checks (semantic diff).
-
-        print('Auto-pulling for $name...');
-        // We use a separate try-catch for pull so it doesn't break the update flow if network fails
-        try {
-          await _postJson('http://localhost:8080/pull', {
-            'repoName': name,
-            'username': _username,
-            'token': _token,
-          });
-          if (mounted) {
-            ScaffoldMessenger.of(context)
-                .showSnackBar(const SnackBar(content: Text('自动拉取成功')));
-          }
-        } catch (e) {
-          print('Auto-pull failed: $e');
-          if (mounted) {
-            // Optional: show error if pull failed?
-            // Maybe just log it, as "update" is the main action.
-            // Or show a small snackbar warning.
-            ScaffoldMessenger.of(context)
-                .showSnackBar(SnackBar(content: Text('自动拉取失败: $e')));
+    if (forcePull) {
+      try {
+        // Only pull if we have username/token
+        if (_username != null &&
+            _token != null &&
+            _username!.isNotEmpty &&
+            _token!.isNotEmpty) {
+          print('Auto-pulling for $name...');
+          try {
+            await _postJson('http://localhost:8080/pull', {
+              'repoName': name,
+              'username': _username,
+              'token': _token,
+            });
+            if (mounted) {
+              ScaffoldMessenger.of(context)
+                  .showSnackBar(const SnackBar(content: Text('自动拉取成功')));
+            }
+          } catch (e) {
+            print('Auto-pull failed: $e');
+            if (mounted) {
+              ScaffoldMessenger.of(context)
+                  .showSnackBar(SnackBar(content: Text('自动拉取失败: $e')));
+            }
           }
         }
+      } catch (e) {
+        // Ignore outer errors
       }
-    } catch (e) {
-      // Ignore outer errors
     }
 
     try {
@@ -1366,7 +1358,7 @@ class _GraphPageState extends State<GraphPage> {
                 ),
                 const SizedBox(width: 8),
                 ElevatedButton(
-                  onPressed: loading ? null : _onUpdateRepo,
+                  onPressed: loading ? null : _onUpdateRepoAction,
                   child: const Text('更新git仓库'),
                 ),
                 const SizedBox(width: 8),
@@ -1467,7 +1459,7 @@ class _GraphView extends StatefulWidget {
   final String repoPath;
   final String? projectName;
   final VoidCallback? onRefresh;
-  final Future<void> Function()? onUpdate;
+  final Future<void> Function({bool forcePull})? onUpdate;
   const _GraphView({
     required this.data,
     this.working,
@@ -1741,7 +1733,7 @@ class _GraphViewState extends State<_GraphView> {
       );
       if (resp.statusCode != 200) throw Exception(resp.body);
       if (widget.onUpdate != null) {
-        await widget.onUpdate!();
+        await widget.onUpdate!(forcePull: false);
       } else {
         if (widget.onRefresh != null) widget.onRefresh!();
       }
@@ -1766,9 +1758,9 @@ class _GraphViewState extends State<_GraphView> {
 
       // Force update repo status after switch (to check diff against new branch)
       if (widget.onUpdate != null) {
-        await widget.onUpdate!();
+        await widget.onUpdate!(forcePull: false);
       } else {
-        widget.onRefresh?.call();
+        if (widget.onRefresh != null) widget.onRefresh!();
       }
 
       if (mounted) {
@@ -1980,7 +1972,7 @@ class _GraphViewState extends State<_GraphView> {
       }
 
       if (widget.onUpdate != null) {
-        await widget.onUpdate!();
+        await widget.onUpdate!(forcePull: false);
       } else {
         if (widget.onRefresh != null) widget.onRefresh!();
       }
@@ -2053,7 +2045,7 @@ class _GraphViewState extends State<_GraphView> {
       }
 
       if (widget.onUpdate != null) {
-        await widget.onUpdate!();
+        await widget.onUpdate!(forcePull: false);
       } else {
         if (widget.onRefresh != null) widget.onRefresh!();
       }
