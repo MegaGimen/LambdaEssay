@@ -1028,13 +1028,13 @@ class _GraphPageState extends State<GraphPage> {
       });
       await _load();
       // Auto update after opening/selecting repo to sync latest status
-      await _onUpdateRepoAction();
+      await _onUpdateRepoAction(forcePull: true);
     } catch (e) {
       setState(() => error = e.toString());
     }
   }
 
-  Future<void> _onUpdateRepoAction({bool forcePull = true}) async {
+  Future<void> _onUpdateRepoAction({bool forcePull = false}) async {
     String? name = currentProjectName;
     if (name == null || name.isEmpty) {
       setState(() => loading = true);
