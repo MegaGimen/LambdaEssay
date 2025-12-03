@@ -1911,14 +1911,29 @@ class _GraphViewState extends State<_GraphView> {
   }
 
   Future<void> _resetBranch(CommitNode node) async {
+    final currentBranch = widget.data.currentBranch ?? '未知分支';
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('危险：重置分支'),
-        content: Text('确定要将当前分支重置到版本 ${node.id.substring(0, 7)} 吗？\n'
-            '此操作将【永久删除】该版本之后的所有提交记录！\n'
-            '当前工作区的文档也将被回退到该版本。\n'
-            '请务必确保 Word 文档已关闭。'),
+        content: RichText(
+          text: TextSpan(
+            style: const TextStyle(color: Colors.black, fontSize: 14),
+            children: [
+              const TextSpan(text: '确定要将当前分支 '),
+              TextSpan(
+                text: currentBranch,
+                style:
+                    const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+              TextSpan(
+                  text: ' 重置到版本 ${node.id.substring(0, 7)} 吗？\n\n'
+                      '此操作将【永久删除】该版本之后的所有提交记录！\n'
+                      '请注意：此操作仅重置Git仓库状态，【不会】修改您外部追踪的Word文档。\n'
+                      '若要回退文档内容，请使用"回退到这个版本 (仅文件)"功能。'),
+            ],
+          ),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),

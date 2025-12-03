@@ -690,27 +690,16 @@ Future<Uint8List> previewVersion(String repoPath, String commitId) async {
 
 Future<void> resetBranch(String projectName, String commitId) async {
   final repoPath = _projectDir(projectName);
-  final docxAbs = _findRepoDocx(repoPath);
 
   // Reset HEAD to commitId, discarding all changes after it
+  // This only changes the git repository state (and working dir inside repo),
+  // BUT does NOT sync back to the external docx file.
   await _runGit(['reset', '--hard', commitId], repoPath);
 
-  // Sync to external
-  final tracking = await _readTracking(projectName);
-  final docxPath = tracking['docxPath'] as String?;
+  // We intentionally DO NOT sync to external docx here.
+  // The user explicitly requested to keep the external file intact ("not change tracking target").
+  // If they want to revert the file content, they should use "Rollback (File Only)".
 
-  if (docxPath != null && docxAbs != null) {
-    final src = File(docxAbs);
-    final dst = File(docxPath);
-    if (src.existsSync()) {
-      try {
-        await dst.writeAsBytes(await src.readAsBytes());
-      } catch (e) {
-        throw Exception(
-            'Reset successful in repo, but failed to update external file: $e');
-      }
-    }
-  }
   clearCache();
 }
 
