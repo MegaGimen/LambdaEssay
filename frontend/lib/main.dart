@@ -2409,7 +2409,7 @@ class _GraphViewState extends State<_GraphView> {
       }
     } catch (e) {
       if (mounted && Navigator.canPop(context)) {
-        // Try to pop loading if still showing
+        Navigator.pop(context);
       }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
