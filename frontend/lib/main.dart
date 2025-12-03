@@ -1027,6 +1027,8 @@ class _GraphPageState extends State<GraphPage> {
         );
       });
       await _load();
+      // Auto update after opening/selecting repo to sync latest status
+      await _onUpdateRepoAction();
     } catch (e) {
       setState(() => error = e.toString());
     }
@@ -1085,6 +1087,47 @@ class _GraphPageState extends State<GraphPage> {
       }
     }
     if (name == null || name.isEmpty) return;
+
+    // Auto pull logic when opening/updating repo to ensure freshness
+    try {
+      // Only pull if we have username/token
+      if (_username != null &&
+          _token != null &&
+          _username!.isNotEmpty &&
+          _token!.isNotEmpty) {
+        // We don't want to block the UI too much or show too many dialogs,
+        // but user requested "force pull".
+        // However, pullFromRemote requires repoName, username, token.
+        // We can try to pull quietly.
+        // Note: pullFromRemote now has safety checks (semantic diff).
+
+        print('Auto-pulling for $name...');
+        // We use a separate try-catch for pull so it doesn't break the update flow if network fails
+        try {
+          await _postJson('http://localhost:8080/pull', {
+            'repoName': name,
+            'username': _username,
+            'token': _token,
+          });
+          if (mounted) {
+            ScaffoldMessenger.of(context)
+                .showSnackBar(const SnackBar(content: Text('自动拉取成功')));
+          }
+        } catch (e) {
+          print('Auto-pull failed: $e');
+          if (mounted) {
+            // Optional: show error if pull failed?
+            // Maybe just log it, as "update" is the main action.
+            // Or show a small snackbar warning.
+            ScaffoldMessenger.of(context)
+                .showSnackBar(SnackBar(content: Text('自动拉取失败: $e')));
+          }
+        }
+      }
+    } catch (e) {
+      // Ignore outer errors
+    }
+
     try {
       final resp = await _postJson('http://localhost:8080/track/update', {
         'name': name,
