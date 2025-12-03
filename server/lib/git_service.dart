@@ -1340,3 +1340,173 @@ Future<void> forkLocal(String repoName, String newBranchName) async {
   // So forkAndReset is actually good for both if the intent is "Move my changes to side branch".
   await forkAndReset(repoName, newBranchName);
 }
+
+Future<void> prepareMerge(String repoName, String targetBranch) async {
+  final projDir = _projectDir(repoName);
+  final trackingFile = File(p.join(projDir, 'tracking.json'));
+  if (!trackingFile.existsSync()) {
+    throw Exception('No tracking project found (tracking.json missing)');
+  }
+
+  final savedTracking = jsonDecode(await trackingFile.readAsString());
+  final repoDocxPath = savedTracking['repoDocxPath'] as String?;
+  final docxPath = savedTracking['docxPath'] as String?;
+
+  if (repoDocxPath == null || docxPath == null) {
+    throw Exception(
+        'Tracking configuration invalid (repoDocxPath or docxPath missing)');
+  }
+
+  final currentFile = File(docxPath); // This is the user's working file
+  // Wait, 'docxPath' is the external file path.
+  // 'repoDocxPath' is the path inside the git repo.
+  // We need to compare "Current Branch Version" vs "Target Branch Version".
+  // Or "Working Copy" vs "Target Branch Version".
+  // The user says: "Merge target branch INTO current selected branch".
+  // Usually this means Base=Current, New=Target.
+  // The result (diff) should replace the tracking file (docxPath).
+
+  // 1. Get Target Branch file content to a temp file
+  final targetTemp = File(p.join(Directory.systemTemp.path,
+      'target_${DateTime.now().millisecondsSinceEpoch}.docx'));
+  try {
+    // git show targetBranch:path/to/file.docx > temp.docx
+    // We need relative path of repoDocxPath from projDir
+    final relPath =
+        p.relative(repoDocxPath, from: projDir).replaceAll(r'\', '/');
+    final result = await Process.run('git', ['show', '$targetBranch:$relPath'],
+        workingDirectory: projDir);
+    if (result.exitCode != 0) {
+      throw Exception(
+          'Failed to get file from target branch: ${result.stderr}');
+    }
+    await targetTemp.writeAsBytes(result.stdout as List<int>);
+  } catch (e) {
+    if (await targetTemp.exists()) await targetTemp.delete();
+    rethrow;
+  }
+
+  // 2. Get Current Branch file (HEAD) to a temp file?
+  // Or use the current working file (docxPath)?
+  // If we use working file, we include uncommitted changes.
+  // If we use HEAD, we ignore uncommitted changes.
+  // Merging usually happens on clean state.
+  // Let's use HEAD to be safe and standard.
+  final currentTemp = File(p.join(Directory.systemTemp.path,
+      'current_${DateTime.now().millisecondsSinceEpoch}.docx'));
+  try {
+    final relPath =
+        p.relative(repoDocxPath, from: projDir).replaceAll(r'\', '/');
+    final result = await Process.run('git', ['show', 'HEAD:$relPath'],
+        workingDirectory: projDir);
+    if (result.exitCode != 0) {
+      throw Exception('Failed to get file from HEAD: ${result.stderr}');
+    }
+    await currentTemp.writeAsBytes(result.stdout as List<int>);
+  } catch (e) {
+    if (await currentTemp.exists()) await currentTemp.delete();
+    if (await targetTemp.exists()) await targetTemp.delete();
+    rethrow;
+  }
+
+  // 3. Compare HEAD (Original) vs Target (Revised) -> Result (Diff)
+  // We want the result to show what Target brings in.
+  // Result is saved to a temp docx.
+  final diffTemp = File(p.join(Directory.systemTemp.path,
+      'diff_${DateTime.now().millisecondsSinceEpoch}.docx'));
+
+  // Call doccmp.ps1
+  // We need to locate doccmp.ps1. It is in frontend/lib/doccmp.ps1?
+  // But we are in server. The server might not know where frontend is.
+  // Assuming we are in development environment, we can find it.
+  // The user path is fixed: c:/Users/m1369/Documents/gitbin/frontend/lib/doccmp.ps1
+  final psScript = r'c:\Users\m1369\Documents\gitbin\frontend\lib\doccmp.ps1';
+
+  try {
+    final args = [
+      '-ExecutionPolicy', 'Bypass',
+      '-File', psScript,
+      '-OriginalPath', currentTemp.path,
+      '-RevisedPath', targetTemp.path,
+      '-PdfPath', diffTemp.path,
+      '-IsDocx' // Enable docx output
+    ];
+
+    final pRes = await Process.run('powershell', args);
+    if (pRes.exitCode != 0) {
+      throw Exception(
+          'Word comparison failed: ${pRes.stderr}\nOutput: ${pRes.stdout}');
+    }
+
+    // 4. Overwrite tracking file (docxPath) with diffTemp
+    if (await diffTemp.exists()) {
+      await currentFile.writeAsBytes(await diffTemp.readAsBytes());
+    } else {
+      throw Exception('Comparison script did not generate output file');
+    }
+  } finally {
+    // Cleanup temps
+    if (await targetTemp.exists()) await targetTemp.delete();
+    if (await currentTemp.exists()) await currentTemp.delete();
+    if (await diffTemp.exists()) await diffTemp.delete();
+  }
+}
+
+Future<void> completeMerge(String repoName, String targetBranch) async {
+  final projDir = _projectDir(repoName);
+
+  // 1. Sync external file to repo file (Simulate "Update Repo")
+  // Because user edited the external file (docxPath).
+  final trackingFile = File(p.join(projDir, 'tracking.json'));
+  if (trackingFile.existsSync()) {
+    final savedTracking = jsonDecode(await trackingFile.readAsString());
+    final repoDocxPath = savedTracking['repoDocxPath'] as String?;
+    final docxPath = savedTracking['docxPath'] as String?;
+    if (repoDocxPath != null && docxPath != null) {
+      final extFile = File(docxPath);
+      final repoFile = File(repoDocxPath);
+      if (extFile.existsSync()) {
+        await repoFile.writeAsBytes(await extFile.readAsBytes());
+      }
+    }
+  }
+
+  // 2. Perform Git Merge
+  // Strategy:
+  // git merge --no-commit --no-ff -s ours targetBranch
+  // This creates the merge commit state but keeps HEAD content (which we just overwrote? No, ours keeps HEAD).
+  // But wait, we overwrote the repo file with user's resolved content.
+  // So HEAD (in working dir) matches User Resolved Content.
+  // But 'ours' strategy ignores changes from targetBranch in the merge logic.
+  // It says "Merge targetBranch, but ignore its diffs, keep my version".
+  // Since "my version" (in working dir) is now the "resolved merge result", this is what we want?
+  // No, 'ours' strategy keeps the index matching HEAD. It doesn't look at working dir?
+  // Actually 'merge -s ours' creates a commit immediately unless --no-commit is used.
+  // If we use --no-commit, index is set to HEAD.
+  // We have modified working directory.
+  // So we just need to `git add` the file and `git commit`.
+
+  try {
+    await _runGit(
+        ['merge', '--no-commit', '--no-ff', '-s', 'ours', targetBranch],
+        projDir);
+  } catch (e) {
+    // If it fails (e.g. already up to date), handle it?
+    // "Already up to date" might throw.
+    if (e.toString().contains('Already up to date')) {
+      return;
+    }
+    throw e;
+  }
+
+  // 3. Commit
+  await _runGit(['add', '.'], projDir);
+  // We need a commit message.
+  await _runGit([
+    'commit',
+    '-m',
+    'Merge branch \'$targetBranch\' into HEAD (Binary Resolved)'
+  ], projDir);
+
+  clearCache();
+}

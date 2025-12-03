@@ -6,12 +6,15 @@ param(
     [string]$RevisedPath,
 
     [Parameter(Mandatory=$true)]
-    [string]$PdfPath
+    [string]$PdfPath,
+
+    [switch]$IsDocx
 )
 
 # Constants
 $wdCompareDestinationNew = 2
 $wdFormatPDF = 17
+$wdFormatDocumentDefault = 16
 $wdDoNotSaveChanges = 0
 
 # Create Word Application
@@ -37,8 +40,13 @@ try {
     # The comparison result is the active document
     $diffDoc = $word.ActiveDocument
     
-    Write-Host "Saving comparison to PDF: $PdfPath"
-    $diffDoc.SaveAs2($PdfPath, $wdFormatPDF)
+    if ($IsDocx) {
+        Write-Host "Saving comparison to DOCX: $PdfPath"
+        $diffDoc.SaveAs2($PdfPath, $wdFormatDocumentDefault)
+    } else {
+        Write-Host "Saving comparison to PDF: $PdfPath"
+        $diffDoc.SaveAs2($PdfPath, $wdFormatPDF)
+    }
     
     $diffDoc.Close($wdDoNotSaveChanges)
     # The original doc is still open, close it too
