@@ -2004,6 +2004,13 @@ class _GraphViewState extends State<_GraphView> {
           TextButton(
             onPressed: () {
               Navigator.pop(ctx);
+              _mergeToCurrent(node);
+            },
+            child: const Text('合并到当前分支 (Word)'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
               _rollbackVersion(node);
             },
             child: const Text('回退到这个版本 (仅文件)'),
@@ -2200,6 +2207,186 @@ class _GraphViewState extends State<_GraphView> {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Error: $e')));
+    }
+  }
+
+  Future<void> _mergeToCurrent(CommitNode node) async {
+    final allBranches = widget.data.branches.map((b) => b.name).toSet();
+    final targets = node.refs.where((r) => allBranches.contains(r)).toList();
+    String? targetBranch;
+    if (targets.isNotEmpty) {
+      targetBranch = targets.first; // Default to first branch
+    } else {
+      // Ask user or just fail? The prompt says "Merge TARGET BRANCH".
+      // If node is not a branch head, maybe we can't merge "branch"?
+      // But we can merge "commit".
+      // However, git service uses branch name for git show <branch>:.
+      // If we pass commit ID to prepareMerge, we need to update git_service to support commit ID.
+      // Let's update git_service to support commit ID or branch name.
+      // Actually git show <commit>:path works same as <branch>:path.
+      // So we can use node.id as targetBranch.
+      targetBranch = node.id;
+    }
+
+    // Ask user to confirm and pick branch if multiple?
+    // For simplicity, just use the node ID or prompt if it's a branch head.
+
+    // Step 1: Warning
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('合并分支/提交'),
+        content: Text('您即将把 ${targetBranch!.substring(0, 7)} 合并到当前分支。\n\n'
+            '1. 请务必先【关闭 Word 文档】。\n'
+            '2. 系统将生成一个包含差异的文档 (Track Changes)。\n'
+            '3. 之后您需要手动在 Word 中处理差异并保存。\n'
+            '4. 最后确认合并。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('开始合并'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    if (!mounted) return;
+
+    // Step 2: Prepare Merge
+    // Show loading
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      final resp = await http.post(
+        Uri.parse('http://localhost:8080/prepare_merge'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'repoName': widget.projectName ?? '',
+          'targetBranch': targetBranch,
+        }),
+      );
+
+      if (mounted) Navigator.pop(context); // Hide loading
+
+      if (resp.statusCode != 200) {
+        throw Exception('准备合并失败: ${resp.body}');
+      }
+
+      // Step 3: User Review
+      final confirm = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          title: const Text('处理合并冲突'),
+          content: const Text('差异文档已生成并替换了您的追踪文件。\n\n'
+              '请现在打开 Word 文档：\n'
+              '1. 查看“修订”内容。\n'
+              '2. 接受或拒绝更改以解决冲突。\n'
+              '3. 保存并关闭文档。\n\n'
+              '完成后，点击“确认合并完成”。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消合并 (还原?)'),
+              // Ideally we should revert the file if cancelled.
+              // But user might have just wanted to pause.
+              // For now, cancel just stops the flow.
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('确认合并完成'),
+            ),
+          ],
+        ),
+      );
+
+      if (confirm != true) return;
+
+      // Step 4: Double Confirmation
+      final doubleCheck = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('最后确认'),
+          content: const Text('您确定已经处理完所有冲突并保存了吗？\n'
+              '即将生成合并提交。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('我还要再看看'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('确定执行'),
+            ),
+          ],
+        ),
+      );
+
+      if (doubleCheck != true) return;
+
+      // Show loading
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const Center(child: CircularProgressIndicator()),
+      );
+
+      // Step 5: Auto Update Repo (Sync)
+      // We just call update repo logic.
+      // Actually complete_merge endpoint does sync.
+      // But user asked to "Update Git Repo" first.
+      if (widget.onUpdate != null) {
+        await widget.onUpdate!(
+            forcePull: false); // Don't pull, we are merging locally
+      }
+
+      // Step 6: Complete Merge
+      final resp2 = await http.post(
+        Uri.parse('http://localhost:8080/complete_merge'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'repoName': widget.projectName ?? '',
+          'targetBranch': targetBranch,
+        }),
+      );
+
+      if (mounted) Navigator.pop(context); // Hide loading
+
+      if (resp2.statusCode != 200) {
+        throw Exception('完成合并失败: ${resp2.body}');
+      }
+
+      // Refresh
+      if (widget.onUpdate != null) {
+        await widget.onUpdate!(forcePull: false);
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('合并成功！')),
+        );
+      }
+    } catch (e) {
+      if (mounted && Navigator.canPop(context)) {
+        // Try to pop loading if still showing (though we handled it above)
+        // This is tricky with multiple dialogs.
+        // Best effort.
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
     }
   }
 
