@@ -100,7 +100,8 @@ Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
 
   final logArgs = [
     'log',
-    '--all',
+    '--branches',
+    '--tags',
     '--date=iso',
     '--encoding=UTF-8',
     '--pretty=format:%H|%P|%d|%s|%an|%ad',
@@ -233,10 +234,10 @@ List<String> _parseRefs(String decoration) {
   for (var i in items) {
     final t = i.trim();
     if (t.isEmpty) continue;
+    if (t.startsWith('origin/')) continue;
     final cleaned = t
         .replaceAll(RegExp(r'^HEAD ->\s*'), '')
-        .replaceAll(RegExp(r'^tag:\s*'), '')
-        .replaceAll(RegExp(r'^origin/'), '');
+        .replaceAll(RegExp(r'^tag:\s*'), '');
     refs.add(cleaned);
   }
   return refs.toList();
