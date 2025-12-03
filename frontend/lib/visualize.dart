@@ -1,9 +1,8 @@
-import 'dart:convert';
 import 'dart:typed_data';
-import 'dart:html' as html;
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
+// ignore: avoid_web_libraries_in_flutter
+import 'dart:html' as html;
 
 class VisualizeDocxPage extends StatefulWidget {
   final Uint8List? initialBytes;
