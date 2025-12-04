@@ -3580,12 +3580,33 @@ class GraphPainter extends CustomPainter {
 
         if (isCurrent) {
           // Draw a glow/shadow for current branch
-          final paintGlow = Paint()
-            ..color = bcolor.withValues(alpha: 0.4)
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 8.0
-            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
-          canvas.drawPath(path, paintGlow);
+          // 只有当该边属于当前分支的主干时，或者我们认为它是当前分支的一部分时，才绘制高亮。
+          // 简单的判断 bname == data.currentBranch 可能不够，因为 Merge 进来的分支边也会被遍历到。
+          // 但是，Chains 里的 entry.key 已经是 bname 了。
+          // 问题在于，我们补画的主干 First Parent 没有在 Chains 里，所以这里无法高亮补画的边。
+          // 而对于 Merge 进来的斜线，如果它们也在 Chains 里（尽管是错误的），它们就会被高亮。
+
+          // 我们已经过滤掉了错误的 Chains 边 (!parents.contains(parent))。
+          // 所以现在 Chains 里剩下的应该都是合法的边。
+          // 如果“斜线”被高亮，说明它被包含在了 Immanuel-change3 的 Chains 里。
+          // 这通常是因为 git log --graph 认为这条 merge 边属于该分支历史。
+          // 如果你想排除 Merge 进来的边（即只高亮 First Parent 链），我们需要检查 parent 是否是 child 的 First Parent。
+
+          bool isFirstParent = false;
+          if (childNode != null && childNode.parents.isNotEmpty) {
+            if (childNode.parents[0] == parent) {
+              isFirstParent = true;
+            }
+          }
+
+          if (isFirstParent) {
+            final paintGlow = Paint()
+              ..color = bcolor.withValues(alpha: 0.4)
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 8.0
+              ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
+            canvas.drawPath(path, paintGlow);
+          }
         }
 
         canvas.drawPath(path, paintEdge);
@@ -3633,6 +3654,37 @@ class GraphPainter extends CustomPainter {
             path.lineTo(x, py);
             path.lineTo(x, y);
           }
+
+          // 检查补画的边是否属于当前分支，如果是则高亮
+          // 这是一个“幽灵边”，但它实际上是主干边
+          // 如果 c.id 是当前分支的一部分（或者说，它的颜色是当前分支的颜色？）
+          // 或者更简单，如果 c.id 在当前分支的 chains 里出现过？
+          // 或者如果当前分支的 head 能够顺着 first parent 到达 c.id？
+          // 简单做法：如果该节点的颜色对应当前分支，则认为该主干边属于当前分支
+
+          bool isCurrentBranch = false;
+          if (data.currentBranch != null) {
+            final branchColor = branchColors[data.currentBranch!];
+            final nodeColor = _colorOfCommit(c.id, colorMemo);
+            // 颜色比较可能不准确，因为可能有重复颜色。
+            // 更好的方法：检查 data.currentBranch 的 head 是否能 reach c.id (via first parent)
+            // 但这太慢了。
+            // 替代方案：我们假设如果节点的颜色和当前分支颜色一致，那么这条 First Parent 边也应该高亮。
+            // (前提是 _computeBranchColors 已经正确地只沿 First Parent 染色)
+            if (branchColor != null && nodeColor.value == branchColor.value) {
+              isCurrentBranch = true;
+            }
+          }
+
+          if (isCurrentBranch) {
+            final paintGlow = Paint()
+              ..color = _colorOfCommit(c.id, colorMemo).withValues(alpha: 0.4)
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 8.0
+              ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
+            canvas.drawPath(path, paintGlow);
+          }
+
           canvas.drawPath(path, paintMain);
         }
       }
