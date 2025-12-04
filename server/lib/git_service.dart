@@ -1556,7 +1556,7 @@ Future<void> completeMerge(String repoName, String targetBranch) async {
   clearCache();
 }
 
-Future<String?> findIdenticalCommit(String name) async {
+Future<List<String>> findIdenticalCommit(String name) async {
   final projDir = _projectDir(name);
   final dir = Directory(projDir);
   if (!dir.existsSync()) {
@@ -1575,12 +1575,13 @@ Future<String?> findIdenticalCommit(String name) async {
   final docxRel = p.relative(repoDocxPath, from: projDir);
   final gitRelPath = docxRel.replaceAll(r'\', '/');
 
-  // Get all commits (IDs only)
-  final log = await _runGit(['log', '--format=%H'], projDir);
+  // Get all commits (IDs only) from ALL branches
+  final log = await _runGit(['log', '--all', '--format=%H'], projDir);
   final commitIds =
       log.where((l) => l.trim().isNotEmpty).map((l) => l.trim()).toList();
-
+  print("commitIds:$commitIds");
   final tmpDir = await Directory.systemTemp.createTemp('git_ident_check_');
+  final List<String> identicals = [];
   try {
     for (final commitId in commitIds) {
       final tmpFile = p.join(tmpDir.path, '$commitId.docx');
@@ -1588,17 +1589,19 @@ Future<String?> findIdenticalCommit(String name) async {
         await _runGitToFile(
             ['show', '$commitId:$gitRelPath'], projDir, tmpFile);
         final isIdentical = await _checkDocxIdentical(repoDocxPath, tmpFile);
+        print(
+            "BigIdentical$isIdentical，thiscommitid：$commitId,repoDocxPath=$repoDocxPath,tmpFile=$tmpFile");
         if (isIdentical) {
-          return commitId;
+          identicals.add(commitId);
         }
       } catch (_) {
         // File might not exist in that commit or other error
       }
     }
   } finally {
-    try {
-      tmpDir.deleteSync(recursive: true);
-    } catch (_) {}
+    //try {
+    //  tmpDir.deleteSync(recursive: true);
+    //} catch (_) {}
   }
-  return null;
+  return identicals;
 }

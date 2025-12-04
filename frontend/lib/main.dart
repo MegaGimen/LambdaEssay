@@ -108,7 +108,7 @@ class _GraphPageState extends State<GraphPage> {
   bool loading = false;
   String? currentProjectName;
   WorkingState? working;
-  String? identicalCommitId;
+  List<String> identicalCommitIds = [];
 
   final TextEditingController userCtrl = TextEditingController();
   final TextEditingController passCtrl = TextEditingController();
@@ -1185,22 +1185,22 @@ class _GraphPageState extends State<GraphPage> {
 
     setState(() {
       loading = true;
-      identicalCommitId = null; // Reset
+      identicalCommitIds = []; // Reset
     });
 
     try {
       final resp = await _postJson('$baseUrl/track/find_identical', {
         'name': currentProjectName,
       });
-      final commitId = resp['commitId'] as String?;
+      final commitIds = (resp['commitIds'] as List?)?.cast<String>() ?? [];
       setState(() {
-        identicalCommitId = commitId;
+        identicalCommitIds = commitIds;
       });
 
       if (mounted) {
-        if (commitId != null) {
+        if (commitIds.isNotEmpty) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('找到相同版本: ${commitId.substring(0, 7)}')),
+            SnackBar(content: Text('找到 ${commitIds.length} 个相同版本')),
           );
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -1805,7 +1805,7 @@ class _GraphPageState extends State<GraphPage> {
                     onUpdate: _onUpdateRepoAction,
                     onMerge: _performMerge,
                     onFindIdentical: _findIdentical,
-                    identicalCommitId: identicalCommitId,
+                    identicalCommitIds: identicalCommitIds,
                   ),
           ),
         ],
@@ -1823,7 +1823,7 @@ class _GraphView extends StatefulWidget {
   final Future<void> Function({bool forcePull})? onUpdate;
   final Future<void> Function(String)? onMerge;
   final Future<void> Function()? onFindIdentical;
-  final String? identicalCommitId;
+  final List<String>? identicalCommitIds;
   const _GraphView({
     required this.data,
     this.working,
@@ -1833,7 +1833,7 @@ class _GraphView extends StatefulWidget {
     this.onUpdate,
     this.onMerge,
     this.onFindIdentical,
-    this.identicalCommitId,
+    this.identicalCommitIds,
   });
   @override
   State<_GraphView> createState() => _GraphViewState();
@@ -2649,7 +2649,7 @@ class _GraphViewState extends State<_GraphView> {
                         _rowHeight,
                         working: widget.working,
                         selectedNodes: _selectedNodes,
-                        identicalCommitId: widget.identicalCommitId,
+                        identicalCommitIds: widget.identicalCommitIds,
                       ),
                       size: _canvasSize!,
                     ),
@@ -3254,7 +3254,7 @@ class GraphPainter extends CustomPainter {
   final double rowHeight;
   final WorkingState? working;
   final Set<String> selectedNodes;
-  final String? identicalCommitId;
+  final List<String>? identicalCommitIds;
   static const double nodeRadius = 6;
   GraphPainter(
     this.data,
@@ -3264,7 +3264,7 @@ class GraphPainter extends CustomPainter {
     this.rowHeight, {
     this.working,
     required this.selectedNodes,
-    this.identicalCommitId,
+    this.identicalCommitIds,
   });
   static const List<Color> lanePalette = [
     Color(0xFF1976D2),
@@ -3343,7 +3343,7 @@ class GraphPainter extends CustomPainter {
         canvas.drawCircle(Offset(x, y), r + 5, paintCurHead);
       }
 
-      if (c.id == identicalCommitId) {
+      if (identicalCommitIds != null && identicalCommitIds!.contains(c.id)) {
         final paintIdent = Paint()
           ..color = Colors.purple
           ..style = PaintingStyle.stroke

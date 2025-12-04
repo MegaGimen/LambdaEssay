@@ -64,11 +64,12 @@ Future<void> _killPort(int port) async {
 
 Future<void> main(List<String> args) async {
   // Start Heidegger service in background
+  /*
   try {
     final scriptDir = p.dirname(Platform.script.toFilePath());
     final heideggerPath = p.join(scriptDir, 'Heidegger.exe');
     if (File(heideggerPath).existsSync()) {
-      await _killPort(3920);
+      await _killPort(5000);
       print('Starting Heidegger service from $heideggerPath...');
       final process =
           await Process.start(heideggerPath, [], mode: ProcessStartMode.normal);
@@ -78,7 +79,7 @@ Future<void> main(List<String> args) async {
   } catch (e) {
     print('Failed to start Heidegger: $e');
   }
-
+  */
   await initTrackingService();
   final router = Router();
 
@@ -481,8 +482,8 @@ Future<void> main(List<String> args) async {
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
-      final commitId = await findIdenticalCommit(name);
-      return _cors(Response.ok(jsonEncode({'commitId': commitId}), headers: {
+      final commitIds = await findIdenticalCommit(name);
+      return _cors(Response.ok(jsonEncode({'commitIds': commitIds}), headers: {
         'Content-Type': 'application/json; charset=utf-8',
       }));
     } catch (e) {
