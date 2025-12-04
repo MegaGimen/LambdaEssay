@@ -3137,63 +3137,54 @@ class _GraphViewState extends State<_GraphView> {
     return null;
   }
 
-  Map<String, int> _branchLane(List<Branch> branches) {
-    final ordered = List<Branch>.from(branches);
-    ordered.sort((a, b) {
+  Map<String, int> _laneOfByBranches(GraphData data) {
+    final laneOf = <String, int>{};
+    final byId = {for (final c in data.commits) c.id: c};
+
+    // 1. 对分支进行排序 (master 优先)
+    final orderedBranches = List<Branch>.from(data.branches);
+    orderedBranches.sort((a, b) {
       int pa = a.name == 'master' ? 0 : 1;
       int pb = b.name == 'master' ? 0 : 1;
       if (pa != pb) return pa - pb;
       return a.name.compareTo(b.name);
     });
-    final map = <String, int>{};
-    for (var i = 0; i < ordered.length; i++) {
-      map[ordered[i].name] = i;
-    }
-    return map;
-  }
 
-  Map<String, int> _laneOfByBranches(GraphData data) {
-    final laneOf = <String, int>{};
-    final branchLane = _branchLane(data.branches);
-
-    // 1. 初始化 Branch Head 的 Lane
-    for (final b in data.branches) {
-      if (branchLane.containsKey(b.name)) {
-        laneOf[b.head] = branchLane[b.name]!;
-      }
-    }
-
-    // 准备下一个可用 Lane 索引
     int nextFreeLane = 0;
-    if (branchLane.isNotEmpty) {
-      int maxL = -1;
-      for (final v in branchLane.values) {
-        if (v > maxL) maxL = v;
+
+    // 2. 按优先级为每个分支分配 Lane
+    for (final b in orderedBranches) {
+      var curId = b.head;
+      if (laneOf.containsKey(curId)) continue;
+
+      final currentBranchLane = nextFreeLane++;
+
+      while (true) {
+        if (laneOf.containsKey(curId)) break;
+        laneOf[curId] = currentBranchLane;
+
+        final node = byId[curId];
+        if (node == null || node.parents.isEmpty) break;
+
+        curId = node.parents.first;
       }
-      nextFreeLane = maxL + 1;
     }
 
-    // 2. 遍历 Commits 进行 Lane 传播
+    // 3. 查漏补缺
     for (final c in data.commits) {
-      // 如果当前节点还没有 Lane，分配一个新的
       if (!laneOf.containsKey(c.id)) {
         laneOf[c.id] = nextFreeLane++;
       }
 
       final currentLane = laneOf[c.id]!;
 
-      // 向父节点传播
       for (int i = 0; i < c.parents.length; i++) {
         final pId = c.parents[i];
-
-        // 如果父节点已有 Lane，则不覆盖
         if (laneOf.containsKey(pId)) continue;
 
         if (i == 0) {
-          // First Parent: 继承当前 Lane
           laneOf[pId] = currentLane;
         } else {
-          // Second+ Parent: 分配新 Lane
           laneOf[pId] = nextFreeLane++;
         }
       }
@@ -3505,6 +3496,7 @@ class GraphPainter extends CustomPainter {
           ..color = _colorOfCommit(pId, colorMemo); // 使用父节点颜色
 
         final path = Path();
+        // 使用节点中心坐标，避免 spread 导致的偏移不一致
         path.moveTo(x, y);
         path.lineTo(px, py);
         canvas.drawPath(path, paintMerge);
@@ -3616,72 +3608,69 @@ class GraphPainter extends CustomPainter {
     return memo;
   }
 
-  Map<String, int> _branchLane(List<Branch> branches) {
-    final ordered = List<Branch>.from(branches);
-    ordered.sort((a, b) {
+  Map<String, int> _laneOfByBranches(Map<String, CommitNode> byId) {
+    final laneOf = <String, int>{};
+
+    // 1. 对分支进行排序 (master 优先)
+    final orderedBranches = List<Branch>.from(data.branches);
+    orderedBranches.sort((a, b) {
       int pa = a.name == 'master' ? 0 : 1;
       int pb = b.name == 'master' ? 0 : 1;
       if (pa != pb) return pa - pb;
       return a.name.compareTo(b.name);
     });
-    final map = <String, int>{};
-    for (var i = 0; i < ordered.length; i++) {
-      map[ordered[i].name] = i;
-    }
-    return map;
-  }
 
-  Map<String, int> _laneOfByBranches(Map<String, CommitNode> byId) {
-    final laneOf = <String, int>{};
-    final branchLane = _branchLane(data.branches);
-
-    // 1. 初始化 Branch Head 的 Lane
-    // 按照 branchLane 的分配，优先将 Branch Head 锁定在对应的 Lane
-    // 如果多个分支指向同一个 Head，按照 branchLane 里的顺序（其实无所谓，只要有一个定下来就行）
-    for (final b in data.branches) {
-      if (branchLane.containsKey(b.name)) {
-        laneOf[b.head] = branchLane[b.name]!;
-      }
-    }
-
-    // 准备下一个可用 Lane 索引
     int nextFreeLane = 0;
-    if (branchLane.isNotEmpty) {
-      // 找到当前已使用的最大 Lane
-      int maxL = -1;
-      for (final v in branchLane.values) {
-        if (v > maxL) maxL = v;
+
+    // 2. 按优先级为每个分支分配 Lane
+    for (final b in orderedBranches) {
+      var curId = b.head;
+      // 如果该分支的 Head 已经被分配了 Lane（说明它合并到了更高优先级的链上，或者就是同一个点），
+      // 则不需要为这个分支分配新的独立 Lane。
+      if (laneOf.containsKey(curId)) continue;
+
+      final currentBranchLane = nextFreeLane++;
+
+      // 沿 First Parent 回溯
+      while (true) {
+        if (laneOf.containsKey(curId)) {
+          // 遇到已经有 Lane 的节点，停止传播
+          break;
+        }
+        laneOf[curId] = currentBranchLane;
+
+        final node = byId[curId];
+        if (node == null || node.parents.isEmpty) break;
+
+        // 继续追溯 First Parent
+        curId = node.parents.first;
       }
-      nextFreeLane = maxL + 1;
     }
 
-    // 2. 遍历 Commits 进行 Lane 传播
-    // 假设 data.commits 已经是按时间倒序排列（子 -> 父）
-    // 如果不是，可能需要先排序。通常 Git Log 输出是符合的。
+    // 3. 查漏补缺：处理未被分支直接覆盖的节点（如 Merge 的 Second Parent 历史）
+    // 按照时间倒序（data.commits 应该已经是排好序的）
     for (final c in data.commits) {
-      // 如果当前节点还没有 Lane，分配一个新的
       if (!laneOf.containsKey(c.id)) {
         laneOf[c.id] = nextFreeLane++;
       }
 
       final currentLane = laneOf[c.id]!;
 
-      // 向父节点传播
+      // 检查父节点
       for (int i = 0; i < c.parents.length; i++) {
         final pId = c.parents[i];
-
-        // 如果父节点已有 Lane（可能是 Branch Head，或者被其他路径访问过），则不覆盖
         if (laneOf.containsKey(pId)) continue;
 
         if (i == 0) {
-          // First Parent: 继承当前 Lane (保持在同一条线上)
+          // First Parent 继承
           laneOf[pId] = currentLane;
         } else {
-          // Second+ Parent (Merge 的来源): 必须分叉，分配新 Lane
+          // Second Parent 分配新 Lane
           laneOf[pId] = nextFreeLane++;
         }
       }
     }
+
     return laneOf;
   }
 
