@@ -3223,22 +3223,36 @@ class _GraphViewState extends State<_GraphView> {
       final py = rowP * rowHeight + rowHeight / 2;
 
       final childNode = byId[child];
+      // 1. 同步 paint 中的过滤逻辑：确保 parent 确实是 child 的父节点
+      // 这可以防止“幽灵边”被检测到（即 chains 中存在但 paint 中被过滤的边）
+      if (childNode != null && !childNode.parents.contains(parent)) {
+        continue;
+      }
+
       bool isMergeEdge = false;
+      // 如果 child 有多个父节点，且当前 edge 的 parent 不是第一个父节点，则视为 merge 边
       if (childNode != null && childNode.parents.length > 1) {
         if (childNode.parents[0] != parent) {
           isMergeEdge = true;
         }
       }
 
-      double d;
+      // 如果我们处于 Merge 边的“对角线”区域，需要使用更宽松的判定，或者更精确的距离算法
+      // 简单的 _distPointToSegment 已经足够精确，但问题可能出在判定条件上。
+      // Merge 边 (diagonal) 和 Split 边 (L-shape) 的判定逻辑需要分开。
+
+      double d = double.infinity;
       if (laneC == laneP) {
+        // 同泳道，直线
         d = _distPointToSegment(sceneP, Offset(x, y), Offset(px, py));
       } else {
         if (isMergeEdge) {
-          // Diagonal for merge
+          // Merge 边：直接对角线 (从 child 中心到 parent 中心)
           d = _distPointToSegment(sceneP, Offset(x, y), Offset(px, py));
         } else {
-          // L-Shape for split: (px, py) -> (x, py) -> (x, y)
+          // Split 边：L 型 (Parent -> Horizontal -> Vertical -> Child)
+          // 注意：绘制时是 path.moveTo(px, py); path.lineTo(x, py); path.lineTo(x, y);
+          // 所以是两段线段：(px, py)->(x, py) 和 (x, py)->(x, y)
           final d1 = _distPointToSegment(sceneP, Offset(px, py), Offset(x, py));
           final d2 = _distPointToSegment(sceneP, Offset(x, py), Offset(x, y));
           d = d1 < d2 ? d1 : d2;
@@ -3254,6 +3268,106 @@ class _GraphViewState extends State<_GraphView> {
         );
       }
     }
+    if (bestInfo != null && best <= 8.0) return bestInfo;
+
+    // 2. Check explicit merge edges (Second Parents) which are not in _pairBranches
+    // These are drawn in GraphPainter.paint()
+    for (final c in commits) {
+      if (c.parents.length < 2) continue;
+      final rowC = rowOf[c.id];
+      final laneC = laneOf[c.id];
+      if (rowC == null || laneC == null) continue;
+      final x = laneC * laneWidth + laneWidth / 2;
+      final y = rowC * rowHeight + rowHeight / 2;
+
+      for (int i = 1; i < c.parents.length; i++) {
+        final pId = c.parents[i];
+        final rowP = rowOf[pId];
+        final laneP = laneOf[pId];
+        if (rowP == null || laneP == null) continue;
+        final px = laneP * laneWidth + laneWidth / 2;
+        final py = rowP * rowHeight + rowHeight / 2;
+
+        // Merge edges are always diagonal straight lines in paint()
+        final d = _distPointToSegment(sceneP, Offset(x, y), Offset(px, py));
+        if (d < best) {
+          best = d;
+          // Try to find which branch this merge comes from
+          // Use the parent node's branches if available, or just the child's
+          final pNode = byId[pId];
+          List<String> branches = [];
+          // Naive branch finding: find any branch pointing here?
+          // Or just use empty list which will show "Unknown" or similar?
+          // Let's try to find branches that contain pId in their chain
+          // This is expensive, maybe just list "Merge Source"
+          // Better: use the branches from the child node context?
+          // Or reconstruct from chains?
+          // For now, let's just provide the child's branch or empty.
+          // Actually, the UI shows branches in a list.
+          // Let's try to find branches that head at pId
+          if (pNode != null) {
+            for (final b in data.branches) {
+              if (b.head == pId) branches.add(b.name);
+            }
+          }
+
+          bestInfo = EdgeInfo(
+            child: c.id,
+            parent: pId,
+            branches: branches,
+          );
+        }
+      }
+    }
+
+    // 3. Check First Parents if they were missing in _pairBranches (auto-filled in paint)
+    // This handles the "ghost edge" case where an edge exists logically but wasn't in chains
+    for (final c in commits) {
+      if (c.parents.isEmpty) continue;
+
+      final rowC = rowOf[c.id];
+      final laneC = laneOf[c.id];
+      if (rowC == null || laneC == null) continue;
+
+      final p0Id = c.parents[0];
+      final key0 = '${c.id}|$p0Id';
+
+      // Only check if NOT already handled by _pairBranches
+      if (_pairBranches?.containsKey(key0) == true) continue;
+
+      final rowP = rowOf[p0Id];
+      final laneP = laneOf[p0Id];
+      if (rowP != null && laneP != null) {
+        final x = laneC * laneWidth + laneWidth / 2;
+        final y = rowC * rowHeight + rowHeight / 2;
+        final px = laneP * laneWidth + laneWidth / 2;
+        final py = rowP * rowHeight + rowHeight / 2;
+
+        double d = double.infinity;
+        if (laneC == laneP) {
+          d = _distPointToSegment(sceneP, Offset(x, y), Offset(px, py));
+        } else {
+          // L-Shape for split: (px, py) -> (x, py) -> (x, y)
+          final d1 = _distPointToSegment(sceneP, Offset(px, py), Offset(x, py));
+          final d2 = _distPointToSegment(sceneP, Offset(x, py), Offset(x, y));
+          d = d1 < d2 ? d1 : d2;
+        }
+
+        if (d < best) {
+          best = d;
+          final pNode = byId[p0Id];
+          List<String> branches = [];
+          if (pNode != null) {
+            for (final b in data.branches) {
+              if (b.head == p0Id) branches.add(b.name);
+            }
+          }
+          // If we found a ghost edge that is closer, use it
+          bestInfo = EdgeInfo(child: c.id, parent: p0Id, branches: branches);
+        }
+      }
+    }
+
     if (bestInfo != null && best <= 8.0) return bestInfo;
     return null;
   }
@@ -3534,10 +3648,12 @@ class GraphPainter extends CustomPainter {
         final px = laneP * laneWidth + laneWidth / 2;
         final py = rowP * rowHeight + rowHeight / 2;
 
+        // Merge 来源的连线颜色应该跟随来源节点，而不是当前 Merge 节点
+        // 这样能清楚显示是“哪个分支”合并进来了
         final paintMerge = Paint()
           ..style = PaintingStyle.stroke
           ..strokeWidth = 2.0
-          ..color = _colorOfCommit(pId, colorMemo); // 使用父节点颜色
+          ..color = _colorOfCommit(pId, colorMemo);
 
         final path = Path();
         // 使用节点中心坐标，避免 spread 导致的偏移不一致
@@ -3642,9 +3758,11 @@ class GraphPainter extends CustomPainter {
           branchColors[b.name] ?? lanePalette[idx % lanePalette.length];
       idx++;
       var cur = byId[b.head];
+      // 仅为该分支独有的路径上色。如果遇到已经被更高优先级分支染色的节点，停止。
       while (cur != null && memo[cur.id] == null) {
         memo[cur.id] = color;
         if (cur.parents.isEmpty) break;
+        // 仅沿 First Parent 染色，保持分支主干颜色一致
         final next = byId[cur.parents.first];
         cur = next;
       }
