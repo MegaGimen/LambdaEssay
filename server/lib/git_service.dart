@@ -1555,3 +1555,50 @@ Future<void> completeMerge(String repoName, String targetBranch) async {
   print('Clearing cache after merge...');
   clearCache();
 }
+
+Future<String?> findIdenticalCommit(String name) async {
+  final projDir = _projectDir(name);
+  final dir = Directory(projDir);
+  if (!dir.existsSync()) {
+    throw Exception('project not found');
+  }
+
+  var tracking = await _readTracking(name);
+  String? repoDocxPath = tracking['repoDocxPath'] as String?;
+  if (repoDocxPath == null || repoDocxPath.trim().isEmpty) {
+    repoDocxPath = _findRepoDocx(projDir);
+  }
+  if (repoDocxPath == null) {
+    throw Exception('No .docx file found in repository');
+  }
+
+  final docxRel = p.relative(repoDocxPath, from: projDir);
+  final gitRelPath = docxRel.replaceAll(r'\', '/');
+
+  // Get all commits (IDs only)
+  final log = await _runGit(['log', '--format=%H'], projDir);
+  final commitIds =
+      log.where((l) => l.trim().isNotEmpty).map((l) => l.trim()).toList();
+
+  final tmpDir = await Directory.systemTemp.createTemp('git_ident_check_');
+  try {
+    for (final commitId in commitIds) {
+      final tmpFile = p.join(tmpDir.path, '$commitId.docx');
+      try {
+        await _runGitToFile(
+            ['show', '$commitId:$gitRelPath'], projDir, tmpFile);
+        final isIdentical = await _checkDocxIdentical(repoDocxPath, tmpFile);
+        if (isIdentical) {
+          return commitId;
+        }
+      } catch (_) {
+        // File might not exist in that commit or other error
+      }
+    }
+  } finally {
+    try {
+      tmpDir.deleteSync(recursive: true);
+    } catch (_) {}
+  }
+  return null;
+}
