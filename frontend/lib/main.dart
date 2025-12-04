@@ -3404,6 +3404,14 @@ class GraphPainter extends CustomPainter {
         final child = ids[i];
         final parent = ids[i + 1];
         if (!rowOf.containsKey(child) || !rowOf.containsKey(parent)) continue;
+
+        // 过滤掉错误的连线：确保 parent 确实是 child 的父节点
+        final childNodeCheck = byId[child];
+        if (childNodeCheck != null &&
+            !childNodeCheck.parents.contains(parent)) {
+          continue;
+        }
+
         final rowC = rowOf[child]!;
         final laneC = laneOf[child]!;
         final x = laneC * laneWidth + laneWidth / 2;
@@ -3471,8 +3479,11 @@ class GraphPainter extends CustomPainter {
     }
 
     // 绘制 Merge 的额外父节点连线 (处理非首个父节点)
+    // 同时也检查 First Parent 是否因为 Chains 数据缺失而漏画，如果漏画则补全
     for (final c in commits) {
-      if (c.parents.length < 2) continue;
+      // 如果没有父节点，无需绘制连线
+      if (c.parents.isEmpty) continue;
+
       final rowC = rowOf[c.id];
       final laneC = laneOf[c.id];
       if (rowC == null || laneC == null) continue;
@@ -3480,6 +3491,39 @@ class GraphPainter extends CustomPainter {
       final x = laneC * laneWidth + laneWidth / 2;
       final y = rowC * rowHeight + rowHeight / 2;
 
+      // 1. 检查并补画 First Parent (parents[0])
+      // Chains 可能会漏掉某些连线，或者因为上面的过滤逻辑被过滤了
+      // 如果 First Parent 没画，我们按主干逻辑补画
+      final p0Id = c.parents[0];
+      final key0 = '${c.id}|$p0Id';
+      if (!pairDrawn.containsKey(key0)) {
+        final rowP = rowOf[p0Id];
+        final laneP = laneOf[p0Id];
+        if (rowP != null && laneP != null) {
+          final px = laneP * laneWidth + laneWidth / 2;
+          final py = rowP * rowHeight + rowHeight / 2;
+
+          final paintMain = Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2.0
+            ..color = _colorOfCommit(c.id, colorMemo); // 补画使用当前节点颜色
+
+          final path = Path();
+          if (laneC == laneP) {
+            path.moveTo(x, y);
+            path.lineTo(px, py);
+          } else {
+            // L-Shape (Split/Merge Main)
+            // Parent (px, py) -> Horizontal -> Vertical -> Child (x, y)
+            path.moveTo(px, py);
+            path.lineTo(x, py);
+            path.lineTo(x, y);
+          }
+          canvas.drawPath(path, paintMain);
+        }
+      }
+
+      // 2. 绘制其他父节点 (Merge Sources)
       // 从第二个父节点开始遍历
       for (int i = 1; i < c.parents.length; i++) {
         final pId = c.parents[i];
