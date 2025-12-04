@@ -72,20 +72,6 @@ Future<void> main(List<String> args) async {
       print('Starting Heidegger service from $heideggerPath...');
       final process =
           await Process.start(heideggerPath, [], mode: ProcessStartMode.normal);
-      process.stdout.listen((data) {
-        try {
-          stdout.write('[Heidegger] ${utf8.decode(data)}');
-        } catch (_) {
-          stdout.write('[Heidegger] ${String.fromCharCodes(data)}');
-        }
-      });
-      process.stderr.listen((data) {
-        try {
-          stderr.write('[Heidegger Error] ${utf8.decode(data)}');
-        } catch (_) {
-          stderr.write('[Heidegger Error] ${String.fromCharCodes(data)}');
-        }
-      });
     } else {
       print('Heidegger.exe not found at $heideggerPath');
     }
