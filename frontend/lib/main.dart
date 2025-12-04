@@ -3311,6 +3311,21 @@ class _GraphViewState extends State<_GraphView> {
             }
           }
 
+          // 构造 "Merge X to Y" 的信息，用于 tooltip 显示
+          // 这里我们使用特殊的格式，让 UI 层（_showEdgeInfo）去解析和显示
+          // 或者直接在这里放入描述性文本，但 branches 本意是分支名列表。
+          // 更好的方式是修改 EdgeInfo 结构，增加 type 或 description 字段。
+          // 但为了最小改动，我们暂且将这种描述作为一个"虚拟分支名"放入。
+          // 并在 UI 显示时识别它。
+          // 不过，Tooltip 显示逻辑是 "分支: [branches]"。
+          // 如果我们放入 "Merge 92d378e -> da3a1df"，显示效果就是 "分支: Merge 92d378e -> da3a1df"。
+          // 这看起来是可以接受的。
+          if (branches.isEmpty) {
+            final shortP = pId.substring(0, 7);
+            final shortC = c.id.substring(0, 7);
+            branches.add('Merge $shortP -> $shortC');
+          }
+
           bestInfo = EdgeInfo(
             child: c.id,
             parent: pId,
@@ -3362,7 +3377,23 @@ class _GraphViewState extends State<_GraphView> {
               if (b.head == p0Id) branches.add(b.name);
             }
           }
+
+          if (branches.isEmpty) {
+            final shortP = p0Id.substring(0, 7);
+            final shortC = c.id.substring(0, 7);
+            // 对于主干补画的边，它通常属于当前主干分支。
+            // 如果我们能确定当前分支名，最好显示分支名。
+            // 但这里我们无法确定，所以显示 ID 范围。
+            // 或者我们可以尝试推断：如果 child 在某个分支上，且这是 First Parent，
+            // 那么这条边很可能属于该分支。
+            // 我们可以遍历 data.branches，看哪个分支包含 child。
+            // 但这比较耗时。暂时显示 ID。
+            branches.add('$shortP -> $shortC');
+          }
+
           // If we found a ghost edge that is closer, use it
+          // 同样，如果这是补画的 First Parent 边，且没有分支指向 parent，
+          // 它的 branches 为空。
           bestInfo = EdgeInfo(child: c.id, parent: p0Id, branches: branches);
         }
       }
@@ -3702,10 +3733,18 @@ class GraphPainter extends CustomPainter {
 
         // Merge 来源的连线颜色应该跟随来源节点，而不是当前 Merge 节点
         // 这样能清楚显示是“哪个分支”合并进来了
+        // 统一采用黑色显示合并边，并虚线处理？或者就是黑色实线
         final paintMerge = Paint()
           ..style = PaintingStyle.stroke
           ..strokeWidth = 2.0
-          ..color = _colorOfCommit(pId, colorMemo);
+          ..color = const Color(0xFF000000); // 统一黑色
+
+        // 虚线效果
+        // 简单模拟虚线：用 drawPath 配合 DashPathEffect (需要 path_drawing 库，或者自己实现)
+        // 这里我们手写一个简单的虚线绘制逻辑，或者仅使用实线但降低透明度。
+        // 为了清晰，用黑色实线即可。用户要求“统一采用黑色”。
+        // 如果需要虚线，由于 Flutter 原生 Canvas 没有直接的 dashed line API，需要 path metric。
+        // 暂时保持实线。
 
         final path = Path();
         // 使用节点中心坐标，避免 spread 导致的偏移不一致
