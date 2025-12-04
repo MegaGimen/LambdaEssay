@@ -108,6 +108,7 @@ class _GraphPageState extends State<GraphPage> {
   bool loading = false;
   String? currentProjectName;
   WorkingState? working;
+  String? identicalCommitId;
 
   final TextEditingController userCtrl = TextEditingController();
   final TextEditingController passCtrl = TextEditingController();
@@ -1176,6 +1177,44 @@ class _GraphPageState extends State<GraphPage> {
     }
   }
 
+  Future<void> _findIdentical() async {
+    if (currentProjectName == null) return;
+
+    // 1. Update Repo
+    await _onUpdateRepoAction();
+
+    setState(() {
+      loading = true;
+      identicalCommitId = null; // Reset
+    });
+
+    try {
+      final resp = await _postJson('$baseUrl/track/find_identical', {
+        'name': currentProjectName,
+      });
+      final commitId = resp['commitId'] as String?;
+      setState(() {
+        identicalCommitId = commitId;
+      });
+
+      if (mounted) {
+        if (commitId != null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('找到相同版本: ${commitId.substring(0, 7)}')),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('未找到完全相同的版本')),
+          );
+        }
+      }
+    } catch (e) {
+      setState(() => error = '查找失败: $e');
+    } finally {
+      setState(() => loading = false);
+    }
+  }
+
   Future<void> _onUpdateRepoAction({bool forcePull = false}) async {
     print("Updating repo...");
     String? name = currentProjectName;
@@ -1765,6 +1804,8 @@ class _GraphPageState extends State<GraphPage> {
                     onRefresh: _load,
                     onUpdate: _onUpdateRepoAction,
                     onMerge: _performMerge,
+                    onFindIdentical: _findIdentical,
+                    identicalCommitId: identicalCommitId,
                   ),
           ),
         ],
@@ -1781,6 +1822,8 @@ class _GraphView extends StatefulWidget {
   final VoidCallback? onRefresh;
   final Future<void> Function({bool forcePull})? onUpdate;
   final Future<void> Function(String)? onMerge;
+  final Future<void> Function()? onFindIdentical;
+  final String? identicalCommitId;
   const _GraphView({
     required this.data,
     this.working,
@@ -1789,6 +1832,8 @@ class _GraphView extends StatefulWidget {
     this.onRefresh,
     this.onUpdate,
     this.onMerge,
+    this.onFindIdentical,
+    this.identicalCommitId,
   });
   @override
   State<_GraphView> createState() => _GraphViewState();
@@ -2604,6 +2649,7 @@ class _GraphViewState extends State<_GraphView> {
                         _rowHeight,
                         working: widget.working,
                         selectedNodes: _selectedNodes,
+                        identicalCommitId: widget.identicalCommitId,
                       ),
                       size: _canvasSize!,
                     ),
@@ -2668,6 +2714,12 @@ class _GraphViewState extends State<_GraphView> {
                         onPressed: _onMergeButton,
                         icon: const Icon(Icons.call_merge),
                         label: const Text('合并分支'),
+                      ),
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        onPressed: widget.onFindIdentical,
+                        icon: const Icon(Icons.find_in_page),
+                        label: const Text('查找相同版本'),
                       ),
                     ],
                   ),
@@ -3202,6 +3254,7 @@ class GraphPainter extends CustomPainter {
   final double rowHeight;
   final WorkingState? working;
   final Set<String> selectedNodes;
+  final String? identicalCommitId;
   static const double nodeRadius = 6;
   GraphPainter(
     this.data,
@@ -3211,6 +3264,7 @@ class GraphPainter extends CustomPainter {
     this.rowHeight, {
     this.working,
     required this.selectedNodes,
+    this.identicalCommitId,
   });
   static const List<Color> lanePalette = [
     Color(0xFF1976D2),
@@ -3287,6 +3341,14 @@ class GraphPainter extends CustomPainter {
           ..style = PaintingStyle.stroke
           ..strokeWidth = 3.0;
         canvas.drawCircle(Offset(x, y), r + 5, paintCurHead);
+      }
+
+      if (c.id == identicalCommitId) {
+        final paintIdent = Paint()
+          ..color = Colors.purple
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 4.0;
+        canvas.drawCircle(Offset(x, y), r + 8, paintIdent);
       }
 
       canvas.drawCircle(Offset(x, y), r, paintNode);
