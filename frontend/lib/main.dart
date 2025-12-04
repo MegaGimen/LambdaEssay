@@ -3191,8 +3191,10 @@ class _GraphViewState extends State<_GraphView> {
     final commits = data.commits;
     final laneOf = _laneOfByBranches(data);
     final rowOf = <String, int>{};
+    final byId = <String, CommitNode>{};
     for (var i = 0; i < commits.length; i++) {
       rowOf[commits[i].id] = i;
+      byId[commits[i].id] = commits[i];
     }
     if (_pairBranches == null) return null;
     double best = double.infinity;
@@ -3213,8 +3215,29 @@ class _GraphViewState extends State<_GraphView> {
       final px = laneP * laneWidth + laneWidth / 2;
       final py = rowP * rowHeight + rowHeight / 2;
 
-      // Simple straight line hit test (distance to segment)
-      final d = _distPointToSegment(sceneP, Offset(x, y), Offset(px, py));
+      final childNode = byId[child];
+      bool isMergeEdge = false;
+      if (childNode != null && childNode.parents.length > 1) {
+        if (childNode.parents[0] != parent) {
+          isMergeEdge = true;
+        }
+      }
+
+      double d;
+      if (laneC == laneP) {
+        d = _distPointToSegment(sceneP, Offset(x, y), Offset(px, py));
+      } else {
+        if (isMergeEdge) {
+          // Diagonal for merge
+          d = _distPointToSegment(sceneP, Offset(x, y), Offset(px, py));
+        } else {
+          // L-Shape for split: (px, py) -> (x, py) -> (x, y)
+          final d1 = _distPointToSegment(sceneP, Offset(px, py), Offset(x, py));
+          final d2 = _distPointToSegment(sceneP, Offset(x, py), Offset(x, y));
+          d = d1 < d2 ? d1 : d2;
+        }
+      }
+
       if (d < best) {
         best = d;
         bestInfo = EdgeInfo(
@@ -3390,15 +3413,34 @@ class GraphPainter extends CustomPainter {
         final spread = (done - (total - 1) / 2.0) * 4.0;
 
         final path = Path();
-        if (total == 1) {
-          path.moveTo(x, y);
-          path.lineTo(px, py);
+        final sx = x + spread;
+        final sy = y;
+        final ex = px + spread;
+        final ey = py;
+
+        final childNode = byId[child];
+        bool isMergeEdge = false;
+        if (childNode != null && childNode.parents.length > 1) {
+          if (childNode.parents[0] != parent) {
+            isMergeEdge = true;
+          }
+        }
+
+        if (laneC == laneP) {
+          path.moveTo(sx, sy);
+          path.lineTo(ex, ey);
         } else {
-          // If multiple branches connect same nodes, offset them slightly
-          // perpendicular to the line? Or just horizontal offset?
-          // Horizontal offset is simpler and works for vertical/diagonal.
-          path.moveTo(x + spread, y);
-          path.lineTo(px + spread, py);
+          if (isMergeEdge) {
+            // Diagonal
+            path.moveTo(sx, sy);
+            path.lineTo(ex, ey);
+          } else {
+            // L-Shape (Split)
+            // Parent (ex, ey) -> Horizontal -> Vertical -> Child (sx, sy)
+            path.moveTo(ex, ey);
+            path.lineTo(sx, ey);
+            path.lineTo(sx, sy);
+          }
         }
 
         paintEdge.color = bcolor;
