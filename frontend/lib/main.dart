@@ -2608,6 +2608,7 @@ class _GraphViewState extends State<_GraphView> {
                       _showNodeActionDialog(hit);
                     } else {
                       final edgeHit = _hitEdge(d.localPosition, widget.data);
+                      if (edgeHit != null && edgeHit.isMerge) return;
                       if (edgeHit != null && edgeHit.branches.isNotEmpty) {
                         final current = widget.data.currentBranch;
                         final others = edgeHit.branches
