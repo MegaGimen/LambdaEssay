@@ -3155,32 +3155,48 @@ class _GraphViewState extends State<_GraphView> {
   Map<String, int> _laneOfByBranches(GraphData data) {
     final laneOf = <String, int>{};
     final branchLane = _branchLane(data.branches);
-    final orderedNames = branchLane.keys.toList()
-      ..sort((a, b) {
-        int pa = a == 'master' ? 0 : 1;
-        int pb = b == 'master' ? 0 : 1;
-        if (pa != pb) return pa - pb;
-        return a.compareTo(b);
-      });
-    for (final name in orderedNames) {
-      final lane = branchLane[name]!;
-      final ids = data.chains[name] ?? const <String>[];
-      for (final id in ids) {
-        laneOf[id] ??= lane;
+
+    // 1. 初始化 Branch Head 的 Lane
+    for (final b in data.branches) {
+      if (branchLane.containsKey(b.name)) {
+        laneOf[b.head] = branchLane[b.name]!;
       }
     }
+
+    // 准备下一个可用 Lane 索引
+    int nextFreeLane = 0;
+    if (branchLane.isNotEmpty) {
+      int maxL = -1;
+      for (final v in branchLane.values) {
+        if (v > maxL) maxL = v;
+      }
+      nextFreeLane = maxL + 1;
+    }
+
+    // 2. 遍历 Commits 进行 Lane 传播
     for (final c in data.commits) {
-      if (laneOf[c.id] != null) continue;
-      int? lane;
-      for (final p in c.parents) {
-        final lp = laneOf[p];
-        if (lp != null) {
-          lane = lp;
-          break;
+      // 如果当前节点还没有 Lane，分配一个新的
+      if (!laneOf.containsKey(c.id)) {
+        laneOf[c.id] = nextFreeLane++;
+      }
+
+      final currentLane = laneOf[c.id]!;
+
+      // 向父节点传播
+      for (int i = 0; i < c.parents.length; i++) {
+        final pId = c.parents[i];
+
+        // 如果父节点已有 Lane，则不覆盖
+        if (laneOf.containsKey(pId)) continue;
+
+        if (i == 0) {
+          // First Parent: 继承当前 Lane
+          laneOf[pId] = currentLane;
+        } else {
+          // Second+ Parent: 分配新 Lane
+          laneOf[pId] = nextFreeLane++;
         }
       }
-      final laneVal = lane ?? branchLane.length;
-      laneOf[c.id] = laneVal;
     }
     return laneOf;
   }
