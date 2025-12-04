@@ -526,7 +526,7 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
   if (!src.existsSync()) {
     return {'needDocx': true, 'repoPath': projDir};
   }
-
+  print("Writting Complete");
   // Try to compare Source vs HEAD to decide whether to Restore or Copy
   bool restored = false;
   final relPath = p.relative(repoDocxPath, from: projDir);
@@ -547,6 +547,8 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
     if (hasHead) {
       // Compare Source vs HEAD
       final isIdenticalToHead = await _checkDocxIdentical(sourcePath, headFile);
+      print("identical?");
+      print(isIdenticalToHead);
       if (isIdenticalToHead) {
         // If Source is semantically identical to HEAD, we restore the working copy
         // to ensure git status is clean (undoing any metadata-only changes).
@@ -559,7 +561,8 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
       tmpDir.deleteSync(recursive: true);
     } catch (_) {}
   }
-
+  print('restored?');
+  print(restored);
   if (!restored) {
     // If we didn't restore (either different from HEAD, or new file), we update the working copy
     await File(repoDocxPath).writeAsBytes(await src.readAsBytes());
@@ -568,7 +571,14 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
   final diff = await _runGit(
       ['diff', '--name-only', '--', p.basename(repoDocxPath)], projDir);
   final head = await getHead(projDir);
-  final changed = diff.any((l) => l.trim().isNotEmpty);
+  //final changed = diff.any((l) => l.trim().isNotEmpty);
+  final changed = !restored;
+  print("Changed?");
+  print({
+    'workingChanged': changed,
+    'repoPath': projDir,
+    'head': head,
+  });
   return {
     'workingChanged': changed,
     'repoPath': projDir,
