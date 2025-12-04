@@ -3381,14 +3381,38 @@ class _GraphViewState extends State<_GraphView> {
           if (branches.isEmpty) {
             final shortP = p0Id.substring(0, 7);
             final shortC = c.id.substring(0, 7);
-            // 对于主干补画的边，它通常属于当前主干分支。
-            // 如果我们能确定当前分支名，最好显示分支名。
-            // 但这里我们无法确定，所以显示 ID 范围。
-            // 或者我们可以尝试推断：如果 child 在某个分支上，且这是 First Parent，
-            // 那么这条边很可能属于该分支。
-            // 我们可以遍历 data.branches，看哪个分支包含 child。
-            // 但这比较耗时。暂时显示 ID。
-            branches.add('$shortP -> $shortC');
+
+            // 尝试找到 child 所在的 First-Parent 分支
+            String? likelyBranch;
+            // 遍历所有 branches，如果 b.head 能够通过 First-Parent 链到达 child，则该分支可能是 child 的所属分支
+
+            for (final b in data.branches) {
+              // 检查 b 是否包含 child 在其 First-Parent 链上
+              var curr = b.head;
+              int steps = 0;
+              bool found = false;
+              while (steps < 100) {
+                // 限制步数防止死循环
+                if (curr == c.id) {
+                  found = true;
+                  break;
+                }
+                final node = byId[curr];
+                if (node == null || node.parents.isEmpty) break;
+                curr = node.parents[0]; // 仅沿 First Parent 回溯
+                steps++;
+              }
+              if (found) {
+                likelyBranch = b.name;
+                break; // 找到优先级最高的一个即可
+              }
+            }
+
+            if (likelyBranch != null) {
+              branches.add(likelyBranch);
+            } else {
+              branches.add('$shortP -> $shortC');
+            }
           }
 
           // If we found a ghost edge that is closer, use it
