@@ -64,7 +64,6 @@ Future<void> _killPort(int port) async {
 
 Future<void> main(List<String> args) async {
   // Start Heidegger service in background
-  /*
   try {
     final scriptDir = p.dirname(Platform.script.toFilePath());
     final heideggerPath = p.join(scriptDir, 'Heidegger.exe');
@@ -79,7 +78,6 @@ Future<void> main(List<String> args) async {
   } catch (e) {
     print('Failed to start Heidegger: $e');
   }
-  */
   await initTrackingService();
   final router = Router();
 
