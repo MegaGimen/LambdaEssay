@@ -59,7 +59,13 @@ class EdgeInfo {
   final String child;
   final String parent;
   final List<String> branches;
-  EdgeInfo({required this.child, required this.parent, required this.branches});
+  final bool isMerge;
+  EdgeInfo({
+    required this.child,
+    required this.parent,
+    required this.branches,
+    this.isMerge = false,
+  });
 }
 
 class GraphData {
@@ -2944,34 +2950,54 @@ class _GraphViewState extends State<_GraphView> {
                       '${_hoverEdge!.child.substring(0, 7)} → ${_hoverEdge!.parent.substring(0, 7)}',
                     ),
                     const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: _hoverEdge!.branches
-                          .map(
-                            (b) => Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: (_branchColors?[b] ??
-                                        const Color(0xFF9E9E9E))
-                                    .withValues(alpha: 0.15),
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                  color: _branchColors?[b] ??
-                                      const Color(0xFF9E9E9E),
+                    if (_hoverEdge!.isMerge)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color:
+                              const Color(0xFF9E9E9E).withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: const Color(0xFF9E9E9E),
+                          ),
+                        ),
+                        child: const Text(
+                          '合并边',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                      )
+                    else
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: _hoverEdge!.branches
+                            .map(
+                              (b) => Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: (_branchColors?[b] ??
+                                          const Color(0xFF9E9E9E))
+                                      .withValues(alpha: 0.15),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: _branchColors?[b] ??
+                                        const Color(0xFF9E9E9E),
+                                  ),
+                                ),
+                                child: Text(
+                                  b,
+                                  style: const TextStyle(fontSize: 12),
                                 ),
                               ),
-                              child: Text(
-                                b,
-                                style: const TextStyle(fontSize: 12),
-                              ),
-                            ),
-                          )
-                          .toList(),
-                    ),
+                            )
+                            .toList(),
+                      ),
                   ],
                 ),
               ),
@@ -3247,8 +3273,12 @@ class _GraphViewState extends State<_GraphView> {
         d = _distPointToSegment(sceneP, Offset(x, y), Offset(px, py));
       } else {
         if (isMergeEdge) {
-          // Merge 边：直接对角线 (从 child 中心到 parent 中心)
-          d = _distPointToSegment(sceneP, Offset(x, y), Offset(px, py));
+          // Chains 里的 Merge 边（斜线）。
+          // 在 paint 中我们通过 continue 跳过了这些边的绘制（隐藏了蓝色线）。
+          // 因此，在 _hitEdge 中，我们也必须跳过它们，否则会检测到不可见的边。
+          // 从而导致 Tooltip 显示了错误的信息（即 Chains 里的分支信息）。
+          // 我们希望 Tooltip 信息由下方“2. Check explicit merge edges”逻辑来提供（显示“合并边”）。
+          continue;
         } else {
           // Split 边：L 型 (Parent -> Horizontal -> Vertical -> Child)
           // 注意：绘制时是 path.moveTo(px, py); path.lineTo(x, py); path.lineTo(x, y);
@@ -3265,6 +3295,7 @@ class _GraphViewState extends State<_GraphView> {
           child: child,
           parent: parent,
           branches: entry.value,
+          isMerge: false,
         );
       }
     }
@@ -3313,23 +3344,16 @@ class _GraphViewState extends State<_GraphView> {
 
           // 构造 "Merge X to Y" 的信息，用于 tooltip 显示
           // 这里我们使用特殊的格式，让 UI 层（_showEdgeInfo）去解析和显示
-          // 或者直接在这里放入描述性文本，但 branches 本意是分支名列表。
-          // 更好的方式是修改 EdgeInfo 结构，增加 type 或 description 字段。
-          // 但为了最小改动，我们暂且将这种描述作为一个"虚拟分支名"放入。
-          // 并在 UI 显示时识别它。
-          // 不过，Tooltip 显示逻辑是 "分支: [branches]"。
-          // 如果我们放入 "Merge 92d378e -> da3a1df"，显示效果就是 "分支: Merge 92d378e -> da3a1df"。
-          // 这看起来是可以接受的。
+          // 我们使用 'MergeEdge' 作为特殊标记，UI 层检测到这个标记时，会显示“合并边”。
           if (branches.isEmpty) {
-            final shortP = pId.substring(0, 7);
-            final shortC = c.id.substring(0, 7);
-            branches.add('Merge $shortP -> $shortC');
+            branches.add('MergeEdge');
           }
 
           bestInfo = EdgeInfo(
             child: c.id,
             parent: pId,
             branches: branches,
+            isMerge: true,
           );
         }
       }
@@ -3379,46 +3403,26 @@ class _GraphViewState extends State<_GraphView> {
           }
 
           if (branches.isEmpty) {
-            final shortP = p0Id.substring(0, 7);
-            final shortC = c.id.substring(0, 7);
-
-            // 尝试找到 child 所在的 First-Parent 分支
-            String? likelyBranch;
-            // 遍历所有 branches，如果 b.head 能够通过 First-Parent 链到达 child，则该分支可能是 child 的所属分支
-
-            for (final b in data.branches) {
-              // 检查 b 是否包含 child 在其 First-Parent 链上
-              var curr = b.head;
-              int steps = 0;
-              bool found = false;
-              while (steps < 100) {
-                // 限制步数防止死循环
-                if (curr == c.id) {
-                  found = true;
-                  break;
-                }
-                final node = byId[curr];
-                if (node == null || node.parents.isEmpty) break;
-                curr = node.parents[0]; // 仅沿 First Parent 回溯
-                steps++;
-              }
-              if (found) {
-                likelyBranch = b.name;
-                break; // 找到优先级最高的一个即可
-              }
-            }
-
-            if (likelyBranch != null) {
-              branches.add(likelyBranch);
-            } else {
-              branches.add('$shortP -> $shortC');
-            }
+            branches.add('MergeEdge');
+          } else {
+            // 如果 branches 不为空（说明 Merge 来源是一个分支的 Head），
+            // 用户反馈说 tag 显示为 "socialism"（B 分支），但依旧不是 "合并边"。
+            // 用户的要求是：只要是斜边（Merge Edge），tag 就必须显示为“合并边”。
+            // 无论它是否是某个分支的 Head。
+            // 因此，我们强制清空 branches，并添加 'MergeEdge' 标记。
+            branches.clear();
+            branches.add('MergeEdge');
           }
 
           // If we found a ghost edge that is closer, use it
           // 同样，如果这是补画的 First Parent 边，且没有分支指向 parent，
           // 它的 branches 为空。
-          bestInfo = EdgeInfo(child: c.id, parent: p0Id, branches: branches);
+          bestInfo = EdgeInfo(
+            child: c.id,
+            parent: p0Id,
+            branches: branches,
+            isMerge: false,
+          );
         }
       }
     }
@@ -3615,9 +3619,10 @@ class GraphPainter extends CustomPainter {
           path.lineTo(ex, ey);
         } else {
           if (isMergeEdge) {
-            // Diagonal
-            path.moveTo(sx, sy);
-            path.lineTo(ex, ey);
+            // 这里是 Chains 里的 Merge 边（斜线）。
+            // 用户要求：强制不显示蓝色的线（Git 定义的），而是统一由下方的黑色特判逻辑来绘制。
+            // 因此，如果判定为 Merge 边，这里直接跳过绘制。
+            continue;
           } else {
             // L-Shape (Split)
             // Parent (ex, ey) -> Horizontal -> Vertical -> Child (sx, sy)
