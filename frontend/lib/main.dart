@@ -1486,7 +1486,7 @@ class _GraphPageState extends State<GraphPage> {
 
       // Step 7: Update repo
       // Add delay
-      await Future.delayed(const Duration(milliseconds: 1000));
+      //await Future.delayed(const Duration(milliseconds: 1000));
       if (mounted) {
         print("Auto-updating after merge...");
         await _onUpdateRepoAction(forcePull: false);
