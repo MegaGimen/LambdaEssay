@@ -81,19 +81,12 @@ Future<String?> getCurrentBranch(String repoPath) async {
 
 Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
   final key = '${repoPath}|${limit ?? 0}';
-  // We skip cache if we want fresh branch status, or we include branch in cache key?
-  // For now, let's just clear cache on write ops, so read ops can cache.
-  // But currentBranch might change outside?
-  // Let's fetch currentBranch every time and just cache the heavy log part?
-  // Simplify: disable cache for now or just accept it.
-  // Actually, let's just fetch branch separately?
-  // No, putting it in GraphResponse is cleaner.
-  // Let's invalidate cache on any write.
-
   final cached = _graphCache[key];
   if (cached != null) {
+    print('Graph cache hit for $key');
     return cached;
   }
+  print('Graph cache miss for $key, fetching...');
   final branches = await getBranches(repoPath);
   final chains = await getBranchChains(repoPath, branches, limit: limit);
   final current = await getCurrentBranch(repoPath);
@@ -1531,13 +1524,16 @@ Future<void> completeMerge(String repoName, String targetBranch) async {
   } catch (e) {
     // If it fails (e.g. already up to date), handle it?
     // "Already up to date" might throw.
+    print('Merge command result: $e');
     if (e.toString().contains('Already up to date')) {
-      return;
+      // Continue to commit if we have changes
+    } else {
+      throw e;
     }
-    throw e;
   }
 
   // 3. Commit
+  print('Committing merge changes...');
   await _runGit(['add', '.'], projDir);
   // We need a commit message.
   await _runGit([
@@ -1546,5 +1542,6 @@ Future<void> completeMerge(String repoName, String targetBranch) async {
     'Merge branch \'$targetBranch\' into HEAD (Binary Resolved)'
   ], projDir);
 
+  print('Clearing cache after merge...');
   clearCache();
 }

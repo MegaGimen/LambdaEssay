@@ -1333,6 +1333,182 @@ class _GraphPageState extends State<GraphPage> {
     }
   }
 
+  Future<void> _performMerge(String targetBranch) async {
+    // Step 1: Warning
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('合并分支/提交'),
+        content: Text(
+            '您即将把 ${targetBranch.length > 7 ? targetBranch.substring(0, 7) : targetBranch} 合并到当前分支。\n\n'
+            '1. 请务必先【关闭 Word 文档】。\n'
+            '2. 系统将自动生成差异文档。\n'
+            '3. 您需要手动编辑差异文档以解决冲突。\n\n'
+            '是否继续？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('开始合并'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    if (!mounted) return;
+
+    // Step 2: Prepare Merge
+    setState(() => loading = true);
+
+    try {
+      final resp = await http.post(
+        Uri.parse('http://localhost:8080/prepare_merge'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'repoName': currentProjectName ?? '',
+          'targetBranch': targetBranch,
+        }),
+      );
+
+      setState(() => loading = false);
+
+      if (resp.statusCode != 200) {
+        throw Exception('准备合并失败: ${resp.body}');
+      }
+
+      // Step 3: User Review
+      final confirm = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          title: const Text('处理合并冲突'),
+          content: const Text('差异文档已生成并替换了您的追踪文件。\n\n'
+              '请现在打开 Word 文档：\n'
+              '1. 查看“修订”内容。\n'
+              '2. 接受或拒绝更改以解决冲突。\n'
+              '3. 保存并关闭文档。\n\n'
+              '完成后，点击“确认合并完成”。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消合并 (还原?)'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('确认合并完成'),
+            ),
+          ],
+        ),
+      );
+
+      if (confirm != true) {
+        // Restore logic if cancelled
+        setState(() => loading = true);
+        await http.post(
+          Uri.parse('http://localhost:8080/restore_docx'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'repoName': currentProjectName ?? ''}),
+        );
+        setState(() => loading = false);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('合并已取消，文档已还原')),
+          );
+        }
+        return;
+      }
+
+      // Step 4: Double Confirmation
+      final doubleCheck = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('最后确认'),
+          content: const Text('您确定已经处理完所有冲突并保存了吗？\n'
+              '即将生成合并提交。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('我还要再看看'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('确定执行'),
+            ),
+          ],
+        ),
+      );
+
+      if (doubleCheck != true) {
+        // Restore logic if cancelled
+        setState(() => loading = true);
+        await http.post(
+          Uri.parse('http://localhost:8080/restore_docx'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'repoName': currentProjectName ?? ''}),
+        );
+        setState(() => loading = false);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('合并已取消，文档已还原')),
+          );
+        }
+        return;
+      }
+
+      if (!mounted) return;
+      setState(() => loading = true);
+
+      // Step 5: Auto Update Repo (Sync)
+      await _onUpdateRepoAction(forcePull: false);
+
+      // Step 6: Complete Merge
+      final resp2 = await http.post(
+        Uri.parse('http://localhost:8080/complete_merge'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'repoName': currentProjectName ?? '',
+          'targetBranch': targetBranch,
+        }),
+      );
+
+      setState(() => loading = false);
+
+      if (resp2.statusCode != 200) {
+        throw Exception('完成合并失败: ${resp2.body}');
+      }
+
+      // Force clear cache on server
+      await http.post(Uri.parse('http://localhost:8080/reset'));
+
+      // Step 7: Update repo
+      // Add delay
+      await Future.delayed(const Duration(milliseconds: 1000));
+      if (mounted) {
+        print("Auto-updating after merge...");
+        await _onUpdateRepoAction(forcePull: false);
+      }
+      // Reload graph
+      await _load();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('合并成功！')),
+        );
+      }
+    } catch (e) {
+      if (mounted) setState(() => loading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+    }
+  }
+
   Future<void> _onChangeDocxPath() async {
     if (currentProjectName == null) return;
     final name = currentProjectName!;
@@ -1588,6 +1764,7 @@ class _GraphPageState extends State<GraphPage> {
                     projectName: currentProjectName,
                     onRefresh: _load,
                     onUpdate: _onUpdateRepoAction,
+                    onMerge: _performMerge,
                   ),
           ),
         ],
@@ -1603,6 +1780,7 @@ class _GraphView extends StatefulWidget {
   final String? projectName;
   final VoidCallback? onRefresh;
   final Future<void> Function({bool forcePull})? onUpdate;
+  final Future<void> Function(String)? onMerge;
   const _GraphView({
     required this.data,
     this.working,
@@ -1610,6 +1788,7 @@ class _GraphView extends StatefulWidget {
     this.projectName,
     this.onRefresh,
     this.onUpdate,
+    this.onMerge,
   });
   @override
   State<_GraphView> createState() => _GraphViewState();
@@ -1630,7 +1809,6 @@ class _GraphViewState extends State<_GraphView> {
   static const Duration _rightPanDelay = Duration(milliseconds: 200);
   final Set<String> _selectedNodes = {};
   bool _comparing = false;
-  bool _isMerging = false;
 
   void _resetView() {
     setState(() {
@@ -2267,180 +2445,8 @@ class _GraphViewState extends State<_GraphView> {
     );
 
     if (ok == true && selected != null) {
-      await _performMerge(selected!);
-    }
-  }
-
-  Future<void> _performMerge(String targetBranch) async {
-    // Step 1: Warning
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('合并分支/提交'),
-        content: Text(
-            '您即将把 ${targetBranch.length > 7 ? targetBranch.substring(0, 7) : targetBranch} 合并到当前分支。\n\n'
-            '1. 请务必先【关闭 Word 文档】。\n'
-            '2. 系统将自动生成差异文档。\n'
-            '3. 您需要手动编辑差异文档以解决冲突。\n\n'
-            '是否继续？'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('开始合并'),
-          ),
-        ],
-      ),
-    );
-    if (ok != true) return;
-
-    if (!mounted) return;
-
-    // Step 2: Prepare Merge
-    setState(() => _isMerging = true);
-
-    try {
-      final resp = await http.post(
-        Uri.parse('http://localhost:8080/prepare_merge'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'repoName': widget.projectName ?? '',
-          'targetBranch': targetBranch,
-        }),
-      );
-
-      setState(() => _isMerging = false); // Hide loading
-
-      if (resp.statusCode != 200) {
-        throw Exception('准备合并失败: ${resp.body}');
-      }
-
-      // Step 3: User Review
-      final confirm = await showDialog<bool>(
-        context: context,
-        barrierDismissible: false,
-        builder: (ctx) => AlertDialog(
-          title: const Text('处理合并冲突'),
-          content: const Text('差异文档已生成并替换了您的追踪文件。\n\n'
-              '请现在打开 Word 文档：\n'
-              '1. 查看“修订”内容。\n'
-              '2. 接受或拒绝更改以解决冲突。\n'
-              '3. 保存并关闭文档。\n\n'
-              '完成后，点击“确认合并完成”。'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消合并 (还原?)'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('确认合并完成'),
-            ),
-          ],
-        ),
-      );
-
-      if (confirm != true) {
-        // Restore logic if cancelled
-        setState(() => _isMerging = true);
-        await http.post(
-          Uri.parse('http://localhost:8080/restore_docx'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'repoName': widget.projectName ?? ''}),
-        );
-        setState(() => _isMerging = false);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('合并已取消，文档已还原')),
-          );
-        }
-        return;
-      }
-
-      // Step 4: Double Confirmation
-      final doubleCheck = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('最后确认'),
-          content: const Text('您确定已经处理完所有冲突并保存了吗？\n'
-              '即将生成合并提交。'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('我还要再看看'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('确定执行'),
-            ),
-          ],
-        ),
-      );
-
-      if (doubleCheck != true) {
-        // Restore logic if cancelled
-        setState(() => _isMerging = true);
-        await http.post(
-          Uri.parse('http://localhost:8080/restore_docx'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'repoName': widget.projectName ?? ''}),
-        );
-        setState(() => _isMerging = false);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('合并已取消，文档已还原')),
-          );
-        }
-        return;
-      }
-
-      if (!mounted) return;
-      setState(() => _isMerging = true);
-
-      // Step 5: Auto Update Repo (Sync)
-      if (widget.onUpdate != null) {
-        await widget.onUpdate!(forcePull: false);
-      }
-
-      // Step 6: Complete Merge
-      final resp2 = await http.post(
-        Uri.parse('http://localhost:8080/complete_merge'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'repoName': widget.projectName ?? '',
-          'targetBranch': targetBranch,
-        }),
-      );
-
-      setState(() => _isMerging = false); // Hide loading
-
-      if (resp2.statusCode != 200) {
-        throw Exception('完成合并失败: ${resp2.body}');
-      }
-
-      // Step 7: Update repo (Refresh view only)
-      if (widget.onUpdate != null) {
-        // Add a small delay to ensure git process is fully completed and file system is synced
-        await Future.delayed(const Duration(milliseconds: 500));
-        if (mounted) {
-          await widget.onUpdate!(forcePull: false);
-        }
-      }
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('合并成功！')),
-        );
-      }
-    } catch (e) {
-      if (mounted) setState(() => _isMerging = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
+      if (widget.onMerge != null) {
+        widget.onMerge!(selected!);
       }
     }
   }
@@ -2454,7 +2460,9 @@ class _GraphViewState extends State<_GraphView> {
     } else {
       targetBranch = node.id;
     }
-    await _performMerge(targetBranch);
+    if (widget.onMerge != null) {
+      await widget.onMerge!(targetBranch);
+    }
   }
 
   @override
@@ -2941,13 +2949,6 @@ class _GraphViewState extends State<_GraphView> {
                   textStyle: const TextStyle(fontSize: 16),
                 ),
               ),
-            ),
-          ),
-        if (_isMerging)
-          Positioned.fill(
-            child: Container(
-              color: Colors.black.withValues(alpha: 0.3),
-              child: const Center(child: CircularProgressIndicator()),
             ),
           ),
       ],
