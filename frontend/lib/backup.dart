@@ -1,9 +1,9 @@
 import 'dart:convert';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'visualize.dart';
 import 'models.dart';
+import 'visualize.dart'; // For VisualizeDocxPage
+import 'graph_view.dart'; // For SimpleGraphView
 
 class BackupPage extends StatefulWidget {
   const BackupPage({super.key});
@@ -24,7 +24,25 @@ class _BackupPageState extends State<BackupPage> {
 
   static const String backupBase = 'http://localhost:8080';
 
-  // ... (date pickers omitted)
+  Future<void> _pickStart() async {
+    final d = await showDatePicker(
+      context: context,
+      initialDate: _startDate ?? DateTime.now(),
+      firstDate: DateTime(2000),
+      lastDate: DateTime.now(),
+    );
+    if (d != null) setState(() => _startDate = d);
+  }
+
+  Future<void> _pickEnd() async {
+    final d = await showDatePicker(
+      context: context,
+      initialDate: _endDate ?? DateTime.now(),
+      firstDate: DateTime(2000),
+      lastDate: DateTime.now(),
+    );
+    if (d != null) setState(() => _endDate = d);
+  }
 
   Future<void> _loadBackups() async {
     final repo = _repoCtrl.text.trim();
@@ -67,7 +85,26 @@ class _BackupPageState extends State<BackupPage> {
     }
   }
 
-  // ... (_filtered omitted)
+  List<CommitNode> _filtered() {
+    return _commits.where((c) {
+      if (_authorCtrl.text.isNotEmpty) {
+        if (!c.author.toLowerCase().contains(_authorCtrl.text.toLowerCase())) {
+          return false;
+        }
+      }
+      if (_startDate != null) {
+        final d = DateTime.tryParse(c.date);
+        if (d != null && d.isBefore(_startDate!)) return false;
+      }
+      if (_endDate != null) {
+        final d = DateTime.tryParse(c.date);
+        if (d != null && d.isAfter(_endDate!.add(const Duration(days: 1)))) {
+          return false;
+        }
+      }
+      return true;
+    }).toList();
+  }
 
   Future<void> _ensureGraph(String repo, String sha) async {
     if (_graphs.containsKey(sha)) return;
@@ -82,7 +119,9 @@ class _BackupPageState extends State<BackupPage> {
     }
     final j = jsonDecode(resp.body) as Map<String, dynamic>;
     final gd = GraphData.fromJson(j);
-    _graphs[sha] = gd;
+    setState(() {
+      _graphs[sha] = gd;
+    });
   }
 
   Future<void> _previewDoc(String repo, String sha) async {
@@ -214,7 +253,6 @@ class _BackupPageState extends State<BackupPage> {
                                         : () async {
                                             try {
                                               await _ensureGraph(repo, sha);
-                                              setState(() {});
                                             } catch (e) {
                                               ScaffoldMessenger.of(context)
                                                   .showSnackBar(SnackBar(
@@ -230,10 +268,8 @@ class _BackupPageState extends State<BackupPage> {
                               if (hasGraph)
                                 SizedBox(
                                   height: 600,
-                                  child: _GraphView(
+                                  child: SimpleGraphView(
                                     data: _graphs[sha]!,
-                                    repoPath: '',
-                                    projectName: null,
                                     readOnly: true,
                                     onPreviewCommit: (commitId) async {
                                       await _previewDoc(repo, commitId);

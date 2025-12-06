@@ -2,7 +2,6 @@ import 'dart:io';
 import 'dart:convert';
 import 'package:path/path.dart' as p;
 import 'package:http/http.dart' as http;
-import 'git_service.dart'; // Reuse models
 import 'models.dart';
 
 final String _backupBaseUrl = 'http://47.242.109.145:4829';
@@ -386,18 +385,23 @@ Future<List<int>> previewBackupChildDoc(
 
     final scriptPath = p.fromUri(Platform.script);
     final repoRoot = p.dirname(p.dirname(p.dirname(scriptPath)));
-    final soffice = p.join(repoRoot, 'frontend', 'LibreOfficePortable', 'App',
-        'libreoffice', 'program', 'soffice.exe');
-    final outDir = tmp.path;
+    final psScript = p.join(repoRoot, 'frontend', 'lib', 'docx2pdf.ps1');
+    final pdfPath = p.join(tmp.path, 'temp.pdf');
 
-    final result = await Process.run(soffice,
-        ['--headless', '--convert-to', 'pdf', '--outdir', outDir, inPath]);
+    final result = await Process.run('powershell', [
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      psScript,
+      '-InputPath',
+      inPath,
+      '-OutputPath',
+      pdfPath
+    ]);
 
     if (result.exitCode != 0) {
       throw Exception('Conversion failed: ${result.stderr}');
     }
-
-    final pdfPath = p.join(outDir, 'temp.pdf');
 
     if (!await File(pdfPath).exists()) {
       throw Exception('PDF not generated');
