@@ -53,10 +53,13 @@ Future<List<Map<String, dynamic>>> listBackupCommits(String repoName,
 
   // Check if it is a git repo (the parent repo)
   File? gitDir = File(p.join(dirPath, '.git'));
+  print("gitDir=$gitDir");
   if (!gitDir.existsSync() &&
       !Directory(p.join(dirPath, '.git')).existsSync()) {
+    print("case1");
     // Check subdirectories (maybe zip created a root folder)
     final subs = dir.listSync().whereType<Directory>().toList();
+    print("subs=$subs");
     if (subs.length == 1) {
       final sub = subs.first;
       if (await Directory(p.join(sub.path, '.git')).exists()) {
@@ -65,7 +68,7 @@ Future<List<Map<String, dynamic>>> listBackupCommits(String repoName,
     }
     throw Exception('No .git directory found in backup parent repo');
   }
-
+  print("case2 ");
   return _getCommitsFromDir(dirPath);
 }
 
@@ -82,7 +85,10 @@ Future<List<Map<String, dynamic>>> _getCommitsFromDir(String repoPath) async {
   );
 
   if (result.exitCode != 0) {
-    throw Exception('Git log failed: ${result.stderr}');
+    var stackTrace = StackTrace.current;
+    print('调用栈信息：');
+    print(stackTrace);
+    throw Exception('Git log failed fucked: ${result.stderr}');
   }
 
   final lines = (result.stdout as String).split('\n');
@@ -113,10 +119,12 @@ Future<List<Map<String, dynamic>>> _getCommitsFromDir(String repoPath) async {
 
 Future<String> _findEffectiveRepoPath(String repoName) async {
   final repoDir = _getBackupDir(repoName);
+  print("repodir=$repoDir");
   if (await Directory(p.join(repoDir, '.git')).exists()) {
     return repoDir;
   }
   final subs = Directory(repoDir).listSync().whereType<Directory>().toList();
+  print("subs=$subs");
   if (subs.length == 1 &&
       await Directory(p.join(subs.first.path, '.git')).exists()) {
     return subs.first.path;
@@ -147,8 +155,13 @@ Future<Map<String, dynamic>> getBackupChildGraph(
     String repoName, String commitId) async {
   final effectiveRepoPath = await _findEffectiveRepoPath(repoName);
   final shortSha = commitId.substring(0, 7);
-  final worktreePath = '$effectiveRepoPath/../${repoName}_work_$shortSha';
+  final worktreePath = p.join(Directory.systemTemp.path, 'gitbin_worktrees',
+      '${repoName}_work_$shortSha');
   final worktreeDir = Directory(worktreePath);
+
+  if (!await worktreeDir.parent.exists()) {
+    await worktreeDir.parent.create(recursive: true);
+  }
 
   // 1. Checkout parent commit to worktree
   if (!await worktreeDir.exists()) {
@@ -188,6 +201,9 @@ Future<GraphResponse> _getGraphFromGitDir(String gitDir, {int? limit}) async {
   final chains =
       await _getBranchChainsFromGitDir(gitDir, branches, limit: limit);
   final current = await _getCurrentBranchFromGitDir(gitDir);
+  print("gitDir=$gitDir");
+  print("branches=$branches");
+  print("current=$current");
 
   final logArgs = [
     '--git-dir=$gitDir',
@@ -326,8 +342,14 @@ Future<List<int>> previewBackupChildDoc(
     String repoName, String commitId) async {
   final effectiveRepoPath = await _findEffectiveRepoPath(repoName);
   final shortSha = commitId.substring(0, 7);
-  final worktreePath = '$effectiveRepoPath/../${repoName}_work_$shortSha';
+  final worktreePath = p.join(Directory.systemTemp.path, 'gitbin_worktrees',
+      '${repoName}_work_$shortSha');
+  print("worktreePath=$worktreePath");
   final worktreeDir = Directory(worktreePath);
+
+  if (!await worktreeDir.parent.exists()) {
+    await worktreeDir.parent.create(recursive: true);
+  }
 
   if (!await worktreeDir.exists()) {
     final res = await Process.run(
