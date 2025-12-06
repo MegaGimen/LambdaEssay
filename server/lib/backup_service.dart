@@ -240,8 +240,6 @@ Future<GraphResponse> _getGraphFromGitDir(String gitDir, {int? limit}) async {
   if (res.exitCode != 0) throw Exception('Git log failed: ${res.stderr}');
 
   final lines = LineSplitter.split(res.stdout as String).toList();
-    Map<String, List<String>> chains, String? current) {
-  final lines = LineSplitter.split(stdout).toList();
   final commits = <CommitNode>[];
   for (final l in lines) {
     if (l.trim().isEmpty) continue;
