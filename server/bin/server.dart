@@ -6,6 +6,7 @@ import 'package:shelf/shelf_io.dart';
 import 'package:shelf_router/shelf_router.dart';
 import 'package:path/path.dart' as p;
 import '../lib/git_service.dart';
+import '../lib/backup_service.dart';
 import 'package:http/http.dart' as http;
 
 Response _cors(Response r) {
@@ -913,6 +914,75 @@ Future<void> main(List<String> args) async {
       await completeMerge(repoName, targetBranch);
       return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
         'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/backup/commits', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoName = (data['repoName'] as String?)?.trim() ?? '';
+    final force = data['force'] == true;
+
+    if (repoName.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoName required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      final commits = await listBackupCommits(repoName, force: force);
+      return _cors(Response.ok(jsonEncode({'commits': commits}), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/backup/graph', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoName = (data['repoName'] as String?)?.trim() ?? '';
+    final commitId = data['commitId'] as String?;
+
+    if (repoName.isEmpty || commitId == null) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoName, commitId required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      final graph = await getBackupChildGraph(repoName, commitId);
+      return _cors(Response.ok(jsonEncode(graph), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/backup/preview', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoName = (data['repoName'] as String?)?.trim() ?? '';
+    final commitId = data['commitId'] as String?;
+
+    if (repoName.isEmpty || commitId == null) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoName, commitId required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      final pdf = await previewBackupChildDoc(repoName, commitId);
+      return _cors(Response.ok(pdf, headers: {
+        'Content-Type': 'application/pdf',
       }));
     } catch (e) {
       return _cors(Response(500,
