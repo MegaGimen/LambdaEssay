@@ -158,30 +158,46 @@ Future<Map<String, dynamic>> getBackupChildGraph(
   final worktreePath = p.join(Directory.systemTemp.path, 'gitbin_worktrees',
       '${repoName}_work_$shortSha');
   final worktreeDir = Directory(worktreePath);
+  print("worktreeDir=$worktreeDir");
 
   if (!await worktreeDir.parent.exists()) {
     await worktreeDir.parent.create(recursive: true);
   }
 
-  // 1. Checkout parent commit to worktree
+  // 1. Export snapshot to temp dir using git archive
+  // This avoids "git worktree" issues with nested .git directories on Windows
   if (!await worktreeDir.exists()) {
-    print('Creating worktree for $commitId...');
-    final res = await Process.run(
-      'git',
-      ['worktree', 'add', '-d', worktreePath, commitId],
-      workingDirectory: effectiveRepoPath,
-    );
-    if (res.exitCode != 0) {
-      await Process.run('git', ['worktree', 'prune'],
-          workingDirectory: effectiveRepoPath);
-      final res2 = await Process.run(
+    print('Exporting snapshot for $commitId to $worktreePath...');
+    await worktreeDir.create(recursive: true);
+    
+    // Use git archive to pipe directly to tar/zip extraction
+    // Since we are on Windows, piping is tricky. Let's write to a temp zip file.
+    final tempZip = File(p.join(Directory.systemTemp.path, 'snap_${shortSha}.zip'));
+    
+    try {
+      final res = await Process.run(
         'git',
-        ['worktree', 'add', '-d', worktreePath, commitId],
+        ['archive', '--format=zip', '-o', tempZip.path, commitId],
         workingDirectory: effectiveRepoPath,
       );
-      if (res2.exitCode != 0) {
-        throw Exception(
-            'Failed to create worktree: ${res.stderr} ${res2.stderr}');
+
+      if (res.exitCode != 0) {
+        throw Exception('Failed to create snapshot archive: ${res.stderr}');
+      }
+
+      // Unzip
+      final unzipRes = await Process.run('powershell', [
+          '-Command',
+          'Expand-Archive -Path "${tempZip.path}" -DestinationPath "${worktreeDir.path}" -Force'
+        ]);
+
+      if (unzipRes.exitCode != 0) {
+         throw Exception('Failed to unzip snapshot: ${unzipRes.stderr}');
+      }
+
+    } finally {
+      if (await tempZip.exists()) {
+        await tempZip.delete();
       }
     }
   }
@@ -224,6 +240,8 @@ Future<GraphResponse> _getGraphFromGitDir(String gitDir, {int? limit}) async {
   if (res.exitCode != 0) throw Exception('Git log failed: ${res.stderr}');
 
   final lines = LineSplitter.split(res.stdout as String).toList();
+    Map<String, List<String>> chains, String? current) {
+  final lines = LineSplitter.split(stdout).toList();
   final commits = <CommitNode>[];
   for (final l in lines) {
     if (l.trim().isEmpty) continue;
@@ -352,20 +370,36 @@ Future<List<int>> previewBackupChildDoc(
   }
 
   if (!await worktreeDir.exists()) {
-    final res = await Process.run(
-      'git',
-      ['worktree', 'add', '-d', worktreePath, commitId],
-      workingDirectory: effectiveRepoPath,
-    );
-    if (res.exitCode != 0) {
-      await Process.run('git', ['worktree', 'prune'],
-          workingDirectory: effectiveRepoPath);
-      await Process.run(
-        'git',
-        ['worktree', 'add', '-d', worktreePath, commitId],
-        workingDirectory: effectiveRepoPath,
-      );
-    }
+     print('Exporting snapshot for doc preview $commitId to $worktreePath...');
+     await worktreeDir.create(recursive: true);
+     
+     final tempZip = File(p.join(Directory.systemTemp.path, 'snap_doc_${shortSha}.zip'));
+     
+     try {
+       final res = await Process.run(
+         'git',
+         ['archive', '--format=zip', '-o', tempZip.path, commitId],
+         workingDirectory: effectiveRepoPath,
+       );
+
+       if (res.exitCode != 0) {
+         throw Exception('Failed to create snapshot archive: ${res.stderr}');
+       }
+
+       final unzipRes = await Process.run('powershell', [
+           '-Command',
+           'Expand-Archive -Path "${tempZip.path}" -DestinationPath "${worktreeDir.path}" -Force'
+         ]);
+
+       if (unzipRes.exitCode != 0) {
+          throw Exception('Failed to unzip snapshot: ${unzipRes.stderr}');
+       }
+
+     } finally {
+       if (await tempZip.exists()) {
+         await tempZip.delete();
+       }
+     }
   }
 
   final childGitDir = await _findChildGitDir(worktreePath);
