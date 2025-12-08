@@ -5,3 +5,4 @@
 5. 在merge之后，如果Amerge到了B，而A执行了硬回退，那么merge的合并边会显示错误
 6. commit和reset后要自动刷新仓库
 7. 查找相同版本组件失灵
+8. 设置core.autocrlf=false，防止Linux和Windows转换出现问题
