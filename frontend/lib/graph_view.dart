@@ -11,6 +11,7 @@ class GraphPainter extends CustomPainter {
   final WorkingState? working;
   final Set<String> selectedNodes;
   final List<String>? identicalCommitIds;
+  final Map<String, int>? customRowMapping; // New field
   static const double nodeRadius = 6;
 
   GraphPainter(
@@ -22,6 +23,7 @@ class GraphPainter extends CustomPainter {
     this.working,
     required this.selectedNodes,
     this.identicalCommitIds,
+    this.customRowMapping,
   });
 
   static const List<Color> lanePalette = [
@@ -68,7 +70,11 @@ class GraphPainter extends CustomPainter {
 
     for (var i = 0; i < commits.length; i++) {
       final c = commits[i];
-      rowOf[c.id] = i;
+      if (customRowMapping != null && customRowMapping!.containsKey(c.id)) {
+        rowOf[c.id] = customRowMapping![c.id]!;
+      } else {
+        rowOf[c.id] = i;
+      }
     }
 
     String? currentHeadId;
@@ -436,6 +442,7 @@ class SimpleGraphView extends StatefulWidget {
   final bool readOnly;
   final Function(String)? onPreviewCommit;
   final TransformationController? transformationController;
+  final Map<String, int>? customRowMapping;
 
   const SimpleGraphView({
     super.key,
@@ -443,6 +450,7 @@ class SimpleGraphView extends StatefulWidget {
     this.readOnly = false,
     this.onPreviewCommit,
     this.transformationController,
+    this.customRowMapping,
   });
 
   @override
@@ -513,6 +521,7 @@ class _SimpleGraphViewState extends State<SimpleGraphView> {
                 _rowHeight,
                 working: null,
                 selectedNodes: _selectedNodes,
+                customRowMapping: widget.customRowMapping,
               ),
               size: _canvasSize!,
             ),

@@ -426,6 +426,37 @@ Future<List<Branch>> _getBranchesFromGitDir(String gitDir) async {
   return result;
 }
 
+Future<GraphResponse> getBackupGraph(String repoName, String commitId) async {
+  // Use cached snapshot
+  final snapshotPath = p.join(_checkoutBaseDir, repoName, commitId);
+  final snapshotDir = Directory(snapshotPath);
+
+  if (!await snapshotDir.exists()) {
+    throw Exception('Snapshot not found for $commitId. Try refreshing list.');
+  }
+
+  // The snapshot directory contains the child repo contents directly
+  // It might be a normal repo (with .git) or bare-ish
+  String gitDir = snapshotPath;
+  if (await Directory(p.join(snapshotPath, '.git')).exists()) {
+    gitDir = p.join(snapshotPath, '.git');
+  } else {
+    // Check if it looks like a bare repo/embedded git dir
+    if (!await File(p.join(snapshotPath, 'HEAD')).exists()) {
+      // Maybe inside a subdir?
+      final subs = snapshotDir.listSync().whereType<Directory>();
+      for (final s in subs) {
+        if (await Directory(p.join(s.path, '.git')).exists()) {
+          gitDir = p.join(s.path, '.git');
+          break;
+        }
+      }
+    }
+  }
+
+  return _getGraphFromGitDir(gitDir);
+}
+
 Future<Map<String, List<String>>> _getBranchChainsFromGitDir(
     String gitDir, List<Branch> branches,
     {int? limit}) async {
