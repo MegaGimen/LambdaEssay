@@ -64,6 +64,49 @@ Future<List<Map<String, dynamic>>> listBackupCommits(String repoName,
 }
 
 Future<void> _precacheSnapshots(String repoName, String repoPath) async {
+  // New logic for pre-exploded snapshots
+  final dir = Directory(repoPath);
+  if (await dir.exists()) {
+    final entities = dir.listSync();
+    final snapshotDirs = entities.whereType<Directory>().where((d) {
+      return p.basename(d.path).contains('_son-');
+    }).toList();
+
+    if (snapshotDirs.isNotEmpty) {
+      print('Found ${snapshotDirs.length} snapshots.');
+      final checkoutRoot = Directory(p.join(_checkoutBaseDir, repoName));
+      if (!await checkoutRoot.exists()) {
+        await checkoutRoot.create(recursive: true);
+      }
+
+      for (final d in snapshotDirs) {
+        final name = p.basename(d.path);
+        final parts = name.split('_son-');
+        if (parts.length < 2) continue;
+        final commitId = parts.last;
+
+        final targetDir = Directory(p.join(checkoutRoot.path, commitId));
+        if (await targetDir.exists()) {
+          await targetDir.delete(recursive: true);
+        }
+        
+        try {
+          await d.rename(targetDir.path);
+        } catch (e) {
+          await Process.run('powershell', [
+            '-Command',
+            'Copy-Item -Path "${d.path}" -Destination "${targetDir.path}" -Recurse -Force'
+          ]);
+          await d.delete(recursive: true);
+        }
+        
+        await Process.run('git', ['init', '--bare', '.'], workingDirectory: targetDir.path);
+      }
+      return;
+    }
+  }
+
+  /*
   // Get all commit hashes
   final res = await Process.run('git', ['log', '--format=%H'],
       workingDirectory: repoPath);
@@ -163,6 +206,7 @@ await targetoutputFile.writeAsString(targetDirstdoutOutput);
   //Restore master
   //await Process.run('git', ['checkout', '-f', 'master'],
   //  workingDirectory: repoPath);
+  */
 }
 
 Future<List<Map<String, dynamic>>> _getCommitsFromDir(String repoPath) async {
@@ -178,6 +222,26 @@ Future<List<Map<String, dynamic>>> _getCommitsFromDir(String repoPath) async {
   );
 
   if (result.exitCode != 0) {
+    // Fallback: Check for cached snapshots in _checkoutBaseDir
+    final repoName = p.basename(repoPath);
+    final cachedRepoDir = Directory(p.join(_checkoutBaseDir, repoName));
+    if (await cachedRepoDir.exists()) {
+       final subs = cachedRepoDir.listSync().whereType<Directory>();
+       final commits = <Map<String, dynamic>>[];
+       for (final d in subs) {
+          final id = p.basename(d.path);
+          commits.add({
+             'id': id,
+             'parents': [],
+             'refs': [],
+             'author': 'Unknown',
+             'date': DateTime.now().toIso8601String(), 
+             'subject': 'Snapshot $id',
+          });
+       }
+       return commits;
+    }
+
     var stackTrace = StackTrace.current;
     print('调用栈信息：');
     print(stackTrace);
@@ -216,10 +280,19 @@ Future<String> _findEffectiveRepoPath(String repoName) async {
   if (await Directory(p.join(repoDir, '.git')).exists()) {
     return repoDir;
   }
+
+  // Check if we have snapshot folders (pre-exploded)
+  final dir = Directory(repoDir);
+  if (await dir.exists()) {
+    final subs = dir.listSync().whereType<Directory>();
+    if (subs.any((d) => p.basename(d.path).contains('_son-'))) {
+      return repoDir;
+    }
+  }
+
   final subs = Directory(repoDir).listSync().whereType<Directory>().toList();
   print("subs=$subs");
-  if (subs.length == 1 &&
-      await Directory(p.join(subs.first.path, '.git')).exists()) {
+  if (subs.length == 1) {
     return subs.first.path;
   }
   throw Exception('Parent repository not found');
