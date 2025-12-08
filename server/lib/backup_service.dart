@@ -60,7 +60,7 @@ Future<List<Map<String, dynamic>>> listBackupCommits(String repoName,
   final effectiveRepoPath = await _findEffectiveRepoPath(repoName);
   await _precacheSnapshots(repoName, effectiveRepoPath);
 
-  return _getCommitsFromDir(effectiveRepoPath);
+  return _getCommitsFromDir(effectiveRepoPath, repoName);
 }
 
 Future<void> _precacheSnapshots(String repoName, String repoPath) async {
@@ -209,7 +209,29 @@ await targetoutputFile.writeAsString(targetDirstdoutOutput);
   */
 }
 
-Future<List<Map<String, dynamic>>> _getCommitsFromDir(String repoPath) async {
+Future<List<Map<String, dynamic>>> _getCommitsFromDir(String repoPath, String repoName) async {
+  // Check for cached snapshots first (Snapshot Mode)
+  final cachedRepoDir = Directory(p.join(_checkoutBaseDir, repoName));
+  if (await cachedRepoDir.exists()) {
+    final subs = cachedRepoDir.listSync().whereType<Directory>().toList();
+    if (subs.isNotEmpty) {
+      // We are in snapshot mode
+      final commits = <Map<String, dynamic>>[];
+      for (final d in subs) {
+          final id = p.basename(d.path);
+          commits.add({
+            'id': id,
+            'parents': [],
+            'refs': [],
+            'author': 'Snapshot',
+            'date': DateTime.now().toIso8601String(), 
+            'subject': 'Snapshot $id',
+          });
+      }
+      return commits;
+    }
+  }
+
   final result = await Process.run(
     'git',
     [
@@ -222,30 +244,11 @@ Future<List<Map<String, dynamic>>> _getCommitsFromDir(String repoPath) async {
   );
 
   if (result.exitCode != 0) {
-    // Fallback: Check for cached snapshots in _checkoutBaseDir
-    final repoName = p.basename(repoPath);
-    final cachedRepoDir = Directory(p.join(_checkoutBaseDir, repoName));
-    if (await cachedRepoDir.exists()) {
-       final subs = cachedRepoDir.listSync().whereType<Directory>();
-       final commits = <Map<String, dynamic>>[];
-       for (final d in subs) {
-          final id = p.basename(d.path);
-          commits.add({
-             'id': id,
-             'parents': [],
-             'refs': [],
-             'author': 'Unknown',
-             'date': DateTime.now().toIso8601String(), 
-             'subject': 'Snapshot $id',
-          });
-       }
-       return commits;
-    }
-
+    // If git log failed and we didn't find snapshots above, it's a real error
     var stackTrace = StackTrace.current;
     print('调用栈信息：');
     print(stackTrace);
-    throw Exception('Git log failed: ${result.stderr}');
+    throw Exception('Git log failed and no snapshots found: ${result.stderr}');
   }
 
   final lines = (result.stdout as String).split('\n');
@@ -279,6 +282,12 @@ Future<String> _findEffectiveRepoPath(String repoName) async {
   print("repodir=$repoDir");
   if (await Directory(p.join(repoDir, '.git')).exists()) {
     return repoDir;
+  }
+
+  // Check if we have already cached snapshots in _checkoutBaseDir
+  final checkoutDir = Directory(p.join(_checkoutBaseDir, repoName));
+  if (await checkoutDir.exists() && checkoutDir.listSync().isNotEmpty) {
+    return repoDir; // Return this even if empty, as we have cached data
   }
 
   // Check if we have snapshot folders (pre-exploded)
