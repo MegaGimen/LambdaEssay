@@ -6,13 +6,18 @@ import 'visualize.dart'; // For VisualizeDocxPage
 import 'graph_view.dart'; // For SimpleGraphView
 
 class BackupPage extends StatefulWidget {
-  const BackupPage({super.key});
+  final String projectName;
+  final String repoPath;
+  const BackupPage({
+    super.key,
+    required this.projectName,
+    required this.repoPath,
+  });
   @override
   State<BackupPage> createState() => _BackupPageState();
 }
 
 class _BackupPageState extends State<BackupPage> {
-  final TextEditingController _repoCtrl = TextEditingController();
   final TextEditingController _authorCtrl = TextEditingController();
   DateTime? _startDate;
   DateTime? _endDate;
@@ -22,8 +27,17 @@ class _BackupPageState extends State<BackupPage> {
 
   List<CommitNode> _commits = [];
   final Map<String, GraphData> _graphs = {};
+  GraphData? _currentLocalGraph;
+  final TransformationController _sharedTc = TransformationController();
 
   static const String backupBase = 'http://localhost:8080';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadBackups();
+    _loadCurrentLocalGraph();
+  }
 
   Future<void> _pickStart() async {
     final d = await showDatePicker(
@@ -46,9 +60,9 @@ class _BackupPageState extends State<BackupPage> {
   }
 
   Future<void> _loadBackups() async {
-    final repo = _repoCtrl.text.trim();
+    final repo = widget.projectName;
     if (repo.isEmpty) {
-      setState(() => _error = '请输入仓库名称');
+      setState(() => _error = '项目名称为空');
       return;
     }
     setState(() {
@@ -88,6 +102,27 @@ class _BackupPageState extends State<BackupPage> {
         _error = e.toString();
         _loading = false;
       });
+    }
+  }
+
+  Future<void> _loadCurrentLocalGraph() async {
+    try {
+      final resp = await http.post(
+        Uri.parse('$backupBase/graph'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'repoPath': widget.repoPath, 'limit': 100}),
+      );
+      if (resp.statusCode != 200) {
+        throw Exception('Failed to load local graph: ${resp.body}');
+      }
+      final j = jsonDecode(resp.body) as Map<String, dynamic>;
+      final gd = GraphData.fromJson(j);
+      if (!mounted) return;
+      setState(() {
+        _currentLocalGraph = gd;
+      });
+    } catch (e) {
+      debugPrint('Error loading local graph: $e');
     }
   }
 
@@ -161,28 +196,16 @@ class _BackupPageState extends State<BackupPage> {
 
   @override
   Widget build(BuildContext context) {
-    final repo = _repoCtrl.text.trim();
+    final repo = widget.projectName;
     final commits = _filtered();
     return Scaffold(
-      appBar: AppBar(title: const Text('历史备份预览')),
+      appBar: AppBar(title: Text('历史备份预览: $repo')),
       body: Column(
         children: [
           Padding(
             padding: const EdgeInsets.all(8),
             child: Row(
               children: [
-                Expanded(
-                  child: TextField(
-                    controller: _repoCtrl,
-                    decoration: const InputDecoration(labelText: '仓库名称'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                  onPressed: _loading ? null : _loadBackups,
-                  child: const Text('加载备份'),
-                ),
-                const SizedBox(width: 8),
                 Expanded(
                   child: TextField(
                     controller: _authorCtrl,
@@ -262,23 +285,59 @@ class _BackupPageState extends State<BackupPage> {
                               const SizedBox(height: 12),
                               if (hasGraph)
                                 Center(
-                                  child: Container(
-                                    width: 600,
-                                    height: 600,
-                                    decoration: BoxDecoration(
-                                      border: Border.all(color: Colors.black),
-                                    ),
-                                    child: MouseRegion(
-                                      onEnter: (_) => setState(() => _graphHovering = true),
-                                      onExit: (_) => setState(() => _graphHovering = false),
-                                      child: SimpleGraphView(
-                                        data: _graphs[sha]!,
-                                        readOnly: true,
-                                        onPreviewCommit: (commitId) async {
-                                          await _previewDoc(repo, commitId);
-                                        },
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      // Backup Graph
+                                      Column(
+                                        children: [
+                                          const Text("备份版本"),
+                                          Container(
+                                            width: 500,
+                                            height: 500,
+                                            decoration: BoxDecoration(
+                                              border: Border.all(color: Colors.black),
+                                            ),
+                                            child: MouseRegion(
+                                              onEnter: (_) => setState(() => _graphHovering = true),
+                                              onExit: (_) => setState(() => _graphHovering = false),
+                                              child: SimpleGraphView(
+                                                data: _graphs[sha]!,
+                                                readOnly: true,
+                                                onPreviewCommit: (commitId) async {
+                                                  await _previewDoc(repo, commitId);
+                                                },
+                                                transformationController: _sharedTc,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
                                       ),
-                                    ),
+                                      const SizedBox(width: 20),
+                                      // Local Graph
+                                      if (_currentLocalGraph != null)
+                                        Column(
+                                          children: [
+                                            const Text("当前本地状态"),
+                                            Container(
+                                              width: 500,
+                                              height: 500,
+                                              decoration: BoxDecoration(
+                                                border: Border.all(color: Colors.black),
+                                              ),
+                                              child: MouseRegion(
+                                                onEnter: (_) => setState(() => _graphHovering = true),
+                                                onExit: (_) => setState(() => _graphHovering = false),
+                                                child: SimpleGraphView(
+                                                  data: _currentLocalGraph!,
+                                                  readOnly: true,
+                                                  transformationController: _sharedTc,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                    ],
                                   ),
                                 )
                               else

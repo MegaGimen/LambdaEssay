@@ -435,12 +435,14 @@ class SimpleGraphView extends StatefulWidget {
   final GraphData data;
   final bool readOnly;
   final Function(String)? onPreviewCommit;
+  final TransformationController? transformationController;
 
   const SimpleGraphView({
     super.key,
     required this.data,
     this.readOnly = false,
     this.onPreviewCommit,
+    this.transformationController,
   });
 
   @override
@@ -448,12 +450,27 @@ class SimpleGraphView extends StatefulWidget {
 }
 
 class _SimpleGraphViewState extends State<SimpleGraphView> {
-  final TransformationController _tc = TransformationController();
+  late TransformationController _tc;
   double _laneWidth = 120;
   double _rowHeight = 160;
   Size? _canvasSize;
   Map<String, Color>? _branchColors;
   final Set<String> _selectedNodes = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _tc = widget.transformationController ?? TransformationController();
+  }
+
+  @override
+  void didUpdateWidget(covariant SimpleGraphView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.transformationController != null &&
+        widget.transformationController != oldWidget.transformationController) {
+      _tc = widget.transformationController!;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
