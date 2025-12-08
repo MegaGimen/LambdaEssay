@@ -18,6 +18,7 @@ class _BackupPageState extends State<BackupPage> {
   DateTime? _endDate;
   bool _loading = false;
   String? _error;
+  bool _graphHovering = false;
 
   List<CommitNode> _commits = [];
   final Map<String, GraphData> _graphs = {};
@@ -77,6 +78,11 @@ class _BackupPageState extends State<BackupPage> {
         _commits = commits;
         _loading = false;
       });
+      for (final c in commits) {
+        _ensureGraph(repo, c.id).catchError((e) {
+          debugPrint('Failed to load graph for ${c.id}: $e');
+        });
+      }
     } catch (e) {
       setState(() {
         _error = e.toString();
@@ -119,6 +125,7 @@ class _BackupPageState extends State<BackupPage> {
     }
     final j = jsonDecode(resp.body) as Map<String, dynamic>;
     final gd = GraphData.fromJson(j);
+    if (!mounted) return;
     setState(() {
       _graphs[sha] = gd;
     });
@@ -215,6 +222,9 @@ class _BackupPageState extends State<BackupPage> {
                         ? const CircularProgressIndicator()
                         : const Text('无数据'))
                 : ListView.builder(
+                    physics: _graphHovering
+                        ? const NeverScrollableScrollPhysics()
+                        : const ClampingScrollPhysics(),
                     itemCount: commits.length,
                     itemBuilder: (ctx, i) {
                       final c = commits[i];
@@ -247,34 +257,34 @@ class _BackupPageState extends State<BackupPage> {
                                     child: const Text('预览docx'),
                                   ),
                                   const SizedBox(width: 8),
-                                  ElevatedButton(
-                                    onPressed: repo.isEmpty
-                                        ? null
-                                        : () async {
-                                            try {
-                                              await _ensureGraph(repo, sha);
-                                            } catch (e) {
-                                              ScaffoldMessenger.of(context)
-                                                  .showSnackBar(SnackBar(
-                                                      content:
-                                                          Text('加载图失败: $e')));
-                                            }
-                                          },
-                                    child: Text(hasGraph ? '已加载' : '加载图'),
-                                  ),
                                 ],
                               ),
                               const SizedBox(height: 12),
                               if (hasGraph)
-                                SizedBox(
-                                  height: 600,
-                                  child: SimpleGraphView(
-                                    data: _graphs[sha]!,
-                                    readOnly: true,
-                                    onPreviewCommit: (commitId) async {
-                                      await _previewDoc(repo, commitId);
-                                    },
+                                Center(
+                                  child: Container(
+                                    width: 600,
+                                    height: 600,
+                                    decoration: BoxDecoration(
+                                      border: Border.all(color: Colors.black),
+                                    ),
+                                    child: MouseRegion(
+                                      onEnter: (_) => setState(() => _graphHovering = true),
+                                      onExit: (_) => setState(() => _graphHovering = false),
+                                      child: SimpleGraphView(
+                                        data: _graphs[sha]!,
+                                        readOnly: true,
+                                        onPreviewCommit: (commitId) async {
+                                          await _previewDoc(repo, commitId);
+                                        },
+                                      ),
+                                    ),
                                   ),
+                                )
+                              else
+                                const SizedBox(
+                                  height: 100,
+                                  child: Center(child: CircularProgressIndicator()),
                                 ),
                             ],
                           ),

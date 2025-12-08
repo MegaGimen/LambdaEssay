@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'models.dart';
 
@@ -459,35 +460,45 @@ class _SimpleGraphViewState extends State<SimpleGraphView> {
     _canvasSize ??= _computeCanvasSize(widget.data);
     _branchColors ??= _assignBranchColors(widget.data.branches);
 
-    return InteractiveViewer(
-      transformationController: _tc,
-      minScale: 0.2,
-      maxScale: 4,
-      constrained: false,
-      boundaryMargin: const EdgeInsets.all(2000),
-      child: GestureDetector(
-        onTapUp: (d) {
-          if (widget.readOnly && widget.onPreviewCommit != null) {
-            final hit = _hitTest(d.localPosition, widget.data);
-            if (hit != null) {
-              widget.onPreviewCommit!(hit.id);
+    return Listener(
+      onPointerSignal: (event) {
+        if (event is PointerScrollEvent) {
+          final double scaleChange = event.scrollDelta.dy < 0 ? 1.1 : 0.9;
+          final Matrix4 matrix = _tc.value.clone();
+          matrix.scale(scaleChange);
+          _tc.value = matrix;
+        }
+      },
+      child: InteractiveViewer(
+        transformationController: _tc,
+        minScale: 0.2,
+        maxScale: 4,
+        constrained: false,
+        boundaryMargin: const EdgeInsets.all(2000),
+        child: GestureDetector(
+          onTapUp: (d) {
+            if (widget.readOnly && widget.onPreviewCommit != null) {
+              final hit = _hitTest(d.localPosition, widget.data);
+              if (hit != null) {
+                widget.onPreviewCommit!(hit.id);
+              }
             }
-          }
-        },
-        child: SizedBox(
-          width: _canvasSize!.width,
-          height: _canvasSize!.height,
-          child: CustomPaint(
-            painter: GraphPainter(
-              widget.data,
-              _branchColors!,
-              null,
-              _laneWidth,
-              _rowHeight,
-              working: null,
-              selectedNodes: _selectedNodes,
+          },
+          child: SizedBox(
+            width: _canvasSize!.width,
+            height: _canvasSize!.height,
+            child: CustomPaint(
+              painter: GraphPainter(
+                widget.data,
+                _branchColors!,
+                null,
+                _laneWidth,
+                _rowHeight,
+                working: null,
+                selectedNodes: _selectedNodes,
+              ),
+              size: _canvasSize!,
             ),
-            size: _canvasSize!,
           ),
         ),
       ),
