@@ -199,7 +199,18 @@ class _BackupPageState extends State<BackupPage> {
     final repo = widget.projectName;
     final commits = _filtered();
     return Scaffold(
-      appBar: AppBar(title: Text('历史备份预览: $repo')),
+      appBar: AppBar(
+        title: Text('历史备份预览: $repo'),
+        actions: [
+          IconButton(
+            onPressed: () {
+              _sharedTc.value = Matrix4.identity();
+            },
+            tooltip: '返回主视角',
+            icon: const Icon(Icons.center_focus_strong),
+          ),
+        ],
+      ),
       body: Column(
         children: [
           Padding(
@@ -273,12 +284,13 @@ class _BackupPageState extends State<BackupPage> {
                                   const SizedBox(width: 12),
                                   Text('时间: ${c.date}'),
                                   const Spacer(),
-                                  OutlinedButton(
-                                    onPressed: repo.isEmpty
-                                        ? null
-                                        : () => _previewDoc(repo, sha),
-                                    child: const Text('预览docx'),
-                                  ),
+                                  // 禁用预览docx按钮
+                                  // OutlinedButton(
+                                  //   onPressed: repo.isEmpty
+                                  //       ? null
+                                  //       : () => _previewDoc(repo, sha),
+                                  //   child: const Text('预览docx'),
+                                  // ),
                                   const SizedBox(width: 8),
                                 ],
                               ),
@@ -304,9 +316,7 @@ class _BackupPageState extends State<BackupPage> {
                                               child: SimpleGraphView(
                                                 data: _graphs[sha]!,
                                                 readOnly: true,
-                                                onPreviewCommit: (commitId) async {
-                                                  await _previewDoc(repo, commitId);
-                                                },
+                                                onPreviewCommit: null, // 禁用分支选择/预览交互
                                                 transformationController: _sharedTc,
                                               ),
                                             ),
