@@ -3,9 +3,15 @@ import 'dart:convert';
 import 'package:path/path.dart' as p;
 import 'package:http/http.dart' as http;
 import 'models.dart';
-
+String _baseDir() {
+  final app = Platform.environment['APPDATA'];
+  if (app != null && app.isNotEmpty) return p.join(app, 'gitdocx_history_cache');
+  final home = Platform.environment['HOME'] ?? '';
+  if (home.isNotEmpty) return p.join(home, '.gitdocx_history_cachex');
+  return p.join(Directory.systemTemp.path, 'gitdocx_history_cache');
+}
 final String _backupBaseUrl = 'http://47.242.109.145:4829';
-final String _tempDirName = 'temp_backups';
+final String _tempDirName = p.join(_baseDir(),'temp_backups');
 
 // New checkout base directory
 final String _checkoutBaseDir =
