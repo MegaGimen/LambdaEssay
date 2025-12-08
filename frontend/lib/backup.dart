@@ -30,6 +30,10 @@ class _BackupPageState extends State<BackupPage> {
   GraphData? _currentLocalGraph;
   final TransformationController _sharedTc = TransformationController();
 
+  Map<String, int>? _localRowMapping;
+  bool _compareMode = false;
+  final Set<String> _selectedCommits = {};
+
   static const String backupBase = 'http://localhost:8080';
 
   @override
@@ -37,6 +41,18 @@ class _BackupPageState extends State<BackupPage> {
     super.initState();
     _loadBackups();
     _loadCurrentLocalGraph();
+  }
+
+  // Calculate row mapping from local graph to align backup graphs
+  void _computeLocalRowMapping() {
+    if (_currentLocalGraph == null) return;
+    final mapping = <String, int>{};
+    for (var i = 0; i < _currentLocalGraph!.commits.length; i++) {
+      mapping[_currentLocalGraph!.commits[i].id] = i;
+    }
+    setState(() {
+      _localRowMapping = mapping;
+    });
   }
 
   Future<void> _pickStart() async {
@@ -121,6 +137,7 @@ class _BackupPageState extends State<BackupPage> {
       setState(() {
         _currentLocalGraph = gd;
       });
+      _computeLocalRowMapping();
     } catch (e) {
       debugPrint('Error loading local graph: $e');
     }
@@ -194,6 +211,56 @@ class _BackupPageState extends State<BackupPage> {
     }
   }
 
+  Future<void> _compareTwoCommits() async {
+    if (_selectedCommits.length != 2) return;
+    final ids = _selectedCommits.toList();
+    final cA = ids[0];
+    final cB = ids[1];
+
+    setState(() => _loading = true);
+    try {
+      final resp = await http.post(
+        Uri.parse('$backupBase/compare'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'repoName': widget.projectName,
+          'commitA': cA,
+          'commitB': cB,
+          'localPath': widget.repoPath,
+        }),
+      );
+
+      setState(() => _loading = false);
+      if (resp.statusCode != 200) {
+        throw Exception('对比失败: ${resp.body}');
+      }
+
+      final j = jsonDecode(resp.body);
+      final gA = GraphData.fromJson(j['graphA']);
+      final gB = GraphData.fromJson(j['graphB']);
+      final rawMapping = j['unifiedRowMapping'] as Map<String, dynamic>;
+      final mapping = rawMapping.map((k, v) => MapEntry(k, v as int));
+
+      if (!mounted) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => CompareResultPage(
+            graphA: gA,
+            graphB: gB,
+            rowMapping: mapping,
+            title: '对比: ${cA.substring(0, 7)} vs ${cB.substring(0, 7)}',
+          ),
+        ),
+      );
+    } catch (e) {
+      setState(() {
+        _loading = false;
+        _error = e.toString();
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final repo = widget.projectName;
@@ -241,6 +308,25 @@ class _BackupPageState extends State<BackupPage> {
                         : _endDate!.toIso8601String().substring(0, 10),
                   ),
                 ),
+                const SizedBox(width: 8),
+                ElevatedButton.icon(
+                  onPressed: () {
+                    setState(() {
+                      _compareMode = !_compareMode;
+                      _selectedCommits.clear();
+                    });
+                  },
+                  icon: Icon(_compareMode ? Icons.close : Icons.compare_arrows),
+                  label: Text(_compareMode ? '退出对比' : '仓库比较'),
+                ),
+                if (_compareMode && _selectedCommits.length == 2) ...[
+                  const SizedBox(width: 8),
+                  ElevatedButton(
+                    onPressed: _compareTwoCommits,
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                    child: const Text('开始比较'),
+                  ),
+                ],
               ],
             ),
           ),
@@ -274,6 +360,20 @@ class _BackupPageState extends State<BackupPage> {
                             children: [
                               Row(
                                 children: [
+                                  if (_compareMode)
+                                    Checkbox(
+                                      value: _selectedCommits.contains(sha),
+                                      onChanged: (v) {
+                                        setState(() {
+                                          if (v == true) {
+                                            if (_selectedCommits.length >= 2) return;
+                                            _selectedCommits.add(sha);
+                                          } else {
+                                            _selectedCommits.remove(sha);
+                                          }
+                                        });
+                                      },
+                                    ),
                                   Text(
                                     '${c.id.substring(0, 7)}  ${c.subject}',
                                     style: const TextStyle(
@@ -318,6 +418,7 @@ class _BackupPageState extends State<BackupPage> {
                                                 readOnly: true,
                                                 onPreviewCommit: null, // 禁用分支选择/预览交互
                                                 transformationController: _sharedTc,
+                                                customRowMapping: _localRowMapping,
                                               ),
                                             ),
                                           ),
@@ -363,6 +464,82 @@ class _BackupPageState extends State<BackupPage> {
                   ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class CompareResultPage extends StatefulWidget {
+  final GraphData graphA;
+  final GraphData graphB;
+  final Map<String, int> rowMapping;
+  final String title;
+
+  const CompareResultPage({
+    super.key,
+    required this.graphA,
+    required this.graphB,
+    required this.rowMapping,
+    required this.title,
+  });
+
+  @override
+  State<CompareResultPage> createState() => _CompareResultPageState();
+}
+
+class _CompareResultPageState extends State<CompareResultPage> {
+  final TransformationController _tc = TransformationController();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.title)),
+      body: Center(
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Column(
+                children: [
+                  const Text("Commit A"),
+                  Container(
+                    width: 600,
+                    height: 800,
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.black),
+                    ),
+                    child: SimpleGraphView(
+                      data: widget.graphA,
+                      readOnly: true,
+                      transformationController: _tc,
+                      customRowMapping: widget.rowMapping,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(width: 20),
+              Column(
+                children: [
+                  const Text("Commit B"),
+                  Container(
+                    width: 600,
+                    height: 800,
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.black),
+                    ),
+                    child: SimpleGraphView(
+                      data: widget.graphB,
+                      readOnly: true,
+                      transformationController: _tc,
+                      customRowMapping: widget.rowMapping,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
