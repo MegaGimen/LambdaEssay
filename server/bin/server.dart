@@ -7,7 +7,7 @@ import 'package:shelf_router/shelf_router.dart';
 import 'package:path/path.dart' as p;
 import '../lib/git_service.dart';
 import '../lib/backup_service.dart';
-import '../lib/repocmp.dart';
+import '../lib/diff/repocmp.dart';
 import 'package:http/http.dart' as http;
 
 Response _cors(Response r) {
