@@ -8,7 +8,8 @@ final String _backupBaseUrl = 'http://47.242.109.145:4829';
 final String _tempDirName = 'temp_backups';
 
 // New checkout base directory
-final String _checkoutBaseDir = p.join(Directory.systemTemp.path, 'gitbin_checkout');
+final String _checkoutBaseDir =
+    p.join(Directory.systemTemp.path, 'gitbin_checkout');
 
 String _getBackupDir(String repoName) {
   final scriptDir = p.dirname(Platform.script.toFilePath());
@@ -49,9 +50,9 @@ Future<List<Map<String, dynamic>>> listBackupCommits(String repoName,
     }
 
     // Cleanup zip
-    if (await zipFile.exists()) {
-      await zipFile.delete();
-    }
+    //if (await zipFile.exists()) {
+    // await zipFile.delete();
+    //}
   }
 
   // Pre-cache all snapshots logic
@@ -89,13 +90,13 @@ Future<void> _precacheSnapshots(String repoName, String repoPath) async {
     }
 
     print('Caching snapshot for $commitId...');
-    
+    print("repoPath=$repoPath");
     // Checkout commit in the parent repo
     final checkoutRes = await Process.run('git', ['checkout', '-f', commitId],
         workingDirectory: repoPath);
     if (checkoutRes.exitCode != 0) {
       print('Failed to checkout $commitId: ${checkoutRes.stderr}');
-      continue; 
+      continue;
     }
 
     // Identify child directory in the checked out state
@@ -106,18 +107,19 @@ Future<void> _precacheSnapshots(String repoName, String repoPath) async {
     await for (final entity in parentDir.list(recursive: false)) {
       if (entity is Directory) {
         if (p.basename(entity.path) == '.git') continue;
-        
+
         // Check if this directory looks like a git repo (bare or normal)
         // Normal: has .git subdirectory
         // Bare-ish/Embedded: has HEAD, config, objects, refs
         if (await Directory(p.join(entity.path, '.git')).exists()) {
-           childPath = entity.path; // Normal repo structure
-           break;
+          childPath = entity.path; // Normal repo structure
+          break;
         } else if (await File(p.join(entity.path, 'HEAD')).exists() &&
             await File(p.join(entity.path, 'config')).exists() &&
             await Directory(p.join(entity.path, 'objects')).exists()) {
-           childPath = entity.path; // Bare/Embedded structure
-           break;
+          print("bare");
+          childPath = entity.path; // Bare/Embedded structure
+          break;
         }
       }
     }
@@ -130,19 +132,38 @@ Future<void> _precacheSnapshots(String repoName, String repoPath) async {
         '-Command',
         'Copy-Item -Path "${childPath}\\*" -Destination "${targetDir.path}" -Recurse -Force'
       ]);
+      print("copied ${childPath} to ${targetDir.path}");
+      final childPath_hashRes = await Process.run('powershell', ['-Command', 'hash-files "${childPath}"']);
+if (childPath_hashRes.exitCode != 0) {
+  stderr.writeln("hash-files 执行失败 (childPath): ${childPath_hashRes.stderr.toString()}");
+  throw Exception("hash-files 命令失败，退出码: ${childPath_hashRes.exitCode}");
+}
+final childPathstdoutOutput = childPath_hashRes.stdout.toString();
+
+final targetDir_hashRes = await Process.run('powershell', ['-Command', 'hash-files "${targetDir.path}"']);
+if (targetDir_hashRes.exitCode != 0) {
+  stderr.writeln("hash-files 执行失败 (targetDir): ${targetDir_hashRes.stderr.toString()}");
+  throw Exception("hash-files 命令失败，退出码: ${targetDir_hashRes.exitCode}");
+}
+final targetDirstdoutOutput = targetDir_hashRes.stdout.toString();
+
+final childoutputFile = File('${Directory.current.path}/child${commitId}.txt');
+final targetoutputFile = File('${Directory.current.path}/target${commitId}.txt');
+
+await childoutputFile.writeAsString(childPathstdoutOutput);
+await targetoutputFile.writeAsString(targetDirstdoutOutput);
       if (copyRes.exitCode != 0) {
-         print('Failed to copy snapshot for $commitId: ${copyRes.stderr}');
+        print('Failed to copy snapshot for $commitId: ${copyRes.stderr}');
       }
     } else {
       print('No child repo found in commit $commitId');
     }
   }
 
-  // Restore master
-  await Process.run('git', ['checkout', '-f', 'master'],
-      workingDirectory: repoPath);
+  //Restore master
+  //await Process.run('git', ['checkout', '-f', 'master'],
+  //  workingDirectory: repoPath);
 }
-
 
 Future<List<Map<String, dynamic>>> _getCommitsFromDir(String repoPath) async {
   final result = await Process.run(
@@ -218,18 +239,18 @@ Future<Map<String, dynamic>> getBackupChildGraph(
   // It might be a normal repo (with .git) or bare-ish
   String gitDir = snapshotPath;
   if (await Directory(p.join(snapshotPath, '.git')).exists()) {
-     gitDir = p.join(snapshotPath, '.git');
+    gitDir = p.join(snapshotPath, '.git');
   } else {
     // Check if it looks like a bare repo/embedded git dir
     if (!await File(p.join(snapshotPath, 'HEAD')).exists()) {
-       // Maybe inside a subdir?
-       final subs = snapshotDir.listSync().whereType<Directory>();
-       for(final s in subs) {
-          if (await Directory(p.join(s.path, '.git')).exists()) {
-             gitDir = p.join(s.path, '.git');
-             break;
-          }
-       }
+      // Maybe inside a subdir?
+      final subs = snapshotDir.listSync().whereType<Directory>();
+      for (final s in subs) {
+        if (await Directory(p.join(s.path, '.git')).exists()) {
+          gitDir = p.join(s.path, '.git');
+          break;
+        }
+      }
     }
   }
 
@@ -381,7 +402,6 @@ List<String> _parseRefs(String decoration) {
 
 Future<List<int>> previewBackupChildDoc(
     String repoName, String commitId) async {
-  
   // Use cached snapshot
   final snapshotPath = p.join(_checkoutBaseDir, repoName, commitId);
   final snapshotDir = Directory(snapshotPath);
@@ -392,8 +412,11 @@ Future<List<int>> previewBackupChildDoc(
 
   // Find docx in snapshot (it's just a folder now)
   // Recursively search for docx
-  final files = snapshotDir.listSync(recursive: true).whereType<File>().where(
-      (f) => p.extension(f.path).toLowerCase() == '.docx').toList();
+  final files = snapshotDir
+      .listSync(recursive: true)
+      .whereType<File>()
+      .where((f) => p.extension(f.path).toLowerCase() == '.docx')
+      .toList();
 
   if (files.isEmpty) {
     throw Exception('No docx file found in snapshot');
