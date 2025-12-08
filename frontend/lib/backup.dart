@@ -26,11 +26,10 @@ class _BackupPageState extends State<BackupPage> {
   bool _graphHovering = false;
 
   List<CommitNode> _commits = [];
-  final Map<String, GraphData> _graphs = {};
-  GraphData? _currentLocalGraph;
+  // Store comparison results for each backup commit vs local
+  final Map<String, ComparisonData> _comparisons = {};
   final TransformationController _sharedTc = TransformationController();
 
-  Map<String, int>? _localRowMapping;
   bool _compareMode = false;
   final Set<String> _selectedCommits = {};
 
@@ -40,19 +39,6 @@ class _BackupPageState extends State<BackupPage> {
   void initState() {
     super.initState();
     _loadBackups();
-    _loadCurrentLocalGraph();
-  }
-
-  // Calculate row mapping from local graph to align backup graphs
-  void _computeLocalRowMapping() {
-    if (_currentLocalGraph == null) return;
-    final mapping = <String, int>{};
-    for (var i = 0; i < _currentLocalGraph!.commits.length; i++) {
-      mapping[_currentLocalGraph!.commits[i].id] = i;
-    }
-    setState(() {
-      _localRowMapping = mapping;
-    });
   }
 
   Future<void> _pickStart() async {
@@ -85,7 +71,7 @@ class _BackupPageState extends State<BackupPage> {
       _loading = true;
       _error = null;
       _commits = [];
-      _graphs.clear();
+      _comparisons.clear();
     });
     try {
       final url = '$backupBase/backup/commits';
@@ -109,8 +95,8 @@ class _BackupPageState extends State<BackupPage> {
         _loading = false;
       });
       for (final c in commits) {
-        _ensureGraph(repo, c.id).catchError((e) {
-          debugPrint('Failed to load graph for ${c.id}: $e');
+        _ensureComparison(repo, c.id).catchError((e) {
+          debugPrint('Failed to load comparison for ${c.id}: $e');
         });
       }
     } catch (e) {
@@ -118,28 +104,6 @@ class _BackupPageState extends State<BackupPage> {
         _error = e.toString();
         _loading = false;
       });
-    }
-  }
-
-  Future<void> _loadCurrentLocalGraph() async {
-    try {
-      final resp = await http.post(
-        Uri.parse('$backupBase/graph'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'repoPath': widget.repoPath, 'limit': 100}),
-      );
-      if (resp.statusCode != 200) {
-        throw Exception('Failed to load local graph: ${resp.body}');
-      }
-      final j = jsonDecode(resp.body) as Map<String, dynamic>;
-      final gd = GraphData.fromJson(j);
-      if (!mounted) return;
-      setState(() {
-        _currentLocalGraph = gd;
-      });
-      _computeLocalRowMapping();
-    } catch (e) {
-      debugPrint('Error loading local graph: $e');
     }
   }
 
@@ -164,22 +128,32 @@ class _BackupPageState extends State<BackupPage> {
     }).toList();
   }
 
-  Future<void> _ensureGraph(String repo, String sha) async {
-    if (_graphs.containsKey(sha)) return;
-    final url = '$backupBase/backup/graph';
+  Future<void> _ensureComparison(String repo, String sha) async {
+    if (_comparisons.containsKey(sha)) return;
+    // Call the compare_repos API to get aligned graphs
+    final url = '$backupBase/compare_repos';
     final resp = await http.post(
       Uri.parse(url),
       headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'repoName': repo, 'commitId': sha}),
+      body: jsonEncode({
+        'repoName': repo,
+        'commitA': sha, // Backup commit
+        'commitB': 'local', // Local state
+        'localPath': widget.repoPath,
+      }),
     );
     if (resp.statusCode != 200) {
-      throw Exception('加载图失败: ${resp.body}');
+      throw Exception('加载对比失败: ${resp.body}');
     }
     final j = jsonDecode(resp.body) as Map<String, dynamic>;
-    final gd = GraphData.fromJson(j);
+    final gA = GraphData.fromJson(j['graphA']);
+    final gB = GraphData.fromJson(j['graphB']);
+    final rawMapping = j['unifiedRowMapping'] as Map<String, dynamic>;
+    final mapping = rawMapping.map((k, v) => MapEntry(k, v as int));
+
     if (!mounted) return;
     setState(() {
-      _graphs[sha] = gd;
+      _comparisons[sha] = ComparisonData(gA, gB, mapping);
     });
   }
 
@@ -220,7 +194,7 @@ class _BackupPageState extends State<BackupPage> {
     setState(() => _loading = true);
     try {
       final resp = await http.post(
-        Uri.parse('$backupBase/compare'),
+        Uri.parse('$backupBase/compare_repos'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'repoName': widget.projectName,
@@ -349,7 +323,7 @@ class _BackupPageState extends State<BackupPage> {
                     itemBuilder: (ctx, i) {
                       final c = commits[i];
                       final sha = c.id;
-                      final hasGraph = _graphs.containsKey(sha);
+                      final comparison = _comparisons[sha];
                       return Card(
                         margin: const EdgeInsets.symmetric(
                             horizontal: 12, vertical: 8),
@@ -384,18 +358,11 @@ class _BackupPageState extends State<BackupPage> {
                                   const SizedBox(width: 12),
                                   Text('时间: ${c.date}'),
                                   const Spacer(),
-                                  // 禁用预览docx按钮
-                                  // OutlinedButton(
-                                  //   onPressed: repo.isEmpty
-                                  //       ? null
-                                  //       : () => _previewDoc(repo, sha),
-                                  //   child: const Text('预览docx'),
-                                  // ),
                                   const SizedBox(width: 8),
                                 ],
                               ),
                               const SizedBox(height: 12),
-                              if (hasGraph)
+                              if (comparison != null)
                                 Center(
                                   child: Row(
                                     mainAxisAlignment: MainAxisAlignment.center,
@@ -414,11 +381,11 @@ class _BackupPageState extends State<BackupPage> {
                                               onEnter: (_) => setState(() => _graphHovering = true),
                                               onExit: (_) => setState(() => _graphHovering = false),
                                               child: SimpleGraphView(
-                                                data: _graphs[sha]!,
+                                                data: comparison.graphA,
                                                 readOnly: true,
-                                                onPreviewCommit: null, // 禁用分支选择/预览交互
+                                                onPreviewCommit: null,
                                                 transformationController: _sharedTc,
-                                                customRowMapping: _localRowMapping,
+                                                customRowMapping: comparison.mapping,
                                               ),
                                             ),
                                           ),
@@ -426,28 +393,28 @@ class _BackupPageState extends State<BackupPage> {
                                       ),
                                       const SizedBox(width: 20),
                                       // Local Graph
-                                      if (_currentLocalGraph != null)
-                                        Column(
-                                          children: [
-                                            const Text("当前本地状态"),
-                                            Container(
-                                              width: 500,
-                                              height: 500,
-                                              decoration: BoxDecoration(
-                                                border: Border.all(color: Colors.black),
-                                              ),
-                                              child: MouseRegion(
-                                                onEnter: (_) => setState(() => _graphHovering = true),
-                                                onExit: (_) => setState(() => _graphHovering = false),
-                                                child: SimpleGraphView(
-                                                  data: _currentLocalGraph!,
-                                                  readOnly: true,
-                                                  transformationController: _sharedTc,
-                                                ),
+                                      Column(
+                                        children: [
+                                          const Text("当前本地状态"),
+                                          Container(
+                                            width: 500,
+                                            height: 500,
+                                            decoration: BoxDecoration(
+                                              border: Border.all(color: Colors.black),
+                                            ),
+                                            child: MouseRegion(
+                                              onEnter: (_) => setState(() => _graphHovering = true),
+                                              onExit: (_) => setState(() => _graphHovering = false),
+                                              child: SimpleGraphView(
+                                                data: comparison.graphB,
+                                                readOnly: true,
+                                                transformationController: _sharedTc,
+                                                customRowMapping: comparison.mapping,
                                               ),
                                             ),
-                                          ],
-                                        ),
+                                          ),
+                                        ],
+                                      ),
                                     ],
                                   ),
                                 )
@@ -543,4 +510,11 @@ class _CompareResultPageState extends State<CompareResultPage> {
       ),
     );
   }
+}
+
+class ComparisonData {
+  final GraphData graphA;
+  final GraphData graphB;
+  final Map<String, int> mapping;
+  ComparisonData(this.graphA, this.graphB, this.mapping);
 }

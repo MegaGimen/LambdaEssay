@@ -222,7 +222,7 @@ Future<void> main(List<String> args) async {
     }
   });
 
-  router.post('/compare', (Request req) async {
+  router.post('/compare_repos', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
     final repoName = (data['repoName'] as String?)?.trim() ?? '';
