@@ -2690,10 +2690,19 @@ class _GraphViewState extends State<_GraphView> {
                       const SizedBox(width: 8),
                       ElevatedButton.icon(
                         onPressed: () {
+                          if (widget.projectName == null || widget.repoPath.isEmpty) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('请先打开一个项目')),
+                            );
+                            return;
+                          }
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                                builder: (_) => const BackupPage()),
+                                builder: (_) => BackupPage(
+                                      projectName: widget.projectName!,
+                                      repoPath: widget.repoPath,
+                                    )),
                           );
                         },
                         icon: const Icon(Icons.history),
