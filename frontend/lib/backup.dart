@@ -154,10 +154,17 @@ class _BackupPageState extends State<BackupPage> {
     final details = j['details'] as Map<String, dynamic>? ?? {};
 
     final colors = _computeNodeColors(details);
+    
+    // Compute ghosts
+    final commitsA = gA.commits.map((c) => c.id).toSet();
+    final commitsB = gB.commits.map((c) => c.id).toSet();
+    
+    final ghostsA = gB.commits.where((c) => !commitsA.contains(c.id)).toList();
+    final ghostsB = gA.commits.where((c) => !commitsB.contains(c.id)).toList();
 
     if (!mounted) return;
     setState(() {
-      _comparisons[sha] = ComparisonData(gA, gB, mapping, summary, colors);
+      _comparisons[sha] = ComparisonData(gA, gB, mapping, summary, colors, ghostsA, ghostsB);
     });
   }
 
@@ -255,6 +262,11 @@ class _BackupPageState extends State<BackupPage> {
       final summary = j['summary'] as String? ?? '';
       final details = j['details'] as Map<String, dynamic>? ?? {};
       final colors = _computeNodeColors(details);
+      
+      final commitsA = gA.commits.map((c) => c.id).toSet();
+      final commitsB = gB.commits.map((c) => c.id).toSet();
+      final ghostsA = gB.commits.where((c) => !commitsA.contains(c.id)).toList();
+      final ghostsB = gA.commits.where((c) => !commitsB.contains(c.id)).toList();
 
       if (!mounted) return;
       Navigator.push(
@@ -266,6 +278,8 @@ class _BackupPageState extends State<BackupPage> {
             rowMapping: mapping,
             summary: summary,
             customNodeColors: colors,
+            ghostsA: ghostsA,
+            ghostsB: ghostsB,
             title: '对比: ${cA.substring(0, 7)} vs ${cB.substring(0, 7)}',
           ),
         ),
@@ -432,6 +446,8 @@ class _BackupPageState extends State<BackupPage> {
                                                 transformationController: _sharedTc,
                                                 customRowMapping: comparison.mapping,
                                                 customNodeColors: comparison.colors,
+                                                ghostNodes: comparison.ghostsA,
+                                                showCurrentHead: false,
                                               ),
                                             ),
                                           ),
@@ -457,6 +473,8 @@ class _BackupPageState extends State<BackupPage> {
                                                 transformationController: _sharedTc,
                                                 customRowMapping: comparison.mapping,
                                                 customNodeColors: comparison.colors,
+                                                ghostNodes: comparison.ghostsB,
+                                                showCurrentHead: false,
                                               ),
                                             ),
                                           ),
@@ -492,6 +510,8 @@ class CompareResultPage extends StatefulWidget {
   final String title;
   final String summary;
   final Map<String, Color> customNodeColors;
+  final List<CommitNode> ghostsA;
+  final List<CommitNode> ghostsB;
 
   const CompareResultPage({
     super.key,
@@ -501,6 +521,8 @@ class CompareResultPage extends StatefulWidget {
     required this.title,
     this.summary = '',
     this.customNodeColors = const {},
+    this.ghostsA = const [],
+    this.ghostsB = const [],
   });
 
   @override
@@ -551,6 +573,8 @@ class _CompareResultPageState extends State<CompareResultPage> {
                       transformationController: _tc,
                       customRowMapping: widget.rowMapping,
                       customNodeColors: widget.customNodeColors,
+                      ghostNodes: widget.ghostsA,
+                      showCurrentHead: false,
                     ),
                   ),
                 ],
@@ -571,6 +595,8 @@ class _CompareResultPageState extends State<CompareResultPage> {
                       transformationController: _tc,
                       customRowMapping: widget.rowMapping,
                       customNodeColors: widget.customNodeColors,
+                      ghostNodes: widget.ghostsB,
+                      showCurrentHead: false,
                     ),
                   ),
                 ],
@@ -592,5 +618,7 @@ class ComparisonData {
   final Map<String, int> mapping;
   final String summary;
   final Map<String, Color> colors;
-  ComparisonData(this.graphA, this.graphB, this.mapping, this.summary, this.colors);
+  final List<CommitNode> ghostsA;
+  final List<CommitNode> ghostsB;
+  ComparisonData(this.graphA, this.graphB, this.mapping, this.summary, this.colors, this.ghostsA, this.ghostsB);
 }
