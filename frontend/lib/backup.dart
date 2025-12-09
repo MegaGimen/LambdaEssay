@@ -151,11 +151,48 @@ class _BackupPageState extends State<BackupPage> {
     final rawMapping = j['unifiedRowMapping'] as Map<String, dynamic>;
     final mapping = rawMapping.map((k, v) => MapEntry(k, v as int));
     final summary = j['summary'] as String? ?? '';
+    final details = j['details'] as Map<String, dynamic>? ?? {};
+
+    final colors = _computeNodeColors(details);
 
     if (!mounted) return;
     setState(() {
-      _comparisons[sha] = ComparisonData(gA, gB, mapping, summary);
+      _comparisons[sha] = ComparisonData(gA, gB, mapping, summary, colors);
     });
+  }
+
+  Map<String, Color> _computeNodeColors(Map<String, dynamic> details) {
+    final colors = <String, Color>{};
+    if (details.isEmpty) return colors;
+
+    final commonBranches = details['commonBranches'] as Map<String, dynamic>?;
+    if (commonBranches != null) {
+      for (final branchEntry in commonBranches.entries) {
+        final info = branchEntry.value as Map<String, dynamic>;
+        final comparison = info['comparison'] as Map<String, dynamic>;
+
+        if (comparison.containsKey('ours')) {
+          final ours = comparison['ours'] as Map<String, dynamic>;
+          final commits = ours['commits'] as List?;
+          if (commits != null) {
+            for (final id in commits) {
+              colors[id.toString()] = Colors.green.shade300; // Unique to A (Backup)
+            }
+          }
+        }
+
+        if (comparison.containsKey('theirs')) {
+          final theirs = comparison['theirs'] as Map<String, dynamic>;
+          final commits = theirs['commits'] as List?;
+          if (commits != null) {
+            for (final id in commits) {
+              colors[id.toString()] = Colors.blue.shade300; // Unique to B (Local)
+            }
+          }
+        }
+      }
+    }
+    return colors;
   }
 
   Future<void> _previewDoc(String repo, String sha) async {
@@ -216,6 +253,8 @@ class _BackupPageState extends State<BackupPage> {
       final rawMapping = j['unifiedRowMapping'] as Map<String, dynamic>;
       final mapping = rawMapping.map((k, v) => MapEntry(k, v as int));
       final summary = j['summary'] as String? ?? '';
+      final details = j['details'] as Map<String, dynamic>? ?? {};
+      final colors = _computeNodeColors(details);
 
       if (!mounted) return;
       Navigator.push(
@@ -226,6 +265,7 @@ class _BackupPageState extends State<BackupPage> {
             graphB: gB,
             rowMapping: mapping,
             summary: summary,
+            customNodeColors: colors,
             title: '对比: ${cA.substring(0, 7)} vs ${cB.substring(0, 7)}',
           ),
         ),
@@ -402,6 +442,7 @@ class _BackupPageState extends State<BackupPage> {
                                                 onPreviewCommit: null,
                                                 transformationController: _sharedTc,
                                                 customRowMapping: comparison.mapping,
+                                                customNodeColors: comparison.colors,
                                               ),
                                             ),
                                           ),
@@ -426,6 +467,7 @@ class _BackupPageState extends State<BackupPage> {
                                                 readOnly: true,
                                                 transformationController: _sharedTc,
                                                 customRowMapping: comparison.mapping,
+                                                customNodeColors: comparison.colors,
                                               ),
                                             ),
                                           ),
@@ -460,6 +502,7 @@ class CompareResultPage extends StatefulWidget {
   final Map<String, int> rowMapping;
   final String title;
   final String summary;
+  final Map<String, Color> customNodeColors;
 
   const CompareResultPage({
     super.key,
@@ -468,6 +511,7 @@ class CompareResultPage extends StatefulWidget {
     required this.rowMapping,
     required this.title,
     this.summary = '',
+    this.customNodeColors = const {},
   });
 
   @override
@@ -517,6 +561,7 @@ class _CompareResultPageState extends State<CompareResultPage> {
                       readOnly: true,
                       transformationController: _tc,
                       customRowMapping: widget.rowMapping,
+                      customNodeColors: widget.customNodeColors,
                     ),
                   ),
                 ],
@@ -536,6 +581,7 @@ class _CompareResultPageState extends State<CompareResultPage> {
                       readOnly: true,
                       transformationController: _tc,
                       customRowMapping: widget.rowMapping,
+                      customNodeColors: widget.customNodeColors,
                     ),
                   ),
                 ],
@@ -556,5 +602,6 @@ class ComparisonData {
   final GraphData graphB;
   final Map<String, int> mapping;
   final String summary;
-  ComparisonData(this.graphA, this.graphB, this.mapping, this.summary);
+  final Map<String, Color> colors;
+  ComparisonData(this.graphA, this.graphB, this.mapping, this.summary, this.colors);
 }
