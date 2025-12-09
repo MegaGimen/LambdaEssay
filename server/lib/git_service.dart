@@ -1540,7 +1540,12 @@ Future<void> completeMerge(String repoName, String targetBranch) async {
     }
   }
 
+  // PRE-MERGE: Capture Current HEAD (The "First Parent" of the upcoming merge)
+  final oldHeadLines = await _runGit(['rev-parse', 'HEAD'], projDir);
+  final oldHead = oldHeadLines.isNotEmpty ? oldHeadLines.first.trim() : null;
+
   // 2. Perform Git Merge
+
   // Strategy:
   // git merge --no-commit --no-ff -s ours targetBranch
   // This creates the merge commit state but keeps HEAD content (which we just overwrote? No, ours keeps HEAD).
@@ -1586,26 +1591,24 @@ Future<void> completeMerge(String repoName, String targetBranch) async {
   ], projDir);
 
   // 4. Update edges file
-  if (targetHash != null) {
-      final headLines = await _runGit(['rev-parse', 'HEAD'], projDir);
-      final headHash = headLines.isNotEmpty ? headLines.first.trim() : null;
-      
-      if (headHash != null) {
-          final edgesFile = File(p.join(projDir, 'edges'));
-          final lines = edgesFile.existsSync() ? await edgesFile.readAsLines() : <String>[];
-          if (lines.isEmpty) {
-             // Placeholder for first line
-             lines.add('0000000000000000000000000000000000000000');
-          }
-          final edgeLine = '$headHash $targetHash';
-          if (!lines.contains(edgeLine)) {
-             lines.add(edgeLine);
-             await edgesFile.writeAsString(lines.join('\n'));
-             
-             await _runGit(['add', 'edges'], projDir);
-             await _runGit(['commit', '-m', 'Update edges'], projDir);
-          }
-      }
+  if (targetHash != null && oldHead != null) {
+       final edgesFile = File(p.join(projDir, 'edges'));
+       final lines = edgesFile.existsSync() ? await edgesFile.readAsLines() : <String>[];
+       if (lines.isEmpty) {
+          // Placeholder for first line
+          lines.add('0000000000000000000000000000000000000000');
+       }
+       // User requested edge: Old Head -> Target Head
+       // (Instead of Merge Head -> Target Head)
+       // This draws a line connecting the two branch tips before the merge commit.
+       final edgeLine = '$oldHead $targetHash';
+       if (!lines.contains(edgeLine)) {
+          lines.add(edgeLine);
+          await edgesFile.writeAsString(lines.join('\n'));
+          
+          await _runGit(['add', 'edges'], projDir);
+          await _runGit(['commit', '-m', 'Update edges'], projDir);
+       }
   }
 
   print('Clearing cache after merge...');
