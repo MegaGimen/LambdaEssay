@@ -73,11 +73,13 @@ class GraphData {
   final List<Branch> branches;
   final Map<String, List<String>> chains;
   final String? currentBranch;
+  final List<List<String>> customEdges;
   GraphData({
     required this.commits,
     required this.branches,
     required this.chains,
     this.currentBranch,
+    this.customEdges = const [],
   });
   factory GraphData.fromJson(Map<String, dynamic> j) => GraphData(
         commits: ((j['commits'] as List).map(
@@ -90,6 +92,10 @@ class GraphData {
           (k, v) => MapEntry(k, (v as List).cast<String>()),
         ),
         currentBranch: j['currentBranch'],
+        customEdges: (j['customEdges'] as List?)
+                ?.map((e) => (e as List).cast<String>())
+                .toList() ??
+            [],
       );
 }
 
@@ -3429,6 +3435,36 @@ class _GraphViewState extends State<_GraphView> {
     }
 
     if (bestInfo != null && best <= 8.0) return bestInfo;
+
+    // 4. Check custom edges
+    for (final edge in data.customEdges) {
+      if (edge.length < 2) continue;
+      final child = edge[0];
+      final parent = edge[1];
+      final rowC = rowOf[child];
+      final laneC = laneOf[child];
+      final rowP = rowOf[parent];
+      final laneP = laneOf[parent];
+      if (rowC == null || laneC == null || rowP == null || laneP == null) continue;
+
+      final x = laneC * laneWidth + laneWidth / 2;
+      final y = rowC * rowHeight + rowHeight / 2;
+      final px = laneP * laneWidth + laneWidth / 2;
+      final py = rowP * rowHeight + rowHeight / 2;
+
+      final d = _distPointToSegment(sceneP, Offset(x, y), Offset(px, py));
+      if (d < best) {
+        best = d;
+        bestInfo = EdgeInfo(
+          child: child,
+          parent: parent,
+          branches: ['MergeEdge'], // Force custom edge to show as MergeEdge
+          isMerge: true,
+        );
+      }
+    }
+
+    if (bestInfo != null && best <= 8.0) return bestInfo;
     return null;
   }
 
@@ -3782,6 +3818,35 @@ class GraphPainter extends CustomPainter {
         path.lineTo(px, py);
         canvas.drawPath(path, paintMerge);
       }
+    }
+
+    // Draw custom edges
+    final paintCustom = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.0
+      ..color = const Color(0xFF000000);
+
+    for (final edge in data.customEdges) {
+      if (edge.length < 2) continue;
+      final child = edge[0];
+      final parent = edge[1];
+      
+      final rowC = rowOf[child];
+      final laneC = laneOf[child];
+      final rowP = rowOf[parent];
+      final laneP = laneOf[parent];
+      
+      if (rowC == null || laneC == null || rowP == null || laneP == null) continue;
+      
+      final x = laneC * laneWidth + laneWidth / 2;
+      final y = rowC * rowHeight + rowHeight / 2;
+      final px = laneP * laneWidth + laneWidth / 2;
+      final py = rowP * rowHeight + rowHeight / 2;
+      
+      final path = Path();
+      path.moveTo(x, y);
+      path.lineTo(px, py);
+      canvas.drawPath(path, paintCustom);
     }
 
     final textPainter = TextPainter(textDirection: TextDirection.ltr);

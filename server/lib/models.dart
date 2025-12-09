@@ -35,15 +35,18 @@ class GraphResponse {
   final List<Branch> branches;
   final Map<String, List<String>> chains;
   final String? currentBranch;
+  final List<List<String>> customEdges;
   GraphResponse(
       {required this.commits,
       required this.branches,
       required this.chains,
-      this.currentBranch});
+      this.currentBranch,
+      this.customEdges = const []});
   Map<String, dynamic> toJson() => {
         'commits': commits.map((e) => e.toJson()).toList(),
         'branches': branches.map((e) => e.toJson()).toList(),
         'chains': chains,
         'currentBranch': currentBranch,
+        'customEdges': customEdges,
       };
 }

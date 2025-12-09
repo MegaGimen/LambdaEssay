@@ -79,6 +79,26 @@ Future<String?> getCurrentBranch(String repoPath) async {
   }
 }
 
+Future<List<List<String>>> _readEdges(String repoPath) async {
+  final f = File(p.join(repoPath, 'edges'));
+  if (!f.existsSync()) return [];
+  try {
+    final lines = await f.readAsLines();
+    if (lines.isEmpty) return [];
+    // First line is commit ID (ignore for now as per user instruction it is just meta)
+    final edges = <List<String>>[];
+    for (var i = 1; i < lines.length; i++) {
+      final parts = lines[i].trim().split(RegExp(r'\s+'));
+      if (parts.length >= 2) {
+        edges.add(parts.sublist(0, 2));
+      }
+    }
+    return edges;
+  } catch (_) {
+    return [];
+  }
+}
+
 Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
   final key = '${repoPath}|${limit ?? 0}';
   final cached = _graphCache[key];
@@ -90,6 +110,7 @@ Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
   final branches = await getBranches(repoPath);
   final chains = await getBranchChains(repoPath, branches, limit: limit);
   final current = await getCurrentBranch(repoPath);
+  final customEdges = await _readEdges(repoPath);
 
   final logArgs = [
     'log',
@@ -110,9 +131,14 @@ Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
     final parts = l.split('|');
     if (parts.length < 6) continue;
     final id = parts[0];
-    final parents = parts[1].trim().isEmpty
+    final rawParents = parts[1].trim().isEmpty
         ? <String>[]
         : parts[1].trim().split(RegExp(r'\s+'));
+    
+    // User requested to cancel default merge edge logic.
+    // We only keep the first parent to maintain the main branch line.
+    final parents = rawParents.isNotEmpty ? [rawParents.first] : <String>[];
+
     final dec = parts[2];
     final refs = _parseRefs(dec);
     final subject = parts[3];
@@ -133,7 +159,8 @@ Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
       commits: commits,
       branches: branches,
       chains: chains,
-      currentBranch: current);
+      currentBranch: current,
+      customEdges: customEdges);
   _graphCache[key] = resp;
   return resp;
 }
@@ -141,6 +168,9 @@ Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
 Future<void> commitChanges(
     String repoPath, String author, String message) async {
   await _runGit(['add', '*.docx'], repoPath);
+  if (File(p.join(repoPath, 'edges')).existsSync()) {
+    await _runGit(['add', 'edges'], repoPath);
+  }
   // Ensure author format "Name <email>"
   final safeAuthor = author.trim().isEmpty ? 'Unknown' : author.trim();
   final authorArg = '$safeAuthor <$safeAuthor@gitdocx.local>';
