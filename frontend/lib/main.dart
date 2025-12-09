@@ -3410,16 +3410,9 @@ class _GraphViewState extends State<_GraphView> {
           }
 
           if (branches.isEmpty) {
-            branches.add('MergeEdge');
-          } else {
-            // 如果 branches 不为空（说明 Merge 来源是一个分支的 Head），
-            // 用户反馈说 tag 显示为 "socialism"（B 分支），但依旧不是 "合并边"。
-            // 用户的要求是：只要是斜边（Merge Edge），tag 就必须显示为“合并边”。
-            // 无论它是否是某个分支的 Head。
-            // 因此，我们强制清空 branches，并添加 'MergeEdge' 标记。
-            branches.clear();
-            branches.add('MergeEdge');
+             // do nothing
           }
+
 
           // If we found a ghost edge that is closer, use it
           // 同样，如果这是补画的 First Parent 边，且没有分支指向 parent，
