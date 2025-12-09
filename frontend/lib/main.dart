@@ -173,11 +173,11 @@ class _GraphPageState extends State<GraphPage> {
             setState(() {
               _token = newToken;
             });
-            print("AuthKey refreshed automatically: $_token");
+            // print("AuthKey refreshed automatically: $_token");
           }
         }
       } catch (e) {
-        print("Failed to refresh tokens: $e");
+        // print("Failed to refresh tokens: $e");
         // If refresh fails (e.g. password changed or network error),
         // maybe we should not logout automatically to let user work offline if needed,
         // but usually auth error means we should logout.
@@ -210,7 +210,7 @@ class _GraphPageState extends State<GraphPage> {
           }
         }
       } catch (e) {
-        print("ensureToken failed: $e");
+        // print("ensureToken failed: $e");
       }
     }
     return false;
@@ -294,8 +294,8 @@ class _GraphPageState extends State<GraphPage> {
       // { "success": true, "userid": "...", "username": "...", "tokens": [], ... }
 
       final tokens = resp['tokens'] as List?;
-      print("doLogin");
-      print(tokens);
+      // print("doLogin");
+      // print(tokens);
       String? token;
 
       if (tokens != null && tokens.isNotEmpty) {
@@ -347,8 +347,8 @@ class _GraphPageState extends State<GraphPage> {
 
       // { "tokens": [ { "remark": "...", "sha1": "..." } ], "source": "..." }
       final tokens = resp['tokens'] as List;
-      print("_createGiteaUserAndSetToken");
-      print(tokens);
+      // print("_createGiteaUserAndSetToken");
+      // print(tokens);
       if (tokens.isEmpty) throw Exception('无法获取Token');
 
       final t = tokens[0];
@@ -3308,124 +3308,8 @@ class _GraphViewState extends State<_GraphView> {
     }
     if (bestInfo != null && best <= 8.0) return bestInfo;
 
-    // 2. Check explicit merge edges (Second Parents) which are not in _pairBranches
-    // These are drawn in GraphPainter.paint()
-    for (final c in commits) {
-      if (c.parents.length < 2) continue;
-      final rowC = rowOf[c.id];
-      final laneC = laneOf[c.id];
-      if (rowC == null || laneC == null) continue;
-      final x = laneC * laneWidth + laneWidth / 2;
-      final y = rowC * rowHeight + rowHeight / 2;
+    // 2. & 3. Explicit merge edges check and First Parent fix check removed
 
-      for (int i = 1; i < c.parents.length; i++) {
-        final pId = c.parents[i];
-        final rowP = rowOf[pId];
-        final laneP = laneOf[pId];
-        if (rowP == null || laneP == null) continue;
-        final px = laneP * laneWidth + laneWidth / 2;
-        final py = rowP * rowHeight + rowHeight / 2;
-
-        // Merge edges are always diagonal straight lines in paint()
-        final d = _distPointToSegment(sceneP, Offset(x, y), Offset(px, py));
-        if (d < best) {
-          best = d;
-          // Try to find which branch this merge comes from
-          // Use the parent node's branches if available, or just the child's
-          final pNode = byId[pId];
-          List<String> branches = [];
-          // Naive branch finding: find any branch pointing here?
-          // Or just use empty list which will show "Unknown" or similar?
-          // Let's try to find branches that contain pId in their chain
-          // This is expensive, maybe just list "Merge Source"
-          // Better: use the branches from the child node context?
-          // Or reconstruct from chains?
-          // For now, let's just provide the child's branch or empty.
-          // Actually, the UI shows branches in a list.
-          // Let's try to find branches that head at pId
-          if (pNode != null) {
-            for (final b in data.branches) {
-              if (b.head == pId) branches.add(b.name);
-            }
-          }
-
-          // 构造 "Merge X to Y" 的信息，用于 tooltip 显示
-          // 这里我们使用特殊的格式，让 UI 层（_showEdgeInfo）去解析和显示
-          // 我们使用 'MergeEdge' 作为特殊标记，UI 层检测到这个标记时，会显示“合并边”。
-          if (branches.isEmpty) {
-            branches.add('MergeEdge');
-          }
-
-          bestInfo = EdgeInfo(
-            child: c.id,
-            parent: pId,
-            branches: branches,
-            isMerge: true,
-          );
-        }
-      }
-    }
-
-    // 3. Check First Parents if they were missing in _pairBranches (auto-filled in paint)
-    // This handles the "ghost edge" case where an edge exists logically but wasn't in chains
-    for (final c in commits) {
-      if (c.parents.isEmpty) continue;
-
-      final rowC = rowOf[c.id];
-      final laneC = laneOf[c.id];
-      if (rowC == null || laneC == null) continue;
-
-      final p0Id = c.parents[0];
-      final key0 = '${c.id}|$p0Id';
-
-      // Only check if NOT already handled by _pairBranches
-      if (_pairBranches?.containsKey(key0) == true) continue;
-
-      final rowP = rowOf[p0Id];
-      final laneP = laneOf[p0Id];
-      if (rowP != null && laneP != null) {
-        final x = laneC * laneWidth + laneWidth / 2;
-        final y = rowC * rowHeight + rowHeight / 2;
-        final px = laneP * laneWidth + laneWidth / 2;
-        final py = rowP * rowHeight + rowHeight / 2;
-
-        double d = double.infinity;
-        if (laneC == laneP) {
-          d = _distPointToSegment(sceneP, Offset(x, y), Offset(px, py));
-        } else {
-          // L-Shape for split: (px, py) -> (x, py) -> (x, y)
-          final d1 = _distPointToSegment(sceneP, Offset(px, py), Offset(x, py));
-          final d2 = _distPointToSegment(sceneP, Offset(x, py), Offset(x, y));
-          d = d1 < d2 ? d1 : d2;
-        }
-
-        if (d < best) {
-          best = d;
-          final pNode = byId[p0Id];
-          List<String> branches = [];
-          if (pNode != null) {
-            for (final b in data.branches) {
-              if (b.head == p0Id) branches.add(b.name);
-            }
-          }
-
-          if (branches.isEmpty) {
-             // do nothing
-          }
-
-
-          // If we found a ghost edge that is closer, use it
-          // 同样，如果这是补画的 First Parent 边，且没有分支指向 parent，
-          // 它的 branches 为空。
-          bestInfo = EdgeInfo(
-            child: c.id,
-            parent: p0Id,
-            branches: branches,
-            isMerge: false,
-          );
-        }
-      }
-    }
 
     if (bestInfo != null && best <= 8.0) return bestInfo;
 
@@ -3530,11 +3414,13 @@ class GraphPainter extends CustomPainter {
     // 构造来自分支链的父->子关系，以及对每个边对的出现次数
     final children = <String, List<String>>{}; // parent -> [child]
     final pairCount = <String, int>{};
+    print('DEBUG: Chains data detailed:');
     for (final entry in data.chains.entries) {
       final ids = entry.value;
       for (var i = 0; i + 1 < ids.length; i++) {
         final child = ids[i];
         final parent = ids[i + 1];
+        print('DEBUG: Chain Edge: ${child.substring(0,7)} -> ${parent.substring(0,7)} (Branch: ${entry.key})');
         (children[parent] ??= <String>[]).add(child);
         final key = '$child|$parent';
         pairCount[key] = (pairCount[key] ?? 0) + 1;
@@ -3668,42 +3554,14 @@ class GraphPainter extends CustomPainter {
 
         paintEdge.strokeWidth = isCurrent ? 4.0 : (isHover ? 3.0 : 2.0);
 
-        if (isCurrent) {
-          // Draw a glow/shadow for current branch
-          // 只有当该边属于当前分支的主干时，或者我们认为它是当前分支的一部分时，才绘制高亮。
-          // 简单的判断 bname == data.currentBranch 可能不够，因为 Merge 进来的分支边也会被遍历到。
-          // 但是，Chains 里的 entry.key 已经是 bname 了。
-          // 问题在于，我们补画的主干 First Parent 没有在 Chains 里，所以这里无法高亮补画的边。
-          // 而对于 Merge 进来的斜线，如果它们也在 Chains 里（尽管是错误的），它们就会被高亮。
-
-          // 我们已经过滤掉了错误的 Chains 边 (!parents.contains(parent))。
-          // 所以现在 Chains 里剩下的应该都是合法的边。
-          // 如果“斜线”被高亮，说明它被包含在了 Immanuel-change3 的 Chains 里。
-          // 这通常是因为 git log --graph 认为这条 merge 边属于该分支历史。
-          // 如果你想排除 Merge 进来的边（即只高亮 First Parent 链），我们需要检查 parent 是否是 child 的 First Parent。
-
-          bool isFirstParent = false;
-          if (childNode != null && childNode.parents.isNotEmpty) {
-            if (childNode.parents[0] == parent) {
-              isFirstParent = true;
-            }
-          }
-
-          if (isFirstParent) {
-            final paintGlow = Paint()
-              ..color = bcolor.withValues(alpha: 0.4)
-              ..style = PaintingStyle.stroke
-              ..strokeWidth = 8.0
-              ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
-            canvas.drawPath(path, paintGlow);
-          }
-        }
+        // DEBUG: Print drawing edge from Chains
+        print('DEBUG: Drawing Edge (Chain): ${child.substring(0,7)} -> ${parent.substring(0,7)}');
 
         canvas.drawPath(path, paintEdge);
       }
     }
 
-    // 绘制 Merge 的额外父节点连线 (处理非首个父节点) - DELETED
+    // 补全 First Parent 连线逻辑已移除
 
 
 
@@ -3716,6 +3574,54 @@ class GraphPainter extends CustomPainter {
 
 
 
+
+
+    // 补全 First Parent 连线 (防止 Chains 数据缺失导致的断链)
+    // 仅补画 First Parent，不处理其他父节点，也不添加额外的高亮效果
+    for (final c in commits) {
+      if (c.parents.isEmpty) continue;
+      
+      final rowC = rowOf[c.id];
+      final laneC = laneOf[c.id];
+      if (rowC == null || laneC == null) continue;
+
+      final x = laneC * laneWidth + laneWidth / 2;
+      final y = rowC * rowHeight + rowHeight / 2;
+
+      // 仅检查 First Parent
+      final p0Id = c.parents[0];
+      final key0 = '${c.id}|$p0Id';
+      
+      // 如果 Chains 遍历中没有画过这条线，则补画
+      if (!pairDrawn.containsKey(key0)) {
+        final rowP = rowOf[p0Id];
+        final laneP = laneOf[p0Id];
+        if (rowP != null && laneP != null) {
+          final px = laneP * laneWidth + laneWidth / 2;
+          final py = rowP * rowHeight + rowHeight / 2;
+
+          // DEBUG: Print missing first parent edge
+          print('DEBUG: Re-drawing missing First Parent edge: ${c.id.substring(0,7)} -> ${p0Id.substring(0,7)}');
+
+          final paintMain = Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2.0
+            ..color = _colorOfCommit(c.id, colorMemo);
+
+          final path = Path();
+          if (laneC == laneP) {
+            path.moveTo(x, y);
+            path.lineTo(px, py);
+          } else {
+            // L-Shape
+            path.moveTo(px, py);
+            path.lineTo(x, py);
+            path.lineTo(x, y);
+          }
+          canvas.drawPath(path, paintMain);
+        }
+      }
+    }
 
     // Draw custom edges
     final paintCustom = Paint()
