@@ -3703,117 +3703,19 @@ class GraphPainter extends CustomPainter {
       }
     }
 
-    // 绘制 Merge 的额外父节点连线 (处理非首个父节点)
-    // 同时也检查 First Parent 是否因为 Chains 数据缺失而漏画，如果漏画则补全
-    for (final c in commits) {
-      // 如果没有父节点，无需绘制连线
-      if (c.parents.isEmpty) continue;
+    // 绘制 Merge 的额外父节点连线 (处理非首个父节点) - DELETED
 
-      final rowC = rowOf[c.id];
-      final laneC = laneOf[c.id];
-      if (rowC == null || laneC == null) continue;
 
-      final x = laneC * laneWidth + laneWidth / 2;
-      final y = rowC * rowHeight + rowHeight / 2;
 
-      // 1. 检查并补画 First Parent (parents[0])
-      // Chains 可能会漏掉某些连线，或者因为上面的过滤逻辑被过滤了
-      // 如果 First Parent 没画，我们按主干逻辑补画
-      final p0Id = c.parents[0];
-      final key0 = '${c.id}|$p0Id';
-      if (!pairDrawn.containsKey(key0)) {
-        final rowP = rowOf[p0Id];
-        final laneP = laneOf[p0Id];
-        if (rowP != null && laneP != null) {
-          final px = laneP * laneWidth + laneWidth / 2;
-          final py = rowP * rowHeight + rowHeight / 2;
 
-          final paintMain = Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 2.0
-            ..color = _colorOfCommit(c.id, colorMemo); // 补画使用当前节点颜色
 
-          final path = Path();
-          if (laneC == laneP) {
-            path.moveTo(x, y);
-            path.lineTo(px, py);
-          } else {
-            // L-Shape (Split/Merge Main)
-            // Parent (px, py) -> Horizontal -> Vertical -> Child (x, y)
-            path.moveTo(px, py);
-            path.lineTo(x, py);
-            path.lineTo(x, y);
-          }
 
-          // 检查补画的边是否属于当前分支，如果是则高亮
-          // 这是一个“幽灵边”，但它实际上是主干边
-          // 如果 c.id 是当前分支的一部分（或者说，它的颜色是当前分支的颜色？）
-          // 或者更简单，如果 c.id 在当前分支的 chains 里出现过？
-          // 或者如果当前分支的 head 能够顺着 first parent 到达 c.id？
-          // 简单做法：如果该节点的颜色对应当前分支，则认为该主干边属于当前分支
 
-          bool isCurrentBranch = false;
-          if (data.currentBranch != null) {
-            final branchColor = branchColors[data.currentBranch!];
-            final nodeColor = _colorOfCommit(c.id, colorMemo);
-            // 颜色比较可能不准确，因为可能有重复颜色。
-            // 更好的方法：检查 data.currentBranch 的 head 是否能 reach c.id (via first parent)
-            // 但这太慢了。
-            // 替代方案：我们假设如果节点的颜色和当前分支颜色一致，那么这条 First Parent 边也应该高亮。
-            // (前提是 _computeBranchColors 已经正确地只沿 First Parent 染色)
-            if (branchColor != null && nodeColor.value == branchColor.value) {
-              isCurrentBranch = true;
-            }
-          }
 
-          if (isCurrentBranch) {
-            final paintGlow = Paint()
-              ..color = _colorOfCommit(c.id, colorMemo).withValues(alpha: 0.4)
-              ..style = PaintingStyle.stroke
-              ..strokeWidth = 8.0
-              ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
-            canvas.drawPath(path, paintGlow);
-          }
 
-          canvas.drawPath(path, paintMain);
-        }
-      }
 
-      // 2. 绘制其他父节点 (Merge Sources)
-      // 从第二个父节点开始遍历
-      /*
-      for (int i = 1; i < c.parents.length; i++) {
-        final pId = c.parents[i];
-        final rowP = rowOf[pId];
-        final laneP = laneOf[pId];
-        if (rowP == null || laneP == null) continue;
 
-        final px = laneP * laneWidth + laneWidth / 2;
-        final py = rowP * rowHeight + rowHeight / 2;
 
-        // Merge 来源的连线颜色应该跟随来源节点，而不是当前 Merge 节点
-        // 这样能清楚显示是“哪个分支”合并进来了
-        // 统一采用黑色显示合并边，并虚线处理？或者就是黑色实线
-        final paintMerge = Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2.0
-          ..color = const Color(0xFF000000); // 统一黑色
-
-        // 虚线效果
-        // 简单模拟虚线：用 drawPath 配合 DashPathEffect (需要 path_drawing 库，或者自己实现)
-        // 这里我们手写一个简单的虚线绘制逻辑，或者仅使用实线但降低透明度。
-        // 为了清晰，用黑色实线即可。用户要求“统一采用黑色”。
-        // 如果需要虚线，由于 Flutter 原生 Canvas 没有直接的 dashed line API，需要 path metric。
-        // 暂时保持实线。
-
-        final path = Path();
-        // 使用节点中心坐标，避免 spread 导致的偏移不一致
-        path.moveTo(x, y);
-        path.lineTo(px, py);
-        canvas.drawPath(path, paintMerge);
-      }
-      */
-    }
 
     // Draw custom edges
     final paintCustom = Paint()
