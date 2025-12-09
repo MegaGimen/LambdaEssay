@@ -135,9 +135,7 @@ Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
         ? <String>[]
         : parts[1].trim().split(RegExp(r'\s+'));
     
-    // User requested to cancel default merge edge logic.
-    // We only keep the first parent to maintain the main branch line.
-    final parents = rawParents.isNotEmpty ? [rawParents.first] : <String>[];
+    final parents = rawParents;
 
     final dec = parts[2];
     final refs = _parseRefs(dec);
@@ -1574,6 +1572,11 @@ Future<void> completeMerge(String repoName, String targetBranch) async {
 
   // 3. Commit
   print('Committing merge changes...');
+  
+  // Resolve target hash before commit just in case
+  final targetHashLines = await _runGit(['rev-parse', targetBranch], projDir);
+  final targetHash = targetHashLines.isNotEmpty ? targetHashLines.first.trim() : null;
+
   await _runGit(['add', '.'], projDir);
   // We need a commit message.
   await _runGit([
@@ -1581,6 +1584,29 @@ Future<void> completeMerge(String repoName, String targetBranch) async {
     '-m',
     'Merge branch \'$targetBranch\' into HEAD (Binary Resolved)'
   ], projDir);
+
+  // 4. Update edges file
+  if (targetHash != null) {
+      final headLines = await _runGit(['rev-parse', 'HEAD'], projDir);
+      final headHash = headLines.isNotEmpty ? headLines.first.trim() : null;
+      
+      if (headHash != null) {
+          final edgesFile = File(p.join(projDir, 'edges'));
+          final lines = edgesFile.existsSync() ? await edgesFile.readAsLines() : <String>[];
+          if (lines.isEmpty) {
+             // Placeholder for first line
+             lines.add('0000000000000000000000000000000000000000');
+          }
+          final edgeLine = '$headHash $targetHash';
+          if (!lines.contains(edgeLine)) {
+             lines.add(edgeLine);
+             await edgesFile.writeAsString(lines.join('\n'));
+             
+             await _runGit(['add', 'edges'], projDir);
+             await _runGit(['commit', '-m', 'Update edges'], projDir);
+          }
+      }
+  }
 
   print('Clearing cache after merge...');
   clearCache();

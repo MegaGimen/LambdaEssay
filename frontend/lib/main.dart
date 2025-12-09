@@ -3788,6 +3788,7 @@ class GraphPainter extends CustomPainter {
 
       // 2. 绘制其他父节点 (Merge Sources)
       // 从第二个父节点开始遍历
+      /*
       for (int i = 1; i < c.parents.length; i++) {
         final pId = c.parents[i];
         final rowP = rowOf[pId];
@@ -3818,6 +3819,7 @@ class GraphPainter extends CustomPainter {
         path.lineTo(px, py);
         canvas.drawPath(path, paintMerge);
       }
+      */
     }
 
     // Draw custom edges
