@@ -3,11 +3,6 @@ import '../git_service.dart';
 import '../backup_service.dart';
 import 'dart:io';
 import 'dart:convert';
-import 'dart:io';
-import 'dart:convert';
-
-import 'dart:io';
-import 'dart:convert';
 
 /// 比较两个Git仓库的差异，包括分支历史
 Future<Map<String, dynamic>> compareGitRepos({
@@ -397,83 +392,67 @@ String _generateSummary(Map<String, dynamic> result) {
   
   return buffer.toString();
 }
-void main() async {
-  try {
-    final result = await compareGitRepos(
-      repoAPath: 'C:/Users/m1369/Documents/gitbin/server/lib/diff/testrepo/FuckYou_son-58ab193edc57ee33a331c511c7efac82ecce6c6a',
-      repoBPath: 'C:/Users/m1369/Documents/gitbin/server/lib/diff/testrepo/original',
-      
-    );
-    
-    print(result['summary']);
-  } catch (e) {
-    print('错误: $e');
-  }
-}
 
 class ComparisonResult {
   final GraphResponse graphA;
   final GraphResponse graphB;
   final Map<String, int> unifiedRowMapping;
+  final String summary;
 
   ComparisonResult({
     required this.graphA,
     required this.graphB,
     required this.unifiedRowMapping,
+    this.summary = '',
   });
 
   Map<String, dynamic> toJson() => {
         'graphA': graphA.toJson(),
         'graphB': graphB.toJson(),
         'unifiedRowMapping': unifiedRowMapping,
+        'summary': summary,
       };
-}
-
-Future<ComparisonResult> compareRepos(
-    String repoName, String commitA, String commitB) async {
-  // Fetch Graph A
-  GraphResponse graphA;
-  if (commitA == 'local') {
-    throw Exception("Use compareReposWithLocal instead");
-  } else {
-    // It's a backup commit
-    graphA = await getBackupGraph(repoName, commitA);
-  }
-
-  // Fetch Graph B
-  GraphResponse graphB;
-  if (commitB == 'local') {
-    throw Exception("Use compareReposWithLocal instead");
-  } else {
-    graphB = await getBackupGraph(repoName, commitB);
-  }
-
-  return computeComparison(graphA, graphB);
 }
 
 Future<ComparisonResult> compareReposWithLocal(
     String repoName, String? localPath, String commitA, String commitB) async {
   
   GraphResponse graphA;
+  String pathA;
   if (commitA == 'local') {
     if (localPath == null) throw Exception("Local path required for local comparison");
-    graphA = await getGraph(localPath, limit: 100); // Limit for performance?
+    pathA = localPath;
+    graphA = await getGraph(localPath, limit: 100);
   } else {
+    pathA = await getSnapshotPath(repoName, commitA);
     graphA = await getBackupGraph(repoName, commitA);
   }
 
   GraphResponse graphB;
+  String pathB;
   if (commitB == 'local') {
     if (localPath == null) throw Exception("Local path required for local comparison");
+    pathB = localPath;
     graphB = await getGraph(localPath, limit: 100);
   } else {
+    pathB = await getSnapshotPath(repoName, commitB);
     graphB = await getBackupGraph(repoName, commitB);
   }
 
-  return computeComparison(graphA, graphB);
+  // Run the detailed git comparison
+  String summary = '';
+  try {
+    final cmp = await compareGitRepos(repoAPath: pathA, repoBPath: pathB);
+    summary = cmp['summary'] as String;
+  } catch (e) {
+    print('Detailed comparison failed: $e');
+    summary = '无法生成详细对比: $e';
+  }
+
+  return computeComparison(graphA, graphB, summary);
 }
 
-ComparisonResult computeComparison(GraphResponse a, GraphResponse b) {
+ComparisonResult computeComparison(GraphResponse a, GraphResponse b, String summary) {
   // 1. Collect all commits
   final allCommits = <CommitNode>{};
   final byId = <String, CommitNode>{};
@@ -492,14 +471,10 @@ ComparisonResult computeComparison(GraphResponse a, GraphResponse b) {
   // 2. Sort by date desc
   final sorted = allCommits.toList()
     ..sort((x, y) {
-      // Simple string comparison for ISO dates works
       return y.date.compareTo(x.date);
     });
 
   // 3. Assign rows
-  // Simple strategy: Just use the sorted index as the row.
-  // This ensures that if a commit exists in both, it gets the same row index (because it's the same commit in the sorted list).
-  // This is a naive topological sort but often sufficient for visual alignment of time-based graphs.
   final mapping = <String, int>{};
   for (var i = 0; i < sorted.length; i++) {
     mapping[sorted[i].id] = i;
@@ -509,5 +484,6 @@ ComparisonResult computeComparison(GraphResponse a, GraphResponse b) {
     graphA: a,
     graphB: b,
     unifiedRowMapping: mapping,
+    summary: summary,
   );
 }
