@@ -123,31 +123,37 @@ Future<Map<String, dynamic>> _compareBranchHistory({
       ['diff', '--name-only', 'repoA/$branchName', 'repoB/$branchName'],
     );
     
-    // 6. 获取提交数量
-    final commitCountOurs = await Process.run(
+    // 6. 获取提交数量和列表
+    final commitsOurs = await Process.run(
       'git',
-      ['rev-list', '--count', '$mergeBase..repoA/$branchName'],
+      ['rev-list', '$mergeBase..repoA/$branchName'],
     );
     
-    final commitCountTheirs = await Process.run(
+    final commitsTheirs = await Process.run(
       'git',
-      ['rev-list', '--count', '$mergeBase..repoB/$branchName'],
+      ['rev-list', '$mergeBase..repoB/$branchName'],
     );
     
     result['comparison'] = {
       'mergeBase': mergeBase,
       'ours': {
         'stat': diffOurs.exitCode == 0 ? diffOurs.stdout.toString().trim() : '',
-        'commitCount': commitCountOurs.exitCode == 0 
-            ? int.tryParse(commitCountOurs.stdout.toString().trim()) ?? 0 
+        'commitCount': commitsOurs.exitCode == 0 
+            ? commitsOurs.stdout.toString().trim().split('\n').where((s) => s.isNotEmpty).length 
             : 0,
+        'commits': commitsOurs.exitCode == 0 
+            ? commitsOurs.stdout.toString().trim().split('\n').where((s) => s.isNotEmpty).toList()
+            : [],
         'files': await _getChangedFiles(mergeBase, 'repoA/$branchName'),
       },
       'theirs': {
         'stat': diffTheirs.exitCode == 0 ? diffTheirs.stdout.toString().trim() : '',
-        'commitCount': commitCountTheirs.exitCode == 0 
-            ? int.tryParse(commitCountTheirs.stdout.toString().trim()) ?? 0 
+        'commitCount': commitsTheirs.exitCode == 0 
+            ? commitsTheirs.stdout.toString().trim().split('\n').where((s) => s.isNotEmpty).length 
             : 0,
+        'commits': commitsTheirs.exitCode == 0 
+            ? commitsTheirs.stdout.toString().trim().split('\n').where((s) => s.isNotEmpty).toList()
+            : [],
         'files': await _getChangedFiles(mergeBase, 'repoB/$branchName'),
       },
       'history': historyDiff.exitCode == 0 ? historyDiff.stdout.toString().trim() : '',
@@ -398,12 +404,14 @@ class ComparisonResult {
   final GraphResponse graphB;
   final Map<String, int> unifiedRowMapping;
   final String summary;
+  final Map<String, dynamic> details;
 
   ComparisonResult({
     required this.graphA,
     required this.graphB,
     required this.unifiedRowMapping,
     this.summary = '',
+    this.details = const {},
   });
 
   Map<String, dynamic> toJson() => {
@@ -411,6 +419,7 @@ class ComparisonResult {
         'graphB': graphB.toJson(),
         'unifiedRowMapping': unifiedRowMapping,
         'summary': summary,
+        'details': details,
       };
 }
 
@@ -441,18 +450,19 @@ Future<ComparisonResult> compareReposWithLocal(
 
   // Run the detailed git comparison
   String summary = '';
+  Map<String, dynamic> details = {};
   try {
-    final cmp = await compareGitRepos(repoAPath: pathA, repoBPath: pathB);
-    summary = cmp['summary'] as String;
+    details = await compareGitRepos(repoAPath: pathA, repoBPath: pathB);
+    summary = details['summary'] as String;
   } catch (e) {
     print('Detailed comparison failed: $e');
     summary = '无法生成详细对比: $e';
   }
 
-  return computeComparison(graphA, graphB, summary);
+  return computeComparison(graphA, graphB, summary, details);
 }
 
-ComparisonResult computeComparison(GraphResponse a, GraphResponse b, String summary) {
+ComparisonResult computeComparison(GraphResponse a, GraphResponse b, String summary, Map<String, dynamic> details) {
   // 1. Collect all commits
   final allCommits = <CommitNode>{};
   final byId = <String, CommitNode>{};
@@ -485,5 +495,6 @@ ComparisonResult computeComparison(GraphResponse a, GraphResponse b, String summ
     graphB: b,
     unifiedRowMapping: mapping,
     summary: summary,
+    details: details,
   );
 }

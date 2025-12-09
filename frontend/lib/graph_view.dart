@@ -11,7 +11,8 @@ class GraphPainter extends CustomPainter {
   final WorkingState? working;
   final Set<String> selectedNodes;
   final List<String>? identicalCommitIds;
-  final Map<String, int>? customRowMapping; // New field
+  final Map<String, int>? customRowMapping;
+  final Map<String, Color>? customNodeColors; // New field
   static const double nodeRadius = 6;
 
   GraphPainter(
@@ -24,6 +25,7 @@ class GraphPainter extends CustomPainter {
     required this.selectedNodes,
     this.identicalCommitIds,
     this.customRowMapping,
+    this.customNodeColors,
   });
 
   static const List<Color> lanePalette = [
@@ -44,7 +46,6 @@ class GraphPainter extends CustomPainter {
     final commits = data.commits;
     final laneOf = _laneOfByBranches({for (final c in commits) c.id: c});
     final rowOf = <String, int>{};
-    final paintNode = Paint()..color = const Color(0xFF1976D2);
     final paintBorder = Paint()
       ..color = const Color(0xFF1976D2)
       ..style = PaintingStyle.stroke
@@ -97,6 +98,13 @@ class GraphPainter extends CustomPainter {
           childIds.map((id) => _colorOfCommit(id, colorMemo)).toSet();
       final isSplit = childIds.length >= 2 && childColors.length >= 2;
       final r = isSplit ? nodeRadius * 1.6 : nodeRadius;
+
+      Color nodeColor = const Color(0xFF1976D2);
+      if (customNodeColors != null && customNodeColors!.containsKey(c.id)) {
+        nodeColor = customNodeColors![c.id]!;
+      }
+
+      final paintNode = Paint()..color = nodeColor;
 
       if (c.id == currentHeadId) {
         final paintCurHead = Paint()
@@ -443,6 +451,7 @@ class SimpleGraphView extends StatefulWidget {
   final Function(String)? onPreviewCommit;
   final TransformationController? transformationController;
   final Map<String, int>? customRowMapping;
+  final Map<String, Color>? customNodeColors;
 
   const SimpleGraphView({
     super.key,
@@ -451,6 +460,7 @@ class SimpleGraphView extends StatefulWidget {
     this.onPreviewCommit,
     this.transformationController,
     this.customRowMapping,
+    this.customNodeColors,
   });
 
   @override
@@ -522,6 +532,7 @@ class _SimpleGraphViewState extends State<SimpleGraphView> {
                 working: null,
                 selectedNodes: _selectedNodes,
                 customRowMapping: widget.customRowMapping,
+                customNodeColors: widget.customNodeColors,
               ),
               size: _canvasSize!,
             ),
