@@ -921,6 +921,37 @@ Future<void> main(List<String> args) async {
     }
   });
 
+  router.post('/edge/add', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoPath = _sanitizePath(data['repoPath'] as String?);
+    final child = data['child'] as String?;
+    final parent = data['parent'] as String?;
+
+    if (repoPath.isEmpty || child == null || parent == null) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoPath, child, parent required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      final f = File(p.join(repoPath, 'edges'));
+      final lines = f.existsSync() ? await f.readAsLines() : <String>[];
+      if (lines.isEmpty) {
+        // Init with dummy commit id
+        lines.add('0000000000000000000000000000000000000000');
+      }
+      lines.add('$child $parent');
+      await f.writeAsString(lines.join('\n'));
+      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
   final handler =
       const Pipeline().addMiddleware(logRequests()).addHandler(router);
   final server = await serve((req) async => _cors(await handler(req)),
