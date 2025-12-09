@@ -150,10 +150,11 @@ class _BackupPageState extends State<BackupPage> {
     final gB = GraphData.fromJson(j['graphB']);
     final rawMapping = j['unifiedRowMapping'] as Map<String, dynamic>;
     final mapping = rawMapping.map((k, v) => MapEntry(k, v as int));
+    final summary = j['summary'] as String? ?? '';
 
     if (!mounted) return;
     setState(() {
-      _comparisons[sha] = ComparisonData(gA, gB, mapping);
+      _comparisons[sha] = ComparisonData(gA, gB, mapping, summary);
     });
   }
 
@@ -214,6 +215,7 @@ class _BackupPageState extends State<BackupPage> {
       final gB = GraphData.fromJson(j['graphB']);
       final rawMapping = j['unifiedRowMapping'] as Map<String, dynamic>;
       final mapping = rawMapping.map((k, v) => MapEntry(k, v as int));
+      final summary = j['summary'] as String? ?? '';
 
       if (!mounted) return;
       Navigator.push(
@@ -223,6 +225,7 @@ class _BackupPageState extends State<BackupPage> {
             graphA: gA,
             graphB: gB,
             rowMapping: mapping,
+            summary: summary,
             title: '对比: ${cA.substring(0, 7)} vs ${cB.substring(0, 7)}',
           ),
         ),
@@ -363,8 +366,21 @@ class _BackupPageState extends State<BackupPage> {
                               ),
                               const SizedBox(height: 12),
                               if (comparison != null)
-                                Center(
-                                  child: Row(
+                                Column(
+                                  children: [
+                                    if (comparison.summary.isNotEmpty)
+                                      Container(
+                                        width: double.infinity,
+                                        padding: const EdgeInsets.all(8.0),
+                                        color: Colors.grey[200],
+                                        margin: const EdgeInsets.only(bottom: 8.0),
+                                        child: Text(
+                                          comparison.summary,
+                                          style: const TextStyle(fontFamily: 'monospace'),
+                                        ),
+                                      ),
+                                    Center(
+                                      child: Row(
                                     mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
                                       // Backup Graph
@@ -417,7 +433,9 @@ class _BackupPageState extends State<BackupPage> {
                                       ),
                                     ],
                                   ),
-                                )
+                                ),
+                              ],
+                            )
                               else
                                 const SizedBox(
                                   height: 100,
@@ -441,6 +459,7 @@ class CompareResultPage extends StatefulWidget {
   final GraphData graphB;
   final Map<String, int> rowMapping;
   final String title;
+  final String summary;
 
   const CompareResultPage({
     super.key,
@@ -448,6 +467,7 @@ class CompareResultPage extends StatefulWidget {
     required this.graphB,
     required this.rowMapping,
     required this.title,
+    this.summary = '',
   });
 
   @override
@@ -461,12 +481,28 @@ class _CompareResultPageState extends State<CompareResultPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text(widget.title)),
-      body: Center(
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
+      body: Column(
+        children: [
+          if (widget.summary.isNotEmpty)
+            Container(
+              height: 150,
+              width: double.infinity,
+              padding: const EdgeInsets.all(8.0),
+              color: Colors.grey[200],
+              child: SingleChildScrollView(
+                child: Text(
+                  widget.summary,
+                  style: const TextStyle(fontFamily: 'monospace'),
+                ),
+              ),
+            ),
+          Expanded(
+            child: Center(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
               Column(
                 children: [
                   const Text("Commit A"),
@@ -505,8 +541,11 @@ class _CompareResultPageState extends State<CompareResultPage> {
                 ],
               ),
             ],
+            ),
           ),
         ),
+      ),
+        ],
       ),
     );
   }
@@ -516,5 +555,6 @@ class ComparisonData {
   final GraphData graphA;
   final GraphData graphB;
   final Map<String, int> mapping;
-  ComparisonData(this.graphA, this.graphB, this.mapping);
+  final String summary;
+  ComparisonData(this.graphA, this.graphB, this.mapping, this.summary);
 }

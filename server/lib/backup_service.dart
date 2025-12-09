@@ -345,6 +345,16 @@ Future<Map<String, dynamic>> getBackupChildGraph(
   return (await _getGraphFromGitDir(gitDir)).toJson();
 }
 
+Future<String> getSnapshotPath(String repoName, String commitId) async {
+  final snapshotPath = p.join(_checkoutBaseDir, repoName, commitId);
+  final snapshotDir = Directory(snapshotPath);
+  if (!await snapshotDir.exists()) {
+     // Try to ensure it exists? Or just throw
+     throw Exception('Snapshot not found for $commitId');
+  }
+  return snapshotPath;
+}
+
 Future<GraphResponse> _getGraphFromGitDir(String gitDir, {int? limit}) async {
   // We can use git --git-dir=... log ...
   // branches
