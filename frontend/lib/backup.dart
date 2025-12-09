@@ -408,17 +408,6 @@ class _BackupPageState extends State<BackupPage> {
                               if (comparison != null)
                                 Column(
                                   children: [
-                                    if (comparison.summary.isNotEmpty)
-                                      Container(
-                                        width: double.infinity,
-                                        padding: const EdgeInsets.all(8.0),
-                                        color: Colors.grey[200],
-                                        margin: const EdgeInsets.only(bottom: 8.0),
-                                        child: Text(
-                                          comparison.summary,
-                                          style: const TextStyle(fontFamily: 'monospace'),
-                                        ),
-                                      ),
                                     Center(
                                       child: Row(
                                     mainAxisAlignment: MainAxisAlignment.center,
