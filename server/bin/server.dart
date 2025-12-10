@@ -874,6 +874,7 @@ Future<void> main(List<String> args) async {
     final repoName = (data['repoName'] as String?)?.trim() ?? '';
     final username = (data['username'] as String?)?.trim() ?? '';
     final token = (data['token'] as String?)?.trim() ?? '';
+    final force = data['force'] == true;
 
     if (repoName.isEmpty || username.isEmpty || token.isEmpty) {
       return _cors(Response(400,
@@ -881,7 +882,7 @@ Future<void> main(List<String> args) async {
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
-      final result = await pullFromRemote(repoName, username, token);
+      final result = await pullFromRemote(repoName, username, token, force: force);
       return _cors(Response.ok(jsonEncode(result),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     } catch (e) {
