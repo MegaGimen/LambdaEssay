@@ -612,7 +612,7 @@ Future<void> main(List<String> args) async {
         
         final uniqueRepos = <String, Map<String, dynamic>>{};
         for (final r in allRepos) {
-           final name = r['name'] as String;
+           final name = (r['name'] as String).toLowerCase();
            uniqueRepos[name] = r;
         }
         
@@ -620,7 +620,7 @@ Future<void> main(List<String> args) async {
 
         if (repoPath != null && repoPath.isNotEmpty) {
            for (final r in uniqueRepos.values) {
-              final name = r['name'] as String;
+              final name = (r['name'] as String).toLowerCase();
               final cloneUrl = r['clone_url'] as String?;
               if (cloneUrl != null) {
                   await addRemote(repoPath, name, cloneUrl);

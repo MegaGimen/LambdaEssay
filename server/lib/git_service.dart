@@ -1055,6 +1055,7 @@ Future<void> _checkIfBehind(String repoPath, String remoteUrl) async {
 
 Future<Map<String, dynamic>> pullFromRemote(
     String repoName, String username, String token) async {
+  final remoteName = repoName.toLowerCase();
   final projDir = _projectDir(repoName);
   final dir = Directory(projDir);
   // Check if git repo exists inside. If dir exists but no .git, it's also considered fresh/broken.
@@ -1161,22 +1162,22 @@ Future<Map<String, dynamic>> pullFromRemote(
         // If not, maybe we should just pull (merge)? But user wants "force update".
         // Reset --hard to origin/<current> is the standard "force pull".
 
-        // We need to make sure 'origin' is set to remoteUrl
-        await _runGit(['remote', 'set-url', 'origin', remoteUrl], projDir);
+        // We need to make sure remote is set to remoteUrl
+        await addRemote(projDir, remoteName, remoteUrl);
 
-        await _runGit(['reset', '--hard', 'origin/$current'], projDir);
+        await _runGit(['reset', '--hard', '$remoteName/$current'], projDir);
       } else {
-        // Detached HEAD? Just checkout origin/HEAD?
+        // Detached HEAD? Just checkout remote/HEAD?
         // Or maybe we should checkout master?
-        // Let's try to checkout origin/HEAD
-        // await _runGit(['checkout', 'origin/HEAD'], projDir);
+        // Let's try to checkout remote/HEAD
+        // await _runGit(['checkout', '$remoteName/HEAD'], projDir);
         // Or better, checkout master and reset
         await _runGit(['checkout', 'master'], projDir);
-        await _runGit(['reset', '--hard', 'origin/master'], projDir);
+        await _runGit(['reset', '--hard', '$remoteName/master'], projDir);
       }
 
       // Also prune deleted remote branches
-      await _runGit(['remote', 'prune', 'origin'], projDir);
+      await _runGit(['remote', 'prune', remoteName], projDir);
     } catch (e) {
       // If standard pull fails (e.g. diverged too much or config broken), fallback to delete & clone?
       // Or just throw?
@@ -1189,10 +1190,10 @@ Future<Map<String, dynamic>> pullFromRemote(
     if (!base.existsSync()) {
       base.createSync(recursive: true);
     }
-    // git clone <url> <dir>
+    // git clone -o <remoteName> <url> <dir>
     final res = await Process.run(
       'git',
-      ['clone', remoteUrl, projDir],
+      ['clone', '-o', remoteName, remoteUrl, projDir],
       runInShell: true,
     );
     if (res.exitCode != 0) {
@@ -1218,7 +1219,9 @@ Future<Map<String, dynamic>> pullFromRemote(
       final parts = trimmed.split('/');
       if (parts.length < 2) continue;
 
-      // Assuming remote name is always the first part (origin)
+      // Assuming remote name is always the first part
+      if (parts[0] != remoteName) continue;
+
       // branch name is the rest
       final branchName = parts.sublist(1).join('/');
 
@@ -1289,27 +1292,23 @@ Future<List<String>> listProjects() async {
 }
 
 Future<void> rebasePull(String repoName, String username, String token) async {
+  final remoteName = repoName.toLowerCase();
   final projDir = _projectDir(repoName);
   final owner = await _resolveRepoOwner(repoName, token);
   final remoteUrl =
       'http://$username:$token@47.242.109.145:3000/$owner/$repoName.git';
 
   // Ensure remote is set correctly
-  try {
-    await _runGit(['remote', 'set-url', 'origin', remoteUrl], projDir);
-  } catch (e) {
-    // If origin doesn't exist, add it
-    await _runGit(['remote', 'add', 'origin', remoteUrl], projDir);
-  }
+  await addRemote(projDir, remoteName, remoteUrl);
 
-  // git pull --rebase origin <current_branch>
+  // git pull --rebase remoteName <current_branch>
   final current = await getCurrentBranch(projDir);
   if (current == null) throw Exception('Cannot rebase in detached HEAD state');
 
   try {
     print('Executing rebase pull with -X theirs (favoring local changes)...');
     await _runGit(
-        ['pull', '--rebase', '-X', 'theirs', 'origin', current], projDir);
+        ['pull', '--rebase', '-X', 'theirs', remoteName, current], projDir);
   } catch (e) {
     // If rebase fails, abort it to restore state
     try {
@@ -1328,6 +1327,7 @@ Future<void> rebasePull(String repoName, String username, String token) async {
 }
 
 Future<void> forkAndReset(String repoName, String newBranchName) async {
+  final remoteName = repoName.toLowerCase();
   final projDir = _projectDir(repoName);
   final current = await getCurrentBranch(projDir);
   if (current == null) throw Exception('Cannot fork in detached HEAD state');
@@ -1335,8 +1335,8 @@ Future<void> forkAndReset(String repoName, String newBranchName) async {
   // 1. Create new branch from current HEAD
   await _runGit(['branch', newBranchName], projDir);
 
-  // 2. Reset current branch to remote (assuming origin/current)
-  // We assume we want to make 'current' match 'origin/current'
+  // 2. Reset current branch to remote (assuming remoteName/current)
+  // We assume we want to make 'current' match 'remoteName/current'
   // and keep 'newBranchName' as the one with local changes.
 
   // But wait, if we are in "Push rejected" scenario (local ahead of remote, but non-fast-forward):
@@ -1353,21 +1353,21 @@ Future<void> forkAndReset(String repoName, String newBranchName) async {
 
   // Let's implement the "Pull-Fork" logic:
   // 1. Create new branch pointing to current HEAD.
-  // 2. Fetch origin (to be sure).
-  // 3. Reset current branch to origin/current.
+  // 2. Fetch remote (to be sure).
+  // 3. Reset current branch to remote/current.
   // 4. Checkout new branch.
 
-  await _runGit(['fetch', 'origin'], projDir);
+  await _runGit(['fetch', remoteName], projDir);
 
-  // Check if origin/current exists
+  // Check if remote/current exists
   bool remoteExists = false;
   try {
-    await _runGit(['rev-parse', '--verify', 'origin/$current'], projDir);
+    await _runGit(['rev-parse', '--verify', '$remoteName/$current'], projDir);
     remoteExists = true;
   } catch (_) {}
 
   if (remoteExists) {
-    await _runGit(['reset', '--hard', 'origin/$current'], projDir);
+    await _runGit(['reset', '--hard', '$remoteName/$current'], projDir);
   }
 
   // Checkout the new branch (which has the preserved local changes)

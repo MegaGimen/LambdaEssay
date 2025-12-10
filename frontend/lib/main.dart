@@ -837,7 +837,7 @@ class _GraphPageState extends State<GraphPage> {
             );
           }
         } else {
-          setState(() => error = '拉取失败: $message');
+          setState(() => error = '拉取失败，位于onPull: $message');
         }
         return;
       }
@@ -909,7 +909,7 @@ class _GraphPageState extends State<GraphPage> {
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('拉取成功')));
     } catch (e) {
-      setState(() => error = '拉取失败: $e');
+      setState(() => error = '拉取失败，什么玩意: $e');
     } finally {
       setState(() => loading = false);
     }
