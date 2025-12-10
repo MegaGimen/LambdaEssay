@@ -666,12 +666,14 @@ Future<bool> _checkDocxIdentical(String path1, String path2) async {
 
     final resp = await req.close();
     if (resp.statusCode != 200) {
+      throw Exception('checkError_AjQkqweoqwe');
       return false;
     }
     final bodyStr = await utf8.decodeStream(resp);
     final body = jsonDecode(bodyStr) as Map<String, dynamic>;
     return body['identical'] == true;
   } catch (e) {
+    throw Exception(e);
     // Service might be down or error, fallback to safe "not identical" -> triggering copy & git diff
     return false;
   }
