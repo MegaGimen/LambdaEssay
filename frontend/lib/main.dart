@@ -602,6 +602,12 @@ class _GraphPageState extends State<GraphPage> {
             onPressed: () => Navigator.pop(ctx, 'rebase'),
             child: const Text('在远程提交后附着 (Rebase)'),
           ),
+          if (!isPush)
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              onPressed: () => Navigator.pop(ctx, 'force'),
+              child: const Text('强制覆盖 (Force Overwrite)'),
+            ),
         ],
       ),
     );
@@ -610,6 +616,32 @@ class _GraphPageState extends State<GraphPage> {
       await _doRebasePull(isPush: isPush);
     } else if (choice == 'fork') {
       await _doForkLocal(isPush: isPush);
+    } else if (choice == 'force') {
+      await _doForcePull();
+    }
+  }
+
+  Future<void> _doForcePull() async {
+    setState(() => loading = true);
+    try {
+      await _postJson('http://localhost:8080/pull', {
+        'repoName': currentProjectName,
+        'username': _username,
+        'token': _token,
+        'force': true,
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('强制拉取成功')),
+        );
+      }
+      await _load();
+      await _onUpdateRepo();
+    } catch (e) {
+      setState(() => error = '强制拉取失败: $e');
+    } finally {
+      setState(() => loading = false);
     }
   }
 
@@ -742,7 +774,6 @@ class _GraphPageState extends State<GraphPage> {
     setState(() => loading = false);
 
     String? selected = projects.isNotEmpty ? projects.first : null;
-    bool force = false;
 
     final ok = await showDialog<bool>(
       context: context,
@@ -771,14 +802,6 @@ class _GraphPageState extends State<GraphPage> {
                           setState(() => selected = v);
                         },
                       ),
-                const SizedBox(height: 16),
-                CheckboxListTile(
-                  title: const Text('强制覆盖 (慎用)'),
-                  subtitle: const Text('将重置所有分支到远程状态'),
-                  value: force,
-                  onChanged: (v) => setState(() => force = v ?? false),
-                  controlAffinity: ListTileControlAffinity.leading,
-                ),
               ],
             ),
           ),
@@ -808,7 +831,6 @@ class _GraphPageState extends State<GraphPage> {
         'repoName': repoName,
         'username': _username,
         'token': _token,
-        'force': force,
       });
 
       final status = resp['status'] as String?;
