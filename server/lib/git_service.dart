@@ -31,12 +31,16 @@ Future<List<String>> _runGit(List<String> args, String repoPath) async {
       stderrEncoding: utf8,
     );
     if (res.exitCode != 0) {
+      print("git的commit的exitCode不为0，我了个骚杠啊");
+      print(res.stderr);
+      print(res.stdout);
       throw Exception(res.stderr is String ? res.stderr : 'git error');
     }
     final out =
         res.stdout is String ? res.stdout as String : utf8.decode(res.stdout);
     return LineSplitter.split(out).toList();
   } on FormatException {
+    print("Git format error!!!");
     // Fallback for non-UTF8 output (e.g. windows system locale)
     final res = await Process.run(
       'git',
@@ -45,6 +49,7 @@ Future<List<String>> _runGit(List<String> args, String repoPath) async {
       stderrEncoding: systemEncoding,
     );
     if (res.exitCode != 0) {
+      print("fqewbjklhhjiqewfuuo");
       throw Exception(res.stderr is String ? res.stderr : 'git error');
     }
     final out = res.stdout as String;
@@ -174,6 +179,7 @@ Future<void> commitChanges(
   // Ensure author format "Name <email>"
   final safeAuthor = author.trim().isEmpty ? 'Unknown' : author.trim();
   final authorArg = '$safeAuthor <$safeAuthor@gitdocx.local>';
+  print("Ready to commit?");
   await _runGit(['commit', '--author=$authorArg', '-m', message], repoPath);
   clearCache();
 }
@@ -1157,8 +1163,11 @@ Future<Map<String, dynamic>> pullFromRemote(
 
     // Instead of deleting and re-cloning, we try standard git fetch + reset
     try {
-      // 1. Fetch from remote
-      await _runGit(['fetch', remoteUrl], projDir);
+      // 0. Ensure remote exists and is correct
+      await addRemote(projDir, remoteName, remoteUrl);
+
+      // 1. Fetch from remote (using remote name to update local remote refs)
+      await _runGit(['fetch', remoteName], projDir);
 
       // 2. Get current branch
       final current = await getCurrentBranch(projDir);
@@ -1170,7 +1179,7 @@ Future<Map<String, dynamic>> pullFromRemote(
 
       if (current != null) {
         // Try to find upstream
-        // But since we use custom remote url, we might not have upstream configured?
+        // But since we use custom remote url, we might have upstream configured?
         // We configured remote 'origin' when cloning (implicitly).
         // But here remoteUrl is passed explicitly.
         // Let's assume 'origin' maps to remoteUrl.
@@ -1182,9 +1191,6 @@ Future<Map<String, dynamic>> pullFromRemote(
         // Check if origin/<current> exists
         // If not, maybe we should just pull (merge)? But user wants "force update".
         // Reset --hard to origin/<current> is the standard "force pull".
-
-        // We need to make sure remote is set to remoteUrl
-        await addRemote(projDir, remoteName, remoteUrl);
 
         await _runGit(['reset', '--hard', '$remoteName/$current'], projDir);
       } else {
