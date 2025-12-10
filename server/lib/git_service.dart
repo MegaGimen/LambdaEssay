@@ -1659,24 +1659,14 @@ Future<void> completeMerge(String repoName, String targetBranch) async {
   // Case 1: Current exists, Target null -> Keep Current (Do nothing)
   // Case 4: Both null -> Do nothing
 
-  // 3. Commit
-  print('Committing merge changes...');
-
-  // Resolve target hash before commit just in case
+  // Resolve target hash early for edge update
   final targetHashLines = await _runGit(['rev-parse', targetBranch], projDir);
   final targetHash =
       targetHashLines.isNotEmpty ? targetHashLines.first.trim() : null;
 
-  await _runGit(['add', '.'], projDir);
-  // We need a commit message.
-  await _runGit([
-    'commit',
-    '-m',
-    'Merge branch \'$targetBranch\' into HEAD (Binary Resolved)'
-  ], projDir);
-  // 4. Update edges file
+  // 4. Update edges file with new connection (Moved BEFORE Commit)
+  // This ensures the new edge line is included in the merge commit.
   if (targetHash != null && oldHead != null) {
-    final edgesFile = File(p.join(projDir, 'edges'));
     final lines =
         edgesFile.existsSync() ? await edgesFile.readAsLines() : <String>[];
     if (lines.isEmpty) {
@@ -1690,11 +1680,19 @@ Future<void> completeMerge(String repoName, String targetBranch) async {
     if (!lines.contains(edgeLine)) {
       lines.add(edgeLine);
       await edgesFile.writeAsString(lines.join('\n'));
-
-      //await _runGit(['add', 'edges'], projDir);
-      //await _runGit(['commit', '-m', 'Update edges'], projDir);
     }
   }
+
+  // 3. Commit
+  print('Committing merge changes...');
+
+  await _runGit(['add', '.'], projDir);
+  // We need a commit message.
+  await _runGit([
+    'commit',
+    '-m',
+    'Merge branch \'$targetBranch\' into HEAD (Binary Resolved)'
+  ], projDir);
 
   print('Clearing cache after merge...');
   clearCache();
