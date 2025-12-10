@@ -870,9 +870,10 @@ Future<String> _resolveRepoOwner(String repoName, String token) async {
   };
 
   String? findOwnerInList(List<dynamic> list) {
+    print("Searching For Reponame=${repoName}");
     for (final repo in list) {
-      print("${repo['name']}");
-      if (repo['name'] == repoName) {
+      print("repo['name'].toLowerCase()=${repo['name'].toLowerCase()},");
+      if (repo['name'].toLowerCase() == repoName) {
         return repo['owner']['login'] as String;
       }
     }
