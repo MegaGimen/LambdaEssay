@@ -624,12 +624,17 @@ class _GraphPageState extends State<GraphPage> {
   Future<void> _doForcePull() async {
     setState(() => loading = true);
     try {
-      await _postJson('http://localhost:8080/pull', {
+      final resp = await _postJson('http://localhost:8080/pull', {
         'repoName': currentProjectName,
         'username': _username,
         'token': _token,
         'force': true,
       });
+
+      final isFresh = resp['isFresh'] == true;
+      if (currentProjectName != null) {
+        await _checkAndSetupTracking(currentProjectName!, isFresh);
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -737,6 +742,65 @@ class _GraphPageState extends State<GraphPage> {
       setState(() => error = '分叉失败: $e');
     } finally {
       setState(() => loading = false);
+    }
+  }
+
+  Future<void> _checkAndSetupTracking(String repoName, bool isFresh) async {
+    setState(() {
+      if (isFresh) {
+        currentProjectName = repoName;
+      }
+    });
+
+    if (isFresh) {
+      final docxCtrl = TextEditingController();
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('设置追踪文档'),
+          content: SizedBox(
+            width: 400,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('这是一个新的克隆（或已被重置），请重新设置要追踪的Word文档(.docx)'),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: docxCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'docx文件路径 c:\\path\\to\\file.docx',
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('确定'),
+            ),
+          ],
+        ),
+      );
+      if (ok == true) {
+        final docx = docxCtrl.text.trim();
+        if (docx.isNotEmpty) {
+          try {
+            await _postJson('http://localhost:8080/track/update', {
+              'name': repoName,
+              'newDocxPath': docx,
+            });
+            setState(() {
+              docxPathCtrl.text = docx;
+            });
+          } catch (e) {
+            if (mounted) {
+              ScaffoldMessenger.of(context)
+                  .showSnackBar(SnackBar(content: Text('设置文档失败: $e')));
+            }
+          }
+        }
+      }
     }
   }
 
@@ -876,62 +940,7 @@ class _GraphPageState extends State<GraphPage> {
 
       final isFresh = resp['isFresh'] == true;
 
-      setState(() {
-        // If fresh clone, user needs to set up tracking document
-        if (isFresh) {
-          currentProjectName = repoName;
-        }
-      });
-
-      if (isFresh) {
-        // Ask for docx path
-        final docxCtrl = TextEditingController();
-        final ok = await showDialog<bool>(
-          context: context,
-          builder: (_) => AlertDialog(
-            title: const Text('设置追踪文档'),
-            content: SizedBox(
-              width: 400,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('这是一个新的克隆，请选择要追踪的Word文档(.docx)'),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: docxCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'docx文件路径 c:\\path\\to\\file.docx',
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              ElevatedButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('确定'),
-              ),
-            ],
-          ),
-        );
-        if (ok == true) {
-          final docx = docxCtrl.text.trim();
-          if (docx.isNotEmpty) {
-            try {
-              await _postJson('http://localhost:8080/track/update', {
-                'name': repoName,
-                'newDocxPath': docx,
-              });
-              setState(() {
-                docxPathCtrl.text = docx;
-              });
-            } catch (e) {
-              ScaffoldMessenger.of(context)
-                  .showSnackBar(SnackBar(content: Text('设置文档失败: $e')));
-            }
-          }
-        }
-      }
+      await _checkAndSetupTracking(repoName, isFresh);
 
       // Reload again to update graph if needed (e.g. fresh clone or new commits)
       await _load();

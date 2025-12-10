@@ -70,8 +70,7 @@ Future<void> main(List<String> args) async {
     if (File(heideggerPath).existsSync()) {
       await _killPort(5000);
       print('Starting Heidegger service from $heideggerPath...');
-      final process =
-          await Process.start(heideggerPath, [], mode: ProcessStartMode.normal);
+      await Process.start(heideggerPath, [], mode: ProcessStartMode.normal);
     } else {
       print('Heidegger.exe not found at $heideggerPath');
     }
@@ -609,23 +608,23 @@ Future<void> main(List<String> args) async {
         final member = jsonDecode(respMember.body) as List;
 
         final allRepos = [...owned, ...member];
-        
+
         final uniqueRepos = <String, Map<String, dynamic>>{};
         for (final r in allRepos) {
-           final name = (r['name'] as String).toLowerCase();
-           uniqueRepos[name] = r;
+          final name = (r['name'] as String).toLowerCase();
+          uniqueRepos[name] = r;
         }
-        
+
         final repoNames = uniqueRepos.keys.toList();
 
         if (repoPath != null && repoPath.isNotEmpty) {
-           for (final r in uniqueRepos.values) {
-              final name = (r['name'] as String).toLowerCase();
-              final cloneUrl = r['clone_url'] as String?;
-              if (cloneUrl != null) {
-                  await addRemote(repoPath, name, cloneUrl);
-              }
-           }
+          for (final r in uniqueRepos.values) {
+            final name = (r['name'] as String).toLowerCase();
+            final cloneUrl = r['clone_url'] as String?;
+            if (cloneUrl != null) {
+              await addRemote(repoPath, name, cloneUrl);
+            }
+          }
         }
 
         return _cors(Response.ok(jsonEncode(repoNames), headers: {
@@ -882,7 +881,9 @@ Future<void> main(List<String> args) async {
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
-      final result = await pullFromRemote(repoName, username, token, force: force);
+      final result =
+          await pullFromRemote(repoName, username, token, force: force);
+      print("pullResult=${result}");
       return _cors(Response.ok(jsonEncode(result),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     } catch (e) {
