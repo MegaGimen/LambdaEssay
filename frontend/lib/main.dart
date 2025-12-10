@@ -742,6 +742,7 @@ class _GraphPageState extends State<GraphPage> {
     setState(() => loading = false);
 
     String? selected = projects.isNotEmpty ? projects.first : null;
+    bool force = false;
 
     final ok = await showDialog<bool>(
       context: context,
@@ -770,6 +771,14 @@ class _GraphPageState extends State<GraphPage> {
                           setState(() => selected = v);
                         },
                       ),
+                const SizedBox(height: 16),
+                CheckboxListTile(
+                  title: const Text('强制覆盖 (慎用)'),
+                  subtitle: const Text('将重置所有分支到远程状态'),
+                  value: force,
+                  onChanged: (v) => setState(() => force = v ?? false),
+                  controlAffinity: ListTileControlAffinity.leading,
+                ),
               ],
             ),
           ),
@@ -799,6 +808,7 @@ class _GraphPageState extends State<GraphPage> {
         'repoName': repoName,
         'username': _username,
         'token': _token,
+        'force': force,
       });
 
       final status = resp['status'] as String?;
@@ -3417,13 +3427,11 @@ class GraphPainter extends CustomPainter {
     // 构造来自分支链的父->子关系，以及对每个边对的出现次数
     final children = <String, List<String>>{}; // parent -> [child]
     final pairCount = <String, int>{};
-    print('DEBUG: Chains data detailed:');
     for (final entry in data.chains.entries) {
       final ids = entry.value;
       for (var i = 0; i + 1 < ids.length; i++) {
         final child = ids[i];
         final parent = ids[i + 1];
-        print('DEBUG: Chain Edge: ${child.substring(0,7)} -> ${parent.substring(0,7)} (Branch: ${entry.key})');
         (children[parent] ??= <String>[]).add(child);
         final key = '$child|$parent';
         pairCount[key] = (pairCount[key] ?? 0) + 1;
@@ -3557,8 +3565,6 @@ class GraphPainter extends CustomPainter {
 
         paintEdge.strokeWidth = isCurrent ? 4.0 : (isHover ? 3.0 : 2.0);
 
-        // DEBUG: Print drawing edge from Chains
-        print('DEBUG: Drawing Edge (Chain): ${child.substring(0,7)} -> ${parent.substring(0,7)}');
 
         canvas.drawPath(path, paintEdge);
       }
@@ -3603,8 +3609,6 @@ class GraphPainter extends CustomPainter {
           final px = laneP * laneWidth + laneWidth / 2;
           final py = rowP * rowHeight + rowHeight / 2;
 
-          // DEBUG: Print missing first parent edge
-          print('DEBUG: Re-drawing missing First Parent edge: ${c.id.substring(0,7)} -> ${p0Id.substring(0,7)}');
 
           final paintMain = Paint()
             ..style = PaintingStyle.stroke
