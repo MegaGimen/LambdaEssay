@@ -271,6 +271,7 @@ Future<Map<String, List<String>>> getBranchChains(
   for (final b in branches) {
     final args = [
       'log',
+      '--first-parent',
       '--topo-order',
       '--date=iso',
       '--encoding=UTF-8',
