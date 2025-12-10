@@ -1072,6 +1072,21 @@ Future<Map<String, dynamic>> pullFromRemote(
   Map<String, dynamic>? savedTracking;
   bool isFresh = !dir.existsSync() || !gitDir.existsSync();
 
+  if (!isFresh && force) {
+    // Force pull mode: delete local repo and treat as fresh clone
+    try {
+      savedTracking = await _readTracking(repoName);
+    } catch (_) {}
+    try {
+      if (dir.existsSync()) {
+        dir.deleteSync(recursive: true);
+      }
+      isFresh = true;
+    } catch (e) {
+      throw Exception('Failed to delete local repository for force pull: $e');
+    }
+  }
+
   if (!isFresh) {
     // Check safety before destroying
     if (!force) {
@@ -1259,7 +1274,7 @@ Future<Map<String, dynamic>> pullFromRemote(
   // If it exists locally, it stays. If it doesn't, we don't create it here (createTrackingProject does that).
   // We also DO NOT sync savedTracking back to disk because tracking.json is local config.
 
-  if (!isFresh && savedTracking != null && savedTracking.isNotEmpty) {
+  if (savedTracking != null && savedTracking.isNotEmpty) {
     // Restore Docx path if needed?
     // Actually, if we just pulled, we might have new content in repoDocxPath.
     // But we don't want to overwrite tracking.json.
