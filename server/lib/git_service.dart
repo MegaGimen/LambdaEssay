@@ -134,7 +134,7 @@ Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
     final rawParents = parts[1].trim().isEmpty
         ? <String>[]
         : parts[1].trim().split(RegExp(r'\s+'));
-    
+
     final parents = rawParents;
 
     final dec = parts[2];
@@ -869,6 +869,7 @@ Future<String> _resolveRepoOwner(String repoName, String token) async {
 
   String? findOwnerInList(List<dynamic> list) {
     for (final repo in list) {
+      print("${repo['name']}");
       if (repo['name'] == repoName) {
         return repo['owner']['login'] as String;
       }
@@ -882,6 +883,7 @@ Future<String> _resolveRepoOwner(String repoName, String token) async {
         headers: headers);
     if (resp.statusCode == 200) {
       final owner = findOwnerInList(jsonDecode(resp.body));
+      print('ownerList:$owner');
       if (owner != null) return owner;
     }
   } catch (e) {
@@ -895,6 +897,7 @@ Future<String> _resolveRepoOwner(String repoName, String token) async {
         headers: headers);
     if (resp.statusCode == 200) {
       final owner = findOwnerInList(jsonDecode(resp.body));
+      print('memberList:$owner');
       if (owner != null) return owner;
     }
   } catch (e) {
@@ -1593,10 +1596,11 @@ Future<void> completeMerge(String repoName, String targetBranch) async {
 
   // 3. Commit
   print('Committing merge changes...');
-  
+
   // Resolve target hash before commit just in case
   final targetHashLines = await _runGit(['rev-parse', targetBranch], projDir);
-  final targetHash = targetHashLines.isNotEmpty ? targetHashLines.first.trim() : null;
+  final targetHash =
+      targetHashLines.isNotEmpty ? targetHashLines.first.trim() : null;
 
   await _runGit(['add', '.'], projDir);
   // We need a commit message.
@@ -1608,23 +1612,24 @@ Future<void> completeMerge(String repoName, String targetBranch) async {
 
   // 4. Update edges file
   if (targetHash != null && oldHead != null) {
-       final edgesFile = File(p.join(projDir, 'edges'));
-       final lines = edgesFile.existsSync() ? await edgesFile.readAsLines() : <String>[];
-       if (lines.isEmpty) {
-          // Placeholder for first line
-          lines.add('0000000000000000000000000000000000000000');
-       }
-       // User requested edge: Old Head -> Target Head
-       // (Instead of Merge Head -> Target Head)
-       // This draws a line connecting the two branch tips before the merge commit.
-       final edgeLine = '$oldHead $targetHash';
-       if (!lines.contains(edgeLine)) {
-          lines.add(edgeLine);
-          await edgesFile.writeAsString(lines.join('\n'));
-          
-          await _runGit(['add', 'edges'], projDir);
-          await _runGit(['commit', '-m', 'Update edges'], projDir);
-       }
+    final edgesFile = File(p.join(projDir, 'edges'));
+    final lines =
+        edgesFile.existsSync() ? await edgesFile.readAsLines() : <String>[];
+    if (lines.isEmpty) {
+      // Placeholder for first line
+      lines.add('0000000000000000000000000000000000000000');
+    }
+    // User requested edge: Old Head -> Target Head
+    // (Instead of Merge Head -> Target Head)
+    // This draws a line connecting the two branch tips before the merge commit.
+    final edgeLine = '$oldHead $targetHash';
+    if (!lines.contains(edgeLine)) {
+      lines.add(edgeLine);
+      await edgesFile.writeAsString(lines.join('\n'));
+
+      await _runGit(['add', 'edges'], projDir);
+      await _runGit(['commit', '-m', 'Update edges'], projDir);
+    }
   }
 
   print('Clearing cache after merge...');
