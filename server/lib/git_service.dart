@@ -192,6 +192,21 @@ Future<void> switchBranch(String projectName, String branchName) async {
   clearCache();
 }
 
+Future<void> addRemote(String repoPath, String name, String url) async {
+  try {
+    final remotes = await _runGit(['remote'], repoPath);
+    if (remotes.contains(name)) {
+      // Update existing remote
+      await _runGit(['remote', 'set-url', name, url], repoPath);
+    } else {
+      await _runGit(['remote', 'add', name, url], repoPath);
+    }
+  } catch (e) {
+    print('Failed to add/update remote $name: $e');
+    // Don't throw, just log
+  }
+}
+
 Future<Uint8List> compareWorking(String repoPath) async {
   final docxAbs = _findRepoDocx(repoPath);
   if (docxAbs == null) {

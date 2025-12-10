@@ -720,7 +720,10 @@ class _GraphPageState extends State<GraphPage> {
       final resp = await http.post(
         Uri.parse('http://localhost:8080/remote/list'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'token': _token}),
+        body: jsonEncode({
+          'token': _token,
+          'repoPath': pathCtrl.text.trim(),
+        }),
       );
       if (resp.statusCode != 200) {
         throw Exception(resp.body);

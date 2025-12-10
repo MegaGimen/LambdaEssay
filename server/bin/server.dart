@@ -577,6 +577,7 @@ Future<void> main(List<String> args) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
     final token = data['token'] as String?;
+    final repoPath = data['repoPath'] as String?;
 
     if (token == null || token.isEmpty) {
       return _cors(Response(400,
@@ -608,9 +609,24 @@ Future<void> main(List<String> args) async {
         final member = jsonDecode(respMember.body) as List;
 
         final allRepos = [...owned, ...member];
-        // Deduplicate by name just in case
-        final repoNames =
-            allRepos.map((r) => r['name'] as String).toSet().toList();
+        
+        final uniqueRepos = <String, Map<String, dynamic>>{};
+        for (final r in allRepos) {
+           final name = r['name'] as String;
+           uniqueRepos[name] = r;
+        }
+        
+        final repoNames = uniqueRepos.keys.toList();
+
+        if (repoPath != null && repoPath.isNotEmpty) {
+           for (final r in uniqueRepos.values) {
+              final name = r['name'] as String;
+              final cloneUrl = r['clone_url'] as String?;
+              if (cloneUrl != null) {
+                  await addRemote(repoPath, name, cloneUrl);
+              }
+           }
+        }
 
         return _cors(Response.ok(jsonEncode(repoNames), headers: {
           'Content-Type': 'application/json; charset=utf-8',
