@@ -167,8 +167,10 @@ Future<void> commitChanges(
     String repoPath, String author, String message) async {
   await _runGit(['add', '*.docx'], repoPath);
   if (File(p.join(repoPath, 'edges')).existsSync()) {
+    print("edge文件存在！");
     await _runGit(['add', 'edges'], repoPath);
   }
+  print("edge文件真存在吗？");
   // Ensure author format "Name <email>"
   final safeAuthor = author.trim().isEmpty ? 'Unknown' : author.trim();
   final authorArg = '$safeAuthor <$safeAuthor@gitdocx.local>';
@@ -1606,6 +1608,7 @@ Future<void> completeMerge(String repoName, String targetBranch) async {
   // So we just need to `git add` the file and `git commit`.
 
   try {
+    print('gonna merge');
     await _runGit(
         ['merge', '--no-commit', '--no-ff', '-s', 'ours', targetBranch],
         projDir);
@@ -1619,6 +1622,42 @@ Future<void> completeMerge(String repoName, String targetBranch) async {
       throw e;
     }
   }
+
+  // Handle edges file merging manually (since we use -s ours)
+  final edgesFile = File(p.join(projDir, 'edges'));
+  List<String>? targetEdgesLines;
+  try {
+    targetEdgesLines = await _runGit(['show', '$targetBranch:edges'], projDir);
+  } catch (_) {
+    // Target likely has no edges file
+  }
+
+  if (edgesFile.existsSync() &&
+      targetEdgesLines != null &&
+      targetEdgesLines.isNotEmpty) {
+    // Case 3: Both exist -> Merge Algorithm
+    final currentLines = await edgesFile.readAsLines();
+
+    // Strip first line (dummy commit id)
+    if (currentLines.isNotEmpty) currentLines.removeAt(0);
+    // Strip first line from target as well
+    if (targetEdgesLines.isNotEmpty) targetEdgesLines.removeAt(0);
+
+    // Merge (Set union)
+    final merged = <String>{...currentLines, ...targetEdgesLines};
+    print("both exist");
+    // Write back with dummy header
+    await edgesFile.writeAsString(
+        '0000000000000000000000000000000000000000\n${merged.join('\n')}');
+  } else if (!edgesFile.existsSync() &&
+      targetEdgesLines != null &&
+      targetEdgesLines.isNotEmpty) {
+    // Case 2: Current null, Target exists -> Use Target
+    print("target exist");
+    await edgesFile.writeAsString(targetEdgesLines.join('\n'));
+  }
+  // Case 1: Current exists, Target null -> Keep Current (Do nothing)
+  // Case 4: Both null -> Do nothing
 
   // 3. Commit
   print('Committing merge changes...');
@@ -1635,7 +1674,6 @@ Future<void> completeMerge(String repoName, String targetBranch) async {
     '-m',
     'Merge branch \'$targetBranch\' into HEAD (Binary Resolved)'
   ], projDir);
-
   // 4. Update edges file
   if (targetHash != null && oldHead != null) {
     final edgesFile = File(p.join(projDir, 'edges'));
@@ -1653,8 +1691,8 @@ Future<void> completeMerge(String repoName, String targetBranch) async {
       lines.add(edgeLine);
       await edgesFile.writeAsString(lines.join('\n'));
 
-      await _runGit(['add', 'edges'], projDir);
-      await _runGit(['commit', '-m', 'Update edges'], projDir);
+      //await _runGit(['add', 'edges'], projDir);
+      //await _runGit(['commit', '-m', 'Update edges'], projDir);
     }
   }
 
