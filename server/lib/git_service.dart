@@ -1057,7 +1057,8 @@ Future<void> _checkIfBehind(String repoPath, String remoteUrl) async {
 }
 
 Future<Map<String, dynamic>> pullFromRemote(
-    String repoName, String username, String token) async {
+    String repoName, String username, String token,
+    {bool force = false}) async {
   final remoteName = repoName.toLowerCase();
   final projDir = _projectDir(repoName);
   final dir = Directory(projDir);
@@ -1073,65 +1074,66 @@ Future<Map<String, dynamic>> pullFromRemote(
 
   if (!isFresh) {
     // Check safety before destroying
-
-    // 1. Use our semantic check (updateTrackingProject) instead of raw git status
-    // If updateTrackingProject says "workingChanged": true, it means we have meaningful changes (content diff)
-    // If false, it means files are identical to HEAD (even if metadata changed), so it's safe to overwrite.
-    try {
-      // Check if tracking.json exists first
-      final trackingFile = _trackingFile(repoName);
-      if (trackingFile.existsSync()) {
-        print("Debug tracking file");
-        print(trackingFile);
-        // Force reset working directory to HEAD to allow pull
-        // This discards local repo changes, but external file changes are preserved
-        // and will be re-synced after pull.
-        try {
-          await _runGit(['checkout', 'HEAD', '--', '.'], projDir);
-        } catch (e) {
-          print("Force checkout failed (maybe no HEAD yet): $e");
+    if (!force) {
+      // 1. Use our semantic check (updateTrackingProject) instead of raw git status
+      // If updateTrackingProject says "workingChanged": true, it means we have meaningful changes (content diff)
+      // If false, it means files are identical to HEAD (even if metadata changed), so it's safe to overwrite.
+      try {
+        // Check if tracking.json exists first
+        final trackingFile = _trackingFile(repoName);
+        if (trackingFile.existsSync()) {
+          print("Debug tracking file");
+          print(trackingFile);
+          // Force reset working directory to HEAD to allow pull
+          // This discards local repo changes, but external file changes are preserved
+          // and will be re-synced after pull.
+          try {
+            await _runGit(['checkout', 'HEAD', '--', '.'], projDir);
+          } catch (e) {
+            print("Force checkout failed (maybe no HEAD yet): $e");
+          }
+        } else {
+          // If tracking.json doesn't exist, we assume it's a fresh state or broken tracking.
+          // In this case, we skip the check and allow pull to proceed (force pull behavior as requested).
+          print(
+              "No tracking.json found for $repoName, skipping local changes check.");
         }
-      } else {
-        // If tracking.json doesn't exist, we assume it's a fresh state or broken tracking.
-        // In this case, we skip the check and allow pull to proceed (force pull behavior as requested).
-        print(
-            "No tracking.json found for $repoName, skipping local changes check.");
+      } catch (e) {
+        // If update failed, maybe repo is broken, proceed with caution or fail?
+        // Let's assume if we can't verify, we block to be safe, unless it's just a minor error.
+        print("Pre-pull check warning: $e");
       }
-    } catch (e) {
-      // If update failed, maybe repo is broken, proceed with caution or fail?
-      // Let's assume if we can't verify, we block to be safe, unless it's just a minor error.
-      print("Pre-pull check warning: $e");
-    }
 
-    // 2. Check if local is newer than remote
-    try {
-      // Fetch remote head to FETCH_HEAD
-      // We use the remoteUrl directly to be sure
-      await _runGit(['fetch', remoteUrl, 'HEAD'], projDir);
+      // 2. Check if local is newer than remote
+      try {
+        // Fetch remote head to FETCH_HEAD
+        // We use the remoteUrl directly to be sure
+        await _runGit(['fetch', remoteUrl, 'HEAD'], projDir);
 
-      // Check if HEAD is ancestor of FETCH_HEAD
-      // If HEAD is ancestor of FETCH_HEAD (remote), it means we are behind (safe to fast-forward/reset).
-      // If HEAD is NOT ancestor, it means we have local commits not in remote (ahead or diverged).
-      final mergeBaseRes = await Process.run(
-        'git',
-        ['merge-base', '--is-ancestor', 'HEAD', 'FETCH_HEAD'],
-        workingDirectory: projDir,
-        runInShell: true,
-      );
+        // Check if HEAD is ancestor of FETCH_HEAD
+        // If HEAD is ancestor of FETCH_HEAD (remote), it means we are behind (safe to fast-forward/reset).
+        // If HEAD is NOT ancestor, it means we have local commits not in remote (ahead or diverged).
+        final mergeBaseRes = await Process.run(
+          'git',
+          ['merge-base', '--is-ancestor', 'HEAD', 'FETCH_HEAD'],
+          workingDirectory: projDir,
+          runInShell: true,
+        );
 
-      // exitCode 0 means true (is ancestor)
-      // exitCode 1 means false (not ancestor)
-      if (mergeBaseRes.exitCode != 0) {
-        return {
-          'status': 'error',
-          'errorType': 'ahead',
-          'path': projDir,
-          'message':
-              'Local branch is ahead of remote or diverged. Please push your changes first to avoid losing work.'
-        };
+        // exitCode 0 means true (is ancestor)
+        // exitCode 1 means false (not ancestor)
+        if (mergeBaseRes.exitCode != 0) {
+          return {
+            'status': 'error',
+            'errorType': 'ahead',
+            'path': projDir,
+            'message':
+                'Local branch is ahead of remote or diverged. Please push your changes first to avoid losing work.'
+          };
+        }
+      } catch (e) {
+        // If fetch fails, ignore here, will likely fail at clone step if network issue
       }
-    } catch (e) {
-      // If fetch fails, ignore here, will likely fail at clone step if network issue
     }
 
     // Preserve tracking info
@@ -1212,6 +1214,7 @@ Future<Map<String, dynamic>> pullFromRemote(
     // Get local branches to check for existence efficiently
     final localBranches = await getBranches(projDir);
     final localBranchNames = localBranches.map((b) => b.name).toSet();
+    final currentBranch = await getCurrentBranch(projDir);
 
     for (final line in lines) {
       final trimmed = line.trim();
@@ -1234,6 +1237,14 @@ Future<Map<String, dynamic>> pullFromRemote(
           await _runGit(['branch', '--track', branchName, trimmed], projDir);
         } catch (e) {
           print('Failed to create tracking branch $branchName: $e');
+        }
+      } else if (force) {
+        if (branchName != currentBranch) {
+          try {
+            await _runGit(['branch', '-f', branchName, trimmed], projDir);
+          } catch (e) {
+            print('Failed to force reset branch $branchName: $e');
+          }
         }
       }
     }
