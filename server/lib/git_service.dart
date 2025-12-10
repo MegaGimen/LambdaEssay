@@ -614,8 +614,6 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
     await File(repoDocxPath).writeAsBytes(await src.readAsBytes());
   }
 
-  final diff = await _runGit(
-      ['diff', '--name-only', '--', p.basename(repoDocxPath)], projDir);
   final head = await getHead(projDir);
   //final changed = diff.any((l) => l.trim().isNotEmpty);
   final changed = !restored;
