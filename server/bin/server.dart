@@ -65,6 +65,12 @@ Future<void> _killPort(int port) async {
 }
 
 Future<void> main(List<String> args) async {
+    final setGlobal = await Process.run('git', ['config', '--global', 'core.autocrlf', 'false']);
+  if (setGlobal.exitCode == 0) {
+    print('✓ 已设置全局 core.autocrlf = false');
+  } else {
+    print('✗ 设置失败: ${setGlobal.stderr}');
+  }
   // Start Heidegger service in background
   try {
     final scriptDir = p.dirname(Platform.script.toFilePath());
