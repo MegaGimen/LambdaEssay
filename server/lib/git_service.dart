@@ -58,7 +58,9 @@ Future<void> _forceRegenerateRepoDocx(String repoPath) async {
   final docxPath = p.join(repoPath, kRepoDocxName);
   final f = File(docxPath);
   if (f.existsSync()) {
-      try { f.deleteSync(); } catch(_) {}
+    try {
+      f.deleteSync();
+    } catch (_) {}
   }
   await _ensureRepoDocx(repoPath);
 }
@@ -67,9 +69,9 @@ Future<void> _updateContentDocx(String repoPath, String sourceDocxPath) async {
   // Just update content.docx from source. Do NOT unzip to doc_content yet.
   final docxPath = p.join(repoPath, kRepoDocxName);
   if (FileSystemEntity.isDirectorySync(sourceDocxPath)) {
-      await _zipDir(sourceDocxPath, docxPath);
+    await _zipDir(sourceDocxPath, docxPath);
   } else {
-      File(sourceDocxPath).copySync(docxPath);
+    File(sourceDocxPath).copySync(docxPath);
   }
 }
 
@@ -80,22 +82,21 @@ Future<void> _flushDocxToContent(String repoPath) async {
 
   final contentDir = Directory(p.join(repoPath, kContentDirName));
   if (contentDir.existsSync()) {
-      contentDir.deleteSync(recursive: true);
+    contentDir.deleteSync(recursive: true);
   }
   contentDir.createSync();
   await _unzipDocx(docxPath, contentDir.path);
 }
 
-
 Future<void> _unzipDocx(String docxPath, String destDir) async {
   String zipPath = docxPath;
   Directory? tempDir;
-  
+
   // PowerShell Expand-Archive requires .zip extension
   if (!docxPath.toLowerCase().endsWith('.zip')) {
-     tempDir = Directory.systemTemp.createTempSync('gitdocx_unzip_');
-     zipPath = p.join(tempDir.path, 'temp.zip');
-     File(docxPath).copySync(zipPath);
+    tempDir = Directory.systemTemp.createTempSync('gitdocx_unzip_');
+    zipPath = p.join(tempDir.path, 'temp.zip');
+    File(docxPath).copySync(zipPath);
   }
 
   try {
@@ -122,9 +123,9 @@ Future<void> _zipDir(String srcDir, String docxPath) async {
 
   // PowerShell Compress-Archive requires .zip extension
   if (!docxPath.toLowerCase().endsWith('.zip')) {
-     tempDir = Directory.systemTemp.createTempSync('gitdocx_zip_');
-     zipPath = p.join(tempDir.path, 'temp.zip');
-     needsRename = true;
+    tempDir = Directory.systemTemp.createTempSync('gitdocx_zip_');
+    zipPath = p.join(tempDir.path, 'temp.zip');
+    needsRename = true;
   }
 
   try {
@@ -350,7 +351,9 @@ Future<void> commitChanges(
     }
     if (File(p.join(repoPath, '.gitignore')).existsSync()) {
       await _runGit(['add', '.gitignore'], repoPath);
+      print("Add Gitignore!");
     }
+    print("Do You add Gitignore?");
     final safeAuthor = author.trim().isEmpty ? 'Unknown' : author.trim();
     final authorArg = '$safeAuthor <$safeAuthor@gitdocx.local>';
     await _runGit(['commit', '--author=$authorArg', '-m', message], repoPath);
@@ -602,7 +605,6 @@ Future<Uint8List> compareCommits(
   });
 }
 
-
 Future<Map<String, dynamic>> createTrackingProject(
     String name, String? docxPath) async {
   final projDir = _projectDir(name);
@@ -619,13 +621,13 @@ Future<Map<String, dynamic>> createTrackingProject(
 
   // Handle doc content
   if (docxPath != null && docxPath.trim().isNotEmpty) {
-      // Just copy/zip to content.docx. NO UNZIP to doc_content.
-      await _updateContentDocx(projDir, docxPath);
+    // Just copy/zip to content.docx. NO UNZIP to doc_content.
+    await _updateContentDocx(projDir, docxPath);
   } else {
-      // Ensure empty content dir exists (so git init works?)
-      // Actually git init works fine.
-      // We might want an empty content.docx
-      await _ensureRepoDocx(projDir); 
+    // Ensure empty content dir exists (so git init works?)
+    // Actually git init works fine.
+    // We might want an empty content.docx
+    await _ensureRepoDocx(projDir);
   }
 
   final tracking = await _readTracking(name);
@@ -782,63 +784,70 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
   });
 }
 
-Future<bool> _checkDocxIdentical(String externalPath, String compareToDocx) async {
+Future<bool> _checkDocxIdentical(
+    String externalPath, String compareToDocx) async {
   // compareToDocx is a .docx file (e.g. from HEAD archive)
   // externalPath could be .docx or dir
-  
+
   final tmpDir = await Directory.systemTemp.createTemp('ident_check_');
   try {
-      String path1 = externalPath;
-      String path2 = compareToDocx;
-      
-      // If external is dir, zip it
-      if (FileSystemEntity.isDirectorySync(externalPath)) {
-          final zip1 = p.join(tmpDir.path, 'ext.docx');
-          await _zipDir(externalPath, zip1);
-          path1 = zip1;
+    String path1 = externalPath;
+    String path2 = compareToDocx;
+
+    // If external is dir, zip it
+    if (FileSystemEntity.isDirectorySync(externalPath)) {
+      final zip1 = p.join(tmpDir.path, 'ext.docx');
+      await _zipDir(externalPath, zip1);
+      path1 = zip1;
+    }
+
+    final f1 = File(path1);
+    final f2 = File(path2);
+    if (!f1.existsSync() || !f2.existsSync()) return false;
+
+    final client = HttpClient();
+    client.connectionTimeout = const Duration(seconds: 10);
+    try {
+      final req = await client.post('localhost', 5000, '/compare');
+      final boundary =
+          '---gitbin-boundary-${DateTime.now().millisecondsSinceEpoch}';
+      req.headers.contentType = ContentType('multipart', 'form-data',
+          parameters: {'boundary': boundary});
+
+      void writePart(String fieldName, String filename, List<int> content) {
+        req.write('--$boundary\r\n');
+        req.write(
+            'Content-Disposition: form-data; name="$fieldName"; filename="$filename"\r\n');
+        req.write(
+            'Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document\r\n\r\n');
+        req.add(content);
+        req.write('\r\n');
       }
-      
-      final f1 = File(path1);
-      final f2 = File(path2);
-      if (!f1.existsSync() || !f2.existsSync()) return false;
 
-      final client = HttpClient();
-      client.connectionTimeout = const Duration(seconds: 10);
-      try {
-        final req = await client.post('localhost', 5000, '/compare');
-        final boundary = '---gitbin-boundary-${DateTime.now().millisecondsSinceEpoch}';
-        req.headers.contentType = ContentType('multipart', 'form-data', parameters: {'boundary': boundary});
+      writePart('file1', p.basename(path1), await f1.readAsBytes());
+      writePart('file2', p.basename(path2), await f2.readAsBytes());
+      req.write('--$boundary--\r\n');
 
-        void writePart(String fieldName, String filename, List<int> content) {
-          req.write('--$boundary\r\n');
-          req.write('Content-Disposition: form-data; name="$fieldName"; filename="$filename"\r\n');
-          req.write('Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document\r\n\r\n');
-          req.add(content);
-          req.write('\r\n');
-        }
-
-        writePart('file1', p.basename(path1), await f1.readAsBytes());
-        writePart('file2', p.basename(path2), await f2.readAsBytes());
-        req.write('--$boundary--\r\n');
-
-        final resp = await req.close().timeout(const Duration(seconds: 30));
-        if (resp.statusCode != 200) {
-          return false;
-        }
-        final bodyStr = await utf8.decodeStream(resp);
-        final body = jsonDecode(bodyStr) as Map<String, dynamic>;
-        return body['identical'] == true;
-      } catch (e) {
-        print('Check identical failed (timeout or error): $e');
+      final resp = await req.close().timeout(const Duration(seconds: 30));
+      if (resp.statusCode != 200) {
         return false;
-      } finally {
-        client.close();
       }
-  } catch (e) {
-      print('Check identical failed: $e');
+      final bodyStr = await utf8.decodeStream(resp);
+      final body = jsonDecode(bodyStr) as Map<String, dynamic>;
+      return body['identical'] == true;
+    } catch (e) {
+      print('Check identical failed (timeout or error): $e');
       return false;
+    } finally {
+      client.close();
+    }
+  } catch (e) {
+    print('Check identical failed: $e');
+    return false;
   } finally {
-      try { tmpDir.deleteSync(recursive: true); } catch(_) {}
+    try {
+      tmpDir.deleteSync(recursive: true);
+    } catch (_) {}
   }
 }
 
@@ -975,7 +984,7 @@ Future<void> _startWatcher(String name) async {
   final tracking = await _readTracking(name);
   final docx = tracking['docxPath'] as String?;
   if (docx == null || docx.trim().isEmpty) return;
-  
+
   final sub = _watchers[name];
   if (sub != null) return;
 
@@ -983,7 +992,7 @@ Future<void> _startWatcher(String name) async {
   final isDir = FileSystemEntity.isDirectorySync(docx);
   if (!isDir && !File(docx).existsSync()) return;
 
-  final s = isDir 
+  final s = isDir
       ? Directory(docx).watch(events: FileSystemEvent.all, recursive: true)
       : File(docx).watch(events: FileSystemEvent.modify);
 
@@ -1405,15 +1414,15 @@ Future<void> forkLocal(String repoName, String newBranchName) async {
   // fetch remote
   // reset current (which was master) to remote/master?
   // User wants to move local changes to new branch.
-  
+
   // 1. Create branch (keeps local changes)
   await _runGit(['checkout', '-b', newBranchName], repoPath);
-  
+
   // The old branch is still there, but we are now on new branch.
   // That's usually enough for "Fork Local".
   // If we want to reset the old branch, we need to checkout it, reset, then checkout new.
   // But we are now safe on new branch.
-  
+
   clearCache();
 }
 
@@ -1434,61 +1443,68 @@ Future<void> prepareMerge(String repoName, String targetBranch) async {
 
     final tmpDir = await Directory.systemTemp.createTemp('merge_prep_');
     try {
-        // 1. Target -> target.docx
-        final targetDocx = p.join(tmpDir.path, 'target.docx');
-        await _gitArchiveToDocx(projDir, targetBranch, targetDocx);
-        
-        // 2. HEAD -> head.docx
-        final headDocx = p.join(tmpDir.path, 'head.docx');
-        await _gitArchiveToDocx(projDir, 'HEAD', headDocx);
-        
-        // 3. Compare -> diff.docx
-        final diffDocx = p.join(tmpDir.path, 'diff.docx');
-        final psScript = r'c:\Users\m1369\Documents\gitbin\frontend\lib\doccmp.ps1';
-        
-        final pRes = await Process.run('powershell', [
-            '-ExecutionPolicy', 'Bypass',
-            '-File', psScript,
-            '-OriginalPath', headDocx,
-            '-RevisedPath', targetDocx,
-            '-PdfPath', diffDocx,
-            '-IsDocx'
-        ]);
-        
-        if (pRes.exitCode != 0 || !File(diffDocx).existsSync()) {
-            throw Exception('Merge comparison failed');
-        }
-        
-        // 4. Update External (docxPath)
-        // Backup
-        final backupPath = '$docxPath.bak';
-        if (FileSystemEntity.isDirectorySync(docxPath)) {
-           // Backup Dir?
-           // _copyDir(docxPath, backupPath);
-        } else if (File(docxPath).existsSync()) {
-           File(docxPath).copySync(backupPath);
-        }
-        
-        if (FileSystemEntity.isDirectorySync(docxPath)) {
-            // Unzip diffDocx to docxPath
-            // Clean target?
-            // Directory(docxPath).deleteSync(recursive: true);
-            // Directory(docxPath).createSync();
-            await _unzipDocx(diffDocx, docxPath);
-        } else {
-            // Overwrite file
-            File(diffDocx).copySync(docxPath);
-        }
-        
+      // 1. Target -> target.docx
+      final targetDocx = p.join(tmpDir.path, 'target.docx');
+      await _gitArchiveToDocx(projDir, targetBranch, targetDocx);
+
+      // 2. HEAD -> head.docx
+      final headDocx = p.join(tmpDir.path, 'head.docx');
+      await _gitArchiveToDocx(projDir, 'HEAD', headDocx);
+
+      // 3. Compare -> diff.docx
+      final diffDocx = p.join(tmpDir.path, 'diff.docx');
+      final psScript =
+          r'c:\Users\m1369\Documents\gitbin\frontend\lib\doccmp.ps1';
+
+      final pRes = await Process.run('powershell', [
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        psScript,
+        '-OriginalPath',
+        headDocx,
+        '-RevisedPath',
+        targetDocx,
+        '-PdfPath',
+        diffDocx,
+        '-IsDocx'
+      ]);
+
+      if (pRes.exitCode != 0 || !File(diffDocx).existsSync()) {
+        throw Exception('Merge comparison failed');
+      }
+
+      // 4. Update External (docxPath)
+      // Backup
+      final backupPath = '$docxPath.bak';
+      if (FileSystemEntity.isDirectorySync(docxPath)) {
+        // Backup Dir?
+        // _copyDir(docxPath, backupPath);
+      } else if (File(docxPath).existsSync()) {
+        File(docxPath).copySync(backupPath);
+      }
+
+      if (FileSystemEntity.isDirectorySync(docxPath)) {
+        // Unzip diffDocx to docxPath
+        // Clean target?
+        // Directory(docxPath).deleteSync(recursive: true);
+        // Directory(docxPath).createSync();
+        await _unzipDocx(diffDocx, docxPath);
+      } else {
+        // Overwrite file
+        File(diffDocx).copySync(docxPath);
+      }
     } finally {
-        try { tmpDir.deleteSync(recursive: true); } catch(_) {}
+      try {
+        tmpDir.deleteSync(recursive: true);
+      } catch (_) {}
     }
   });
 }
 
 Future<void> restoreDocx(String repoName) async {
-    // Restore backup if exists
-    // Simplification: Not fully implemented for dirs
+  // Restore backup if exists
+  // Simplification: Not fully implemented for dirs
 }
 
 Future<void> completeMerge(String repoName, String targetBranch) async {
@@ -1498,12 +1514,12 @@ Future<void> completeMerge(String repoName, String targetBranch) async {
     final tracking = await _readTracking(repoName);
     final docxPath = tracking['docxPath'] as String?;
     if (docxPath != null) {
-        // Sync to content.docx & doc_content
-        await _updateContentDocx(projDir, docxPath);
+      // Sync to content.docx & doc_content
+      await _updateContentDocx(projDir, docxPath);
     }
-    
+
     final oldHead = await getHead(projDir);
-    
+
     // 2. Merge -s ours
     try {
       await _runGit(
@@ -1515,41 +1531,47 @@ Future<void> completeMerge(String repoName, String targetBranch) async {
 
     // 3. Flush content.docx to doc_content so git sees the changes from user resolution
     if (docxPath != null) {
-        await _flushDocxToContent(projDir);
+      await _flushDocxToContent(projDir);
     }
-    
+
     // Handle edges
     final edgesFile = File(p.join(projDir, 'edges'));
     List<String>? targetEdges;
     try {
-       final out = await _runGit(['show', '$targetBranch:edges'], projDir);
-       targetEdges = out;
+      final out = await _runGit(['show', '$targetBranch:edges'], projDir);
+      targetEdges = out;
     } catch (_) {}
-    
-    if (edgesFile.existsSync() && targetEdges != null && targetEdges.isNotEmpty) {
-        final current = await edgesFile.readAsLines();
-        if (current.isNotEmpty) current.removeAt(0);
-        if (targetEdges.isNotEmpty) targetEdges.removeAt(0);
-        final merged = {...current, ...targetEdges};
-        await edgesFile.writeAsString('0000000000000000000000000000000000000000\n${merged.join('\n')}');
+
+    if (edgesFile.existsSync() &&
+        targetEdges != null &&
+        targetEdges.isNotEmpty) {
+      final current = await edgesFile.readAsLines();
+      if (current.isNotEmpty) current.removeAt(0);
+      if (targetEdges.isNotEmpty) targetEdges.removeAt(0);
+      final merged = {...current, ...targetEdges};
+      await edgesFile.writeAsString(
+          '0000000000000000000000000000000000000000\n${merged.join('\n')}');
     } else if (!edgesFile.existsSync() && targetEdges != null) {
-        await edgesFile.writeAsString(targetEdges.join('\n'));
+      await edgesFile.writeAsString(targetEdges.join('\n'));
     }
-    
+
     final targetHashLines = await _runGit(['rev-parse', targetBranch], projDir);
-    final targetHash = targetHashLines.isNotEmpty ? targetHashLines.first.trim() : null;
+    final targetHash =
+        targetHashLines.isNotEmpty ? targetHashLines.first.trim() : null;
     if (targetHash != null && oldHead != null) {
-        final lines = edgesFile.existsSync() ? await edgesFile.readAsLines() : <String>[];
-        if (lines.isEmpty) lines.add('0000000000000000000000000000000000000000');
-        final edgeLine = '$oldHead $targetHash';
-        if (!lines.contains(edgeLine)) {
-            lines.add(edgeLine);
-            await edgesFile.writeAsString(lines.join('\n'));
-        }
+      final lines =
+          edgesFile.existsSync() ? await edgesFile.readAsLines() : <String>[];
+      if (lines.isEmpty) lines.add('0000000000000000000000000000000000000000');
+      final edgeLine = '$oldHead $targetHash';
+      if (!lines.contains(edgeLine)) {
+        lines.add(edgeLine);
+        await edgesFile.writeAsString(lines.join('\n'));
+      }
     }
 
     await _runGit(['add', '.'], projDir);
-    await _runGit(['commit', '-m', 'Merge branch \'$targetBranch\' into HEAD'], projDir);
+    await _runGit(
+        ['commit', '-m', 'Merge branch \'$targetBranch\' into HEAD'], projDir);
     clearCache();
   });
 }
@@ -1558,27 +1580,30 @@ Future<List<String>> findIdenticalCommit(String name) async {
   final projDir = _projectDir(name);
   final tracking = await _readTracking(name);
   // We assume repo has doc_content
-  
+
   final log = await _runGit(['log', '--all', '--format=%H'], projDir);
-  final commitIds = log.where((l) => l.trim().isNotEmpty).map((l) => l.trim()).toList();
-  
+  final commitIds =
+      log.where((l) => l.trim().isNotEmpty).map((l) => l.trim()).toList();
+
   final identicals = <String>[];
   final tmpDir = await Directory.systemTemp.createTemp('ident_find_');
   try {
-      // Check external path
-      final docxPath = tracking['docxPath'] as String?;
-      if (docxPath == null) return [];
-      
-      for (final cid in commitIds) {
-          final tmpDocx = p.join(tmpDir.path, '$cid.docx');
-          try {
-              await _gitArchiveToDocx(projDir, cid, tmpDocx);
-              final isId = await _checkDocxIdentical(docxPath, tmpDocx);
-              if (isId) identicals.add(cid);
-          } catch (_) {}
-      }
+    // Check external path
+    final docxPath = tracking['docxPath'] as String?;
+    if (docxPath == null) return [];
+
+    for (final cid in commitIds) {
+      final tmpDocx = p.join(tmpDir.path, '$cid.docx');
+      try {
+        await _gitArchiveToDocx(projDir, cid, tmpDocx);
+        final isId = await _checkDocxIdentical(docxPath, tmpDocx);
+        if (isId) identicals.add(cid);
+      } catch (_) {}
+    }
   } finally {
-      try { tmpDir.deleteSync(recursive: true); } catch(_) {}
+    try {
+      tmpDir.deleteSync(recursive: true);
+    } catch (_) {}
   }
   return identicals;
 }
