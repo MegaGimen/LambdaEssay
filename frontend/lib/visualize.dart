@@ -63,9 +63,9 @@ class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
     });
 
     try {
-      // Use localhost:3000/convert to convert docx to html
-      // doc2html.exe is expected to be running on port 3000
-      final uri = Uri.parse('http://localhost:3000/convert');
+      // Use server.dart proxy to avoid CORS issues
+      // server.dart is running on port 8080 (assumed based on server.dart code)
+      final uri = Uri.parse('http://localhost:8080/proxy/convert');
       final request = http.MultipartRequest('POST', uri);
       
       request.files.add(http.MultipartFile.fromBytes(

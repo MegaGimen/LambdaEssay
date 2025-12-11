@@ -981,6 +981,50 @@ Future<void> main(List<String> args) async {
     }
   });
 
+  router.post('/proxy/convert', (Request req) async {
+    try {
+      final contentType = req.headers['content-type'];
+      if (contentType == null || !contentType.contains('multipart/form-data')) {
+        return _cors(Response(400,
+            body: jsonEncode({'error': 'Content-Type must be multipart/form-data'}),
+            headers: {'Content-Type': 'application/json; charset=utf-8'}));
+      }
+
+      final url = Uri.parse('http://localhost:3000/convert');
+      final client = http.Client();
+      
+      // We need to stream the request body to the backend service
+      // But Shelf request body is a stream.
+      // We can create a MultipartRequest and copy the parts, OR just pipe the stream if headers match.
+      // However, piping is tricky because of headers (boundary).
+      //
+      // A safer way: read the whole body and forward it.
+      // Or use http.MultipartRequest if we parse it first.
+      //
+      // Let's try to just forward the bytes and the Content-Type header.
+      // This is the simplest proxy.
+      
+      final bodyBytes = await req.read().expand((i) => i).toList();
+      
+      final proxyReq = http.Request('POST', url);
+      proxyReq.headers['Content-Type'] = contentType;
+      proxyReq.bodyBytes = Uint8List.fromList(bodyBytes);
+      
+      final proxyResp = await client.send(proxyReq);
+      final respBody = await proxyResp.stream.toBytes();
+      
+      return _cors(Response(proxyResp.statusCode,
+          body: respBody,
+          headers: {
+            'Content-Type': 'application/json; charset=utf-8'
+          }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': 'Proxy failed: $e'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
   final handler =
       const Pipeline().addMiddleware(logRequests()).addHandler(router);
   final server = await serve((req) async => _cors(await handler(req)),
