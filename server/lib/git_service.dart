@@ -17,24 +17,67 @@ void clearCache() {
 // --- Helpers for Docx/Folder operations ---
 
 Future<void> _unzipDocx(String docxPath, String destDir) async {
-  // Use PowerShell to unzip
-  final res = await Process.run('powershell', [
-    '-Command',
-    'Expand-Archive -Path "$docxPath" -DestinationPath "$destDir" -Force'
-  ]);
-  if (res.exitCode != 0) {
-    throw Exception('Failed to unzip docx: ${res.stderr}');
+  String zipPath = docxPath;
+  Directory? tempDir;
+  
+  // PowerShell Expand-Archive requires .zip extension
+  if (!docxPath.toLowerCase().endsWith('.zip')) {
+     tempDir = Directory.systemTemp.createTempSync('gitdocx_unzip_');
+     zipPath = p.join(tempDir.path, 'temp.zip');
+     File(docxPath).copySync(zipPath);
+  }
+
+  try {
+    final res = await Process.run('powershell', [
+      '-Command',
+      'Expand-Archive -Path "$zipPath" -DestinationPath "$destDir" -Force'
+    ]);
+    if (res.exitCode != 0) {
+      throw Exception('Failed to unzip docx: ${res.stderr}');
+    }
+  } finally {
+    if (tempDir != null) {
+      try {
+        tempDir.deleteSync(recursive: true);
+      } catch (_) {}
+    }
   }
 }
 
 Future<void> _zipDir(String srcDir, String docxPath) async {
-  // PowerShell Compress-Archive.
-  // We use Get-ChildItem to avoid zipping the root folder itself.
-  final cmd =
-      "Get-ChildItem -Path '$srcDir' | Compress-Archive -DestinationPath '$docxPath' -Force";
-  final res = await Process.run('powershell', ['-Command', cmd]);
-  if (res.exitCode != 0) {
-    throw Exception('Failed to zip dir: ${res.stderr}');
+  String zipPath = docxPath;
+  bool needsRename = false;
+  Directory? tempDir;
+
+  // PowerShell Compress-Archive requires .zip extension
+  if (!docxPath.toLowerCase().endsWith('.zip')) {
+     tempDir = Directory.systemTemp.createTempSync('gitdocx_zip_');
+     zipPath = p.join(tempDir.path, 'temp.zip');
+     needsRename = true;
+  }
+
+  try {
+    final cmd =
+        "Get-ChildItem -Path '$srcDir' | Compress-Archive -DestinationPath '$zipPath' -Force";
+    final res = await Process.run('powershell', ['-Command', cmd]);
+    if (res.exitCode != 0) {
+      throw Exception('Failed to zip dir: ${res.stderr}');
+    }
+
+    if (needsRename) {
+      final f = File(zipPath);
+      if (f.existsSync()) {
+        f.copySync(docxPath);
+      } else {
+        throw Exception('Failed to create zip file at $zipPath');
+      }
+    }
+  } finally {
+    if (tempDir != null) {
+      try {
+        tempDir.deleteSync(recursive: true);
+      } catch (_) {}
+    }
   }
 }
 
