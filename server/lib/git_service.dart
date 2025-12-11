@@ -730,7 +730,8 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
         print("identical? $isIdentical");
         if (isIdentical) {
           // Restore working copy (repo/doc_content) to HEAD
-          await _runGit(['checkout', 'HEAD', '--', kContentDirName], projDir);
+          // Use reset --hard to ensure NO artifacts remain (e.g. untracked files in doc_content)
+          await _runGit(['reset', '--hard', 'HEAD'], projDir);
           await _forceRegenerateRepoDocx(
               projDir); // Sync content.docx from restored folder
           restored = true;
@@ -759,6 +760,9 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
 
     // Check status
     final status = await _runGit(['status', '--porcelain'], projDir);
+    if (status.isNotEmpty) {
+      print("Git Status dirty: $status");
+    }
     final changed = status.isNotEmpty;
 
     String? head;
