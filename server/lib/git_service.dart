@@ -6,6 +6,30 @@ import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'models.dart';
 
+class Mutex {
+  Future<void> _last = Future.value();
+
+  Future<T> protect<T>(Future<T> Function() block) async {
+    final prev = _last;
+    final completer = Completer<void>();
+    _last = completer.future;
+    try {
+      await prev;
+      return await block();
+    } finally {
+      completer.complete();
+    }
+  }
+}
+
+final Map<String, Mutex> _repoLocks = {};
+
+Future<T> _withRepoLock<T>(String repoPath, Future<T> Function() block) async {
+  final key = p.normalize(repoPath);
+  final mutex = _repoLocks.putIfAbsent(key, () => Mutex());
+  return mutex.protect(block);
+}
+
 final Map<String, GraphResponse> _graphCache = <String, GraphResponse>{};
 
 const String kContentDirName = 'doc_content';
@@ -249,94 +273,102 @@ Future<List<List<String>>> _readEdges(String repoPath) async {
 }
 
 Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
-  final key = '${repoPath}|${limit ?? 0}';
-  final cached = _graphCache[key];
-  if (cached != null) {
-    print('Graph cache hit for $key');
-    return cached;
-  }
-  print('Graph cache miss for $key, fetching...');
-  final branches = await getBranches(repoPath);
-  final chains = await getBranchChains(repoPath, branches, limit: limit);
-  final current = await getCurrentBranch(repoPath);
-  final customEdges = await _readEdges(repoPath);
+  return _withRepoLock(repoPath, () async {
+    final key = '${repoPath}|${limit ?? 0}';
+    final cached = _graphCache[key];
+    if (cached != null) {
+      print('Graph cache hit for $key');
+      return cached;
+    }
+    print('Graph cache miss for $key, fetching...');
+    final branches = await getBranches(repoPath);
+    final chains = await getBranchChains(repoPath, branches, limit: limit);
+    final current = await getCurrentBranch(repoPath);
+    final customEdges = await _readEdges(repoPath);
 
-  final logArgs = [
-    'log',
-    '--branches',
-    '--tags',
-    '--date=iso',
-    '--encoding=UTF-8',
-    '--pretty=format:%H|%P|%d|%s|%an|%ad',
-    '--topo-order',
-  ];
-  if (limit != null && limit > 0) {
-    logArgs.add('--max-count=$limit');
-  }
-  final lines = await _runGit(logArgs, repoPath);
-  final commits = <CommitNode>[];
-  for (final l in lines) {
-    if (l.trim().isEmpty) continue;
-    final parts = l.split('|');
-    if (parts.length < 6) continue;
-    final id = parts[0];
-    final rawParents = parts[1].trim().isEmpty
-        ? <String>[]
-        : parts[1].trim().split(RegExp(r'\s+'));
+    final logArgs = [
+      'log',
+      '--branches',
+      '--tags',
+      '--date=iso',
+      '--encoding=UTF-8',
+      '--pretty=format:%H|%P|%d|%s|%an|%ad',
+      '--topo-order',
+    ];
+    if (limit != null && limit > 0) {
+      logArgs.add('--max-count=$limit');
+    }
+    final lines = await _runGit(logArgs, repoPath);
+    final commits = <CommitNode>[];
+    for (final l in lines) {
+      if (l.trim().isEmpty) continue;
+      final parts = l.split('|');
+      if (parts.length < 6) continue;
+      final id = parts[0];
+      final rawParents = parts[1].trim().isEmpty
+          ? <String>[]
+          : parts[1].trim().split(RegExp(r'\s+'));
 
-    final parents = rawParents;
-    final dec = parts[2];
-    final refs = _parseRefs(dec);
-    final subject = parts[3];
-    final author = parts[4];
-    final date = parts[5];
-    commits.add(
-      CommitNode(
-        id: id,
-        parents: parents,
-        refs: refs,
-        author: author,
-        date: date,
-        subject: subject,
-      ),
-    );
-  }
-  final resp = GraphResponse(
-      commits: commits,
-      branches: branches,
-      chains: chains,
-      currentBranch: current,
-      customEdges: customEdges);
-  _graphCache[key] = resp;
-  return resp;
+      final parents = rawParents;
+      final dec = parts[2];
+      final refs = _parseRefs(dec);
+      final subject = parts[3];
+      final author = parts[4];
+      final date = parts[5];
+      commits.add(
+        CommitNode(
+          id: id,
+          parents: parents,
+          refs: refs,
+          author: author,
+          date: date,
+          subject: subject,
+        ),
+      );
+    }
+    final resp = GraphResponse(
+        commits: commits,
+        branches: branches,
+        chains: chains,
+        currentBranch: current,
+        customEdges: customEdges);
+    _graphCache[key] = resp;
+    return resp;
+  });
 }
 
 Future<void> commitChanges(
     String repoPath, String author, String message) async {
-  // 1. Unzip content.docx -> doc_content
-  await _flushDocxToContent(repoPath);
+  return _withRepoLock(repoPath, () async {
+    // 1. Unzip content.docx -> doc_content
+    await _flushDocxToContent(repoPath);
 
-  // Add doc_content directory
-  await _runGit(['add', kContentDirName], repoPath);
-  if (File(p.join(repoPath, 'edges')).existsSync()) {
-    await _runGit(['add', 'edges'], repoPath);
-  }
-  final safeAuthor = author.trim().isEmpty ? 'Unknown' : author.trim();
-  final authorArg = '$safeAuthor <$safeAuthor@gitdocx.local>';
-  await _runGit(['commit', '--author=$authorArg', '-m', message], repoPath);
-  clearCache();
+    // Add doc_content directory
+    await _runGit(['add', kContentDirName], repoPath);
+    if (File(p.join(repoPath, 'edges')).existsSync()) {
+      await _runGit(['add', 'edges'], repoPath);
+    }
+    final safeAuthor = author.trim().isEmpty ? 'Unknown' : author.trim();
+    final authorArg = '$safeAuthor <$safeAuthor@gitdocx.local>';
+    await _runGit(['commit', '--author=$authorArg', '-m', message], repoPath);
+    clearCache();
+  });
 }
 
 Future<void> createBranch(String repoPath, String branchName) async {
-  await _runGit(['checkout', '-b', branchName], repoPath);
-  clearCache();
+  return _withRepoLock(repoPath, () async {
+    await _runGit(['checkout', '-b', branchName], repoPath);
+    clearCache();
+  });
 }
 
 Future<void> switchBranch(String projectName, String branchName) async {
   final repoPath = _projectDir(projectName);
-  await _runGit(['checkout', '-f', branchName], repoPath);
-  await _forceRegenerateRepoDocx(repoPath);
-  clearCache();
+  return _withRepoLock(repoPath, () async {
+    await _runGit(['checkout', '-f', branchName], repoPath);
+    await _forceRegenerateRepoDocx(repoPath);
+    clearCache();
+  });
 }
 
 Future<void> addRemote(String repoPath, String name, String url) async {
@@ -353,61 +385,63 @@ Future<void> addRemote(String repoPath, String name, String url) async {
 }
 
 Future<Uint8List> compareWorking(String repoPath) async {
-  final contentDir = Directory(p.join(repoPath, kContentDirName));
-  if (!contentDir.existsSync()) {
-    throw Exception('No $kContentDirName directory found in repository');
-  }
+  return _withRepoLock(repoPath, () async {
+    final contentDir = Directory(p.join(repoPath, kContentDirName));
+    if (!contentDir.existsSync()) {
+      throw Exception('No $kContentDirName directory found in repository');
+    }
 
-  final tmpDir = await Directory.systemTemp.createTemp('gitdocx_cmp_work_');
-  try {
-    // If content.docx doesn't exist, create it from doc_content
-  await _ensureRepoDocx(repoPath);
-  final p2 = p.join(repoPath, kRepoDocxName);
-
-  final pdf = p.join(tmpDir.path, 'diff.pdf');
-
-    final p1 = p.join(tmpDir.path, 'HEAD.docx');
-    // HEAD -> p1
+    final tmpDir = await Directory.systemTemp.createTemp('gitdocx_cmp_work_');
     try {
-      await _gitArchiveToDocx(repoPath, 'HEAD', p1);
-    } catch (e) {
-      // If no HEAD, maybe empty? Handle gracefully or throw
-      throw Exception('Could not get HEAD content: $e');
-    }
+      // If content.docx doesn't exist, create it from doc_content
+      await _ensureRepoDocx(repoPath);
+      final p2 = p.join(repoPath, kRepoDocxName);
 
-    final scriptPath = p.fromUri(Platform.script);
-    final repoRoot = p.dirname(p.dirname(p.dirname(scriptPath)));
-    final ps1Path = p.join(repoRoot, 'frontend', 'lib', 'doccmp.ps1');
+      final pdf = p.join(tmpDir.path, 'diff.pdf');
 
-    if (!File(ps1Path).existsSync()) {
-      throw Exception('doccmp.ps1 not found at $ps1Path');
-    }
-
-    final res = await Process.run('powershell', [
-      '-ExecutionPolicy',
-      'Bypass',
-      '-File',
-      ps1Path,
-      '-OriginalPath',
-      p1,
-      '-RevisedPath',
-      p2,
-      '-PdfPath',
-      pdf
-    ]);
-
-    if (res.exitCode != 0 || !File(pdf).existsSync()) {
-      throw Exception('Compare failed: ${res.stdout}\n${res.stderr}');
-    }
-
-    return await File(pdf).readAsBytes();
-  } finally {
-    try {
-      if (tmpDir.existsSync()) {
-        tmpDir.deleteSync(recursive: true);
+      final p1 = p.join(tmpDir.path, 'HEAD.docx');
+      // HEAD -> p1
+      try {
+        await _gitArchiveToDocx(repoPath, 'HEAD', p1);
+      } catch (e) {
+        // If no HEAD, maybe empty? Handle gracefully or throw
+        throw Exception('Could not get HEAD content: $e');
       }
-    } catch (_) {}
-  }
+
+      final scriptPath = p.fromUri(Platform.script);
+      final repoRoot = p.dirname(p.dirname(p.dirname(scriptPath)));
+      final ps1Path = p.join(repoRoot, 'frontend', 'lib', 'doccmp.ps1');
+
+      if (!File(ps1Path).existsSync()) {
+        throw Exception('doccmp.ps1 not found at $ps1Path');
+      }
+
+      final res = await Process.run('powershell', [
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        ps1Path,
+        '-OriginalPath',
+        p1,
+        '-RevisedPath',
+        p2,
+        '-PdfPath',
+        pdf
+      ]);
+
+      if (res.exitCode != 0 || !File(pdf).existsSync()) {
+        throw Exception('Compare failed: ${res.stdout}\n${res.stderr}');
+      }
+
+      return await File(pdf).readAsBytes();
+    } finally {
+      try {
+        if (tmpDir.existsSync()) {
+          tmpDir.deleteSync(recursive: true);
+        }
+      } catch (_) {}
+    }
+  });
 }
 
 List<String> _parseRefs(String decoration) {
@@ -503,63 +537,66 @@ String _projectDir(String name) {
 // We still need to find external file/dir sometimes
 
 final Map<String, StreamSubscription<FileSystemEvent>> _watchers = {};
+final Map<String, Timer> _debounceTimers = {};
 
 Future<Uint8List> compareCommits(
     String repoPath, String commit1, String commit2) async {
-  final cacheDir = Directory(p.join(_baseDir(), 'cache'));
-  if (!cacheDir.existsSync()) {
-    cacheDir.createSync(recursive: true);
-  }
-  final cacheName = '${commit1}cmp${commit2}.pdf';
-  final cachePath = p.join(cacheDir.path, cacheName);
-  final cacheFile = File(cachePath);
-  if (cacheFile.existsSync()) {
-    return await cacheFile.readAsBytes();
-  }
-
-  final tmpDir = await Directory.systemTemp.createTemp('gitdocx_cmp_');
-  try {
-    final p1 = p.join(tmpDir.path, 'old.docx');
-    final p2 = p.join(tmpDir.path, 'new.docx');
-    final pdf = p.join(tmpDir.path, 'diff.pdf');
-
-    await _gitArchiveToDocx(repoPath, commit1, p1);
-    await _gitArchiveToDocx(repoPath, commit2, p2);
-
-    final scriptPath = p.fromUri(Platform.script);
-    final repoRoot = p.dirname(p.dirname(p.dirname(scriptPath)));
-    final ps1Path = p.join(repoRoot, 'frontend', 'lib', 'doccmp.ps1');
-
-    if (!File(ps1Path).existsSync()) {
-      throw Exception('doccmp.ps1 not found at $ps1Path');
+  return _withRepoLock(repoPath, () async {
+    final cacheDir = Directory(p.join(_baseDir(), 'cache'));
+    if (!cacheDir.existsSync()) {
+      cacheDir.createSync(recursive: true);
+    }
+    final cacheName = '${commit1}cmp${commit2}.pdf';
+    final cachePath = p.join(cacheDir.path, cacheName);
+    final cacheFile = File(cachePath);
+    if (cacheFile.existsSync()) {
+      return await cacheFile.readAsBytes();
     }
 
-    final res = await Process.run('powershell', [
-      '-ExecutionPolicy',
-      'Bypass',
-      '-File',
-      ps1Path,
-      '-OriginalPath',
-      p1,
-      '-RevisedPath',
-      p2,
-      '-PdfPath',
-      pdf
-    ]);
-
-    if (res.exitCode != 0 || !File(pdf).existsSync()) {
-      throw Exception('Compare failed: ${res.stdout}\n${res.stderr}');
-    }
-
-    await File(pdf).copy(cachePath);
-    return await File(pdf).readAsBytes();
-  } finally {
+    final tmpDir = await Directory.systemTemp.createTemp('gitdocx_cmp_');
     try {
-      if (tmpDir.existsSync()) {
-        tmpDir.deleteSync(recursive: true);
+      final p1 = p.join(tmpDir.path, 'old.docx');
+      final p2 = p.join(tmpDir.path, 'new.docx');
+      final pdf = p.join(tmpDir.path, 'diff.pdf');
+
+      await _gitArchiveToDocx(repoPath, commit1, p1);
+      await _gitArchiveToDocx(repoPath, commit2, p2);
+
+      final scriptPath = p.fromUri(Platform.script);
+      final repoRoot = p.dirname(p.dirname(p.dirname(scriptPath)));
+      final ps1Path = p.join(repoRoot, 'frontend', 'lib', 'doccmp.ps1');
+
+      if (!File(ps1Path).existsSync()) {
+        throw Exception('doccmp.ps1 not found at $ps1Path');
       }
-    } catch (_) {}
-  }
+
+      final res = await Process.run('powershell', [
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        ps1Path,
+        '-OriginalPath',
+        p1,
+        '-RevisedPath',
+        p2,
+        '-PdfPath',
+        pdf
+      ]);
+
+      if (res.exitCode != 0 || !File(pdf).existsSync()) {
+        throw Exception('Compare failed: ${res.stdout}\n${res.stderr}');
+      }
+
+      await File(pdf).copy(cachePath);
+      return await File(pdf).readAsBytes();
+    } finally {
+      try {
+        if (tmpDir.existsSync()) {
+          tmpDir.deleteSync(recursive: true);
+        }
+      } catch (_) {}
+    }
+  });
 }
 
 
@@ -643,77 +680,99 @@ Future<Map<String, dynamic>?> getTrackingInfo(String repoPath) async {
 Future<Map<String, dynamic>> updateTrackingProject(String name,
     {String? newDocxPath}) async {
   final projDir = _projectDir(name);
-  final dir = Directory(projDir);
-  if (!dir.existsSync()) {
-    throw Exception('project not found');
-  }
-  var tracking = await _readTracking(name);
-  String? sourcePath = tracking['docxPath'] as String?;
-  if (newDocxPath != null && newDocxPath.trim().isNotEmpty) {
-    sourcePath = _sanitizeFsPath(newDocxPath);
-    tracking['docxPath'] = sourcePath;
-  }
-  
-  // Verify source exists
-  bool sourceExists = false;
-  if (sourcePath != null && sourcePath.isNotEmpty) {
-    if (FileSystemEntity.isFileSync(sourcePath) || FileSystemEntity.isDirectorySync(sourcePath)) {
-        sourceExists = true;
+  return _withRepoLock(projDir, () async {
+    final dir = Directory(projDir);
+    if (!dir.existsSync()) {
+      throw Exception('project not found');
     }
-  }
+    var tracking = await _readTracking(name);
+    String? sourcePath = tracking['docxPath'] as String?;
+    if (newDocxPath != null && newDocxPath.trim().isNotEmpty) {
+      sourcePath = _sanitizeFsPath(newDocxPath);
+      tracking['docxPath'] = sourcePath;
+    }
 
-  if (!sourceExists) {
-    return {'needDocx': true, 'repoPath': projDir};
-  }
-  
-  // Ensure content dir exists in repo
-  final contentDir = Directory(p.join(projDir, kContentDirName));
-  if (!contentDir.existsSync()) {
+    // Verify source exists
+    bool sourceExists = false;
+    if (sourcePath != null && sourcePath.isNotEmpty) {
+      if (FileSystemEntity.isFileSync(sourcePath) ||
+          FileSystemEntity.isDirectorySync(sourcePath)) {
+        sourceExists = true;
+      }
+    }
+
+    if (!sourceExists) {
+      return {'needDocx': true, 'repoPath': projDir};
+    }
+
+    // Ensure content dir exists in repo
+    final contentDir = Directory(p.join(projDir, kContentDirName));
+    if (!contentDir.existsSync()) {
       contentDir.createSync();
-  }
-  tracking['repoDocxPath'] = contentDir.path;
-  await _writeTracking(name, tracking);
+    }
+    tracking['repoDocxPath'] = contentDir.path;
+    await _writeTracking(name, tracking);
 
-  // Compare Source vs HEAD
-  bool restored = false;
-  
-  final tmpDir = await Directory.systemTemp.createTemp('git_head_check_');
-  try {
-    final headDocx = p.join(tmpDir.path, 'HEAD.docx');
-    bool hasHead = false;
+    // Compare Source vs HEAD
+    bool restored = false;
+
+    final tmpDir = await Directory.systemTemp.createTemp('git_head_check_');
     try {
+      final headDocx = p.join(tmpDir.path, 'HEAD.docx');
+      bool hasHead = false;
+      try {
         await _gitArchiveToDocx(projDir, 'HEAD', headDocx);
         hasHead = true;
+      } catch (_) {}
+
+      if (hasHead) {
+        final isIdentical = await _checkDocxIdentical(sourcePath!, headDocx);
+        print("identical? $isIdentical");
+        if (isIdentical) {
+          // Restore working copy (repo/doc_content) to HEAD
+          await _runGit(['checkout', 'HEAD', '--', kContentDirName], projDir);
+          await _forceRegenerateRepoDocx(
+              projDir); // Sync content.docx from restored folder
+          restored = true;
+        }
+      }
+    } finally {
+      try {
+        tmpDir.deleteSync(recursive: true);
+      } catch (_) {}
+    }
+
+    print('restored? $restored');
+    if (!restored) {
+      // Update repo content from source
+      // Do NOT unzip to doc_content yet. Just update content.docx.
+      await _updateContentDocx(projDir, sourcePath!);
+
+      // Also force regenerate doc_content (unzip) to make sure working directory matches
+      // But wait, if we are going to commit, we need doc_content.
+      // And we need to show changes in graph?
+      // GitGraph usually shows committed changes.
+      // But we have "WorkingState".
+      // We need to unzip content.docx -> doc_content so that `git status` shows changes.
+      await _flushDocxToContent(projDir);
+    }
+
+    // Check status
+    final status = await _runGit(['status', '--porcelain'], projDir);
+    final changed = status.isNotEmpty;
+
+    String? head;
+    try {
+      final lines = await _runGit(['rev-parse', 'HEAD'], projDir);
+      if (lines.isNotEmpty) head = lines.first.trim();
     } catch (_) {}
 
-    if (hasHead) {
-      final isIdentical = await _checkDocxIdentical(sourcePath!, headDocx);
-      print("identical? $isIdentical");
-      if (isIdentical) {
-          // Restore working copy (repo/doc_content) to HEAD
-           await _runGit(['checkout', 'HEAD', '--', kContentDirName], projDir);
-           await _forceRegenerateRepoDocx(projDir); // Sync content.docx from restored folder
-           restored = true;
-      }
-  }
-  } finally {
-      try { tmpDir.deleteSync(recursive: true); } catch(_) {}
-  }
-
-  print('restored? $restored');
-  if (!restored) {
-    // Update repo content from source
-    // Do NOT unzip to doc_content yet. Just update content.docx.
-    await _updateContentDocx(projDir, sourcePath!);
-  }
-
-  final head = await getHead(projDir);
-  final changed = !restored;
-  return {
-    'workingChanged': changed,
-    'repoPath': projDir,
-    'head': head,
-  };
+    return {
+      'repoPath': projDir,
+      'workingChanged': changed,
+      'head': head,
+    };
+  });
 }
 
 Future<bool> _checkDocxIdentical(String externalPath, String compareToDocx) async {
@@ -776,100 +835,106 @@ Future<bool> _checkDocxIdentical(String externalPath, String compareToDocx) asyn
 }
 
 Future<Uint8List> previewVersion(String repoPath, String commitId) async {
-  final cacheDir = Directory(p.join(_baseDir(), 'cache'));
-  if (!cacheDir.existsSync()) {
-    cacheDir.createSync(recursive: true);
-  }
-  final cacheName = '$commitId.pdf';
-  final cachePath = p.join(cacheDir.path, cacheName);
-  final cacheFile = File(cachePath);
-  if (cacheFile.existsSync()) {
-    return await cacheFile.readAsBytes();
-  }
-
-  final tmpDir = await Directory.systemTemp.createTemp('gitdocx_prev_');
-  try {
-    final p1 = p.join(tmpDir.path, 'preview.docx');
-    final pdf = p.join(tmpDir.path, 'preview.pdf');
-
-    await _gitArchiveToDocx(repoPath, commitId, p1);
-
-    final scriptPath = p.fromUri(Platform.script);
-    final repoRoot = p.dirname(p.dirname(p.dirname(scriptPath)));
-    final ps1Path = p.join(repoRoot, 'frontend', 'lib', 'docx2pdf.ps1');
-
-    if (!File(ps1Path).existsSync()) {
-      throw Exception('docx2pdf.ps1 not found at $ps1Path');
+  return _withRepoLock(repoPath, () async {
+    final cacheDir = Directory(p.join(_baseDir(), 'cache'));
+    if (!cacheDir.existsSync()) {
+      cacheDir.createSync(recursive: true);
+    }
+    final cacheName = '$commitId.pdf';
+    final cachePath = p.join(cacheDir.path, cacheName);
+    final cacheFile = File(cachePath);
+    if (cacheFile.existsSync()) {
+      return await cacheFile.readAsBytes();
     }
 
-    final res = await Process.run('powershell', [
-      '-ExecutionPolicy',
-      'Bypass',
-      '-File',
-      ps1Path,
-      '-InputPath',
-      p1,
-      '-OutputPath',
-      pdf
-    ]);
-
-    if (res.exitCode != 0 || !File(pdf).existsSync()) {
-      throw Exception(
-          'Preview generation failed: ${res.stdout}\n${res.stderr}');
-    }
-
-    await File(pdf).copy(cachePath);
-    return await File(pdf).readAsBytes();
-  } finally {
+    final tmpDir = await Directory.systemTemp.createTemp('gitdocx_prev_');
     try {
-      if (tmpDir.existsSync()) {
-        tmpDir.deleteSync(recursive: true);
+      final p1 = p.join(tmpDir.path, 'preview.docx');
+      final pdf = p.join(tmpDir.path, 'preview.pdf');
+
+      await _gitArchiveToDocx(repoPath, commitId, p1);
+
+      final scriptPath = p.fromUri(Platform.script);
+      final repoRoot = p.dirname(p.dirname(p.dirname(scriptPath)));
+      final ps1Path = p.join(repoRoot, 'frontend', 'lib', 'docx2pdf.ps1');
+
+      if (!File(ps1Path).existsSync()) {
+        throw Exception('docx2pdf.ps1 not found at $ps1Path');
       }
-    } catch (_) {}
-  }
+
+      final res = await Process.run('powershell', [
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        ps1Path,
+        '-InputPath',
+        p1,
+        '-OutputPath',
+        pdf
+      ]);
+
+      if (res.exitCode != 0 || !File(pdf).existsSync()) {
+        throw Exception(
+            'Preview generation failed: ${res.stdout}\n${res.stderr}');
+      }
+
+      await File(pdf).copy(cachePath);
+      return await File(pdf).readAsBytes();
+    } finally {
+      try {
+        if (tmpDir.existsSync()) {
+          tmpDir.deleteSync(recursive: true);
+        }
+      } catch (_) {}
+    }
+  });
 }
 
 Future<void> resetBranch(String projectName, String commitId) async {
   final repoPath = _projectDir(projectName);
-  await _runGit(['reset', '--hard', commitId], repoPath);
-  await _forceRegenerateRepoDocx(repoPath);
-  clearCache();
+  return _withRepoLock(repoPath, () async {
+    await _runGit(['reset', '--hard', commitId], repoPath);
+    await _forceRegenerateRepoDocx(repoPath);
+    clearCache();
+  });
 }
 
 Future<void> rollbackVersion(String projectName, String commitId) async {
   final repoPath = _projectDir(projectName);
-  
-  // Checkout doc_content from commitId to working dir
-  // git checkout commitId -- doc_content
-  await _runGit(['checkout', commitId, '--', kContentDirName], repoPath);
-  
-  // Sync to content.docx
-  await _forceRegenerateRepoDocx(repoPath);
+  return _withRepoLock(repoPath, () async {
+    // Checkout doc_content from commitId to working dir
+    // git checkout commitId -- doc_content
+    await _runGit(['checkout', commitId, '--', kContentDirName], repoPath);
 
-  // Sync to external
-  final tracking = await _readTracking(projectName);
-  final docxPath = tracking['docxPath'] as String?;
+    // Sync to content.docx
+    await _forceRegenerateRepoDocx(repoPath);
 
-  if (docxPath != null) {
-    // We can use content.docx to update external if external is file
-    final localDocx = p.join(repoPath, kRepoDocxName);
-    
-    if (FileSystemEntity.isDirectorySync(docxPath)) {
+    // Sync to external
+    final tracking = await _readTracking(projectName);
+    final docxPath = tracking['docxPath'] as String?;
+
+    if (docxPath != null) {
+      // We can use content.docx to update external if external is file
+      final localDocx = p.join(repoPath, kRepoDocxName);
+
+      if (FileSystemEntity.isDirectorySync(docxPath)) {
         // Target is dir: Copy contentDir to docxPath
         final contentDir = Directory(p.join(repoPath, kContentDirName));
         await _copyDir(contentDir.path, docxPath);
-    } else {
+      } else {
         // Target is file: Copy content.docx to docxPath
         if (File(localDocx).existsSync()) {
-            File(localDocx).copySync(docxPath);
+          File(localDocx).copySync(docxPath);
         } else {
-            // Fallback
-            final contentDir = Directory(p.join(repoPath, kContentDirName));
+          // Fallback
+          final contentDir = Directory(p.join(repoPath, kContentDirName));
+          if (contentDir.existsSync()) {
             await _zipDir(contentDir.path, docxPath);
+          }
         }
+      }
     }
-  }
-  clearCache();
+  });
 }
 
 Future<String?> getHead(String repoPath) async {
@@ -914,10 +979,15 @@ Future<void> _startWatcher(String name) async {
       ? Directory(docx).watch(events: FileSystemEvent.all, recursive: true)
       : File(docx).watch(events: FileSystemEvent.modify);
 
-  final subscription = s.listen((_) async {
-    try {
-      await updateTrackingProject(name);
-    } catch (_) {}
+  final subscription = s.listen((_) {
+    _debounceTimers[name]?.cancel();
+    _debounceTimers[name] = Timer(const Duration(milliseconds: 2000), () async {
+      try {
+        await updateTrackingProject(name);
+      } catch (e) {
+        print('Watcher update failed for $name: $e');
+      }
+    });
   });
   _watchers[name] = subscription;
 }
@@ -1009,64 +1079,67 @@ Future<String> _resolveRepoOwner(String repoName, String token) async {
 
 Future<void> pushToRemote(String repoPath, String username, String token,
     {bool force = false}) async {
-  final repoName = p.basename(repoPath);
+  return _withRepoLock(repoPath, () async {
+    final repoName = p.basename(repoPath);
 
-  String owner;
-  try {
-    owner = await _resolveRepoOwner(repoName, token);
-  } catch (_) {
-    await ensureRemoteRepoExists(repoName, token);
-    owner = username;
-  }
-
-  final remoteUrl =
-      'http://$username:$token@47.242.109.145:3000/$owner/$repoName.git';
-
-  final args = ['push'];
-  if (force) args.add('--force');
-  args.add(remoteUrl);
-
-  final localBranches = <String>[];
-  try {
-    final lines = await _runGit(
-        ['for-each-ref', '--format=%(refname:short)', 'refs/heads'], repoPath);
-    for (final l in lines) {
-      if (l.trim().isNotEmpty) localBranches.add(l.trim());
+    String owner;
+    try {
+      owner = await _resolveRepoOwner(repoName, token);
+    } catch (_) {
+      await ensureRemoteRepoExists(repoName, token);
+      owner = username;
     }
-  } catch (e) {
-    print('Failed to list local branches: $e');
-  }
 
-  if (localBranches.isEmpty) {
-    args.add('refs/heads/*:refs/heads/*');
-  } else {
-    for (final b in localBranches) {
-      args.add('refs/heads/$b:refs/heads/$b');
+    final remoteUrl =
+        'http://$username:$token@47.242.109.145:3000/$owner/$repoName.git';
+
+    final args = ['push'];
+    if (force) args.add('--force');
+    args.add(remoteUrl);
+
+    final localBranches = <String>[];
+    try {
+      final lines = await _runGit(
+          ['for-each-ref', '--format=%(refname:short)', 'refs/heads'],
+          repoPath);
+      for (final l in lines) {
+        if (l.trim().isNotEmpty) localBranches.add(l.trim());
+      }
+    } catch (e) {
+      print('Failed to list local branches: $e');
     }
-  }
 
-  List<String> output = [];
-  try {
-    output = await _runGit(args, repoPath);
-  } catch (e) {
+    if (localBranches.isEmpty) {
+      args.add('refs/heads/*:refs/heads/*');
+    } else {
+      for (final b in localBranches) {
+        args.add('refs/heads/$b:refs/heads/$b');
+      }
+    }
+
+    List<String> output = [];
+    try {
+      output = await _runGit(args, repoPath);
+    } catch (e) {
+      if (!force) {
+        await _checkIfBehind(repoPath, remoteUrl);
+      }
+      rethrow;
+    }
+
+    try {
+      await _runGit(['fetch', remoteUrl], repoPath);
+    } catch (e) {
+      print('Fetch after push failed: $e');
+    }
+
     if (!force) {
-      await _checkIfBehind(repoPath, remoteUrl);
+      final outStr = output.join('\n');
+      if (outStr.contains('Everything up-to-date')) {
+        await _checkIfBehind(repoPath, remoteUrl);
+      }
     }
-    rethrow;
-  }
-
-  try {
-    await _runGit(['fetch', remoteUrl], repoPath);
-  } catch (e) {
-    print('Fetch after push failed: $e');
-  }
-
-  if (!force) {
-    final outStr = output.join('\n');
-    if (outStr.contains('Everything up-to-date')) {
-      await _checkIfBehind(repoPath, remoteUrl);
-    }
-  }
+  });
 }
 
 Future<void> _checkIfBehind(String repoPath, String remoteUrl) async {
@@ -1121,159 +1194,161 @@ Future<void> _checkIfBehind(String repoPath, String remoteUrl) async {
 Future<Map<String, dynamic>> pullFromRemote(
     String repoName, String username, String token,
     {bool force = false}) async {
-  final remoteName = repoName.toLowerCase();
   final projDir = _projectDir(repoName);
-  final dir = Directory(projDir);
-  final gitDir = Directory(p.join(projDir, '.git'));
+  return _withRepoLock(projDir, () async {
+    final remoteName = repoName.toLowerCase();
+    // final projDir = _projectDir(repoName); // Already calculated
+    final dir = Directory(projDir);
+    final gitDir = Directory(p.join(projDir, '.git'));
 
-  final owner = await _resolveRepoOwner(repoName, token);
-  final remoteUrl =
-      'http://$username:$token@47.242.109.145:3000/$owner/$repoName.git';
+    final owner = await _resolveRepoOwner(repoName, token);
+    final remoteUrl =
+        'http://$username:$token@47.242.109.145:3000/$owner/$repoName.git';
 
-  Map<String, dynamic>? savedTracking;
-  bool isFresh = !dir.existsSync() || !gitDir.existsSync();
+    Map<String, dynamic>? savedTracking;
+    bool isFresh = !dir.existsSync() || !gitDir.existsSync();
 
-  if (!isFresh && force) {
-    try {
-      savedTracking = await _readTracking(repoName);
-    } catch (_) {}
-    try {
-      if (dir.existsSync()) {
-        dir.deleteSync(recursive: true);
-      }
-      isFresh = true;
-    } catch (e) {
-      throw Exception('Failed to delete local repository for force pull: $e');
-    }
-  }
-
-  if (!isFresh) {
-    if (!force) {
+    if (!isFresh && force) {
       try {
-        final trackingFile = _trackingFile(repoName);
-        if (trackingFile.existsSync()) {
-          try {
-            await _runGit(['checkout', 'HEAD', '--', '.'], projDir);
-          } catch (e) {}
-        }
-      } catch (e) {}
-
+        savedTracking = await _readTracking(repoName);
+      } catch (_) {}
       try {
-        await _runGit(['fetch', remoteUrl, 'HEAD'], projDir);
-        final mergeBaseRes = await Process.run(
-          'git',
-          ['merge-base', '--is-ancestor', 'HEAD', 'FETCH_HEAD'],
-          workingDirectory: projDir,
-          runInShell: true,
-        );
-        if (mergeBaseRes.exitCode != 0) {
-          return {
-            'status': 'error',
-            'errorType': 'ahead',
-            'path': projDir,
-            'message':
-                'Local branch is ahead of remote or diverged.'
-          };
+        if (dir.existsSync()) {
+          dir.deleteSync(recursive: true);
         }
-      } catch (e) {}
-    }
-
-    savedTracking = await _readTracking(repoName);
-
-    try {
-      await addRemote(projDir, remoteName, remoteUrl);
-      await _runGit(['fetch', remoteName], projDir);
-      final current = await getCurrentBranch(projDir);
-
-      if (current != null) {
-        await _runGit(['reset', '--hard', '$remoteName/$current'], projDir);
-      } else {
-        await _runGit(['checkout', 'master'], projDir);
-        await _runGit(['reset', '--hard', '$remoteName/master'], projDir);
+        isFresh = true;
+      } catch (e) {
+        throw Exception('Failed to delete local repository for force pull: $e');
       }
-      await _runGit(['remote', 'prune', remoteName], projDir);
-    } catch (e) {
-      throw Exception('Standard pull failed: $e');
     }
-  } else {
-    final base = Directory(_baseDir());
-    if (!base.existsSync()) {
-      base.createSync(recursive: true);
-    }
-    final res = await Process.run(
-      'git',
-      ['clone', '-o', remoteName, remoteUrl, projDir],
-      runInShell: true,
-    );
-    if (res.exitCode != 0) {
-      throw Exception('Clone failed: ${res.stderr}');
-    }
-  }
 
-  try {
-    final lines = await _runGit(['branch', '-r'], projDir);
-    final localBranches = await getBranches(projDir);
-    final localBranchNames = localBranches.map((b) => b.name).toSet();
-    final currentBranch = await getCurrentBranch(projDir);
-
-    for (final line in lines) {
-      final trimmed = line.trim();
-      if (trimmed.isEmpty) continue;
-      if (trimmed.contains('->')) continue;
-      final parts = trimmed.split('/');
-      if (parts.length < 2) continue;
-      if (parts[0] != remoteName) continue;
-      final branchName = parts.sublist(1).join('/');
-
-      if (!localBranchNames.contains(branchName)) {
+    if (!isFresh) {
+      if (!force) {
         try {
-          await _runGit(['branch', '--track', branchName, trimmed], projDir);
+          final trackingFile = _trackingFile(repoName);
+          if (trackingFile.existsSync()) {
+            try {
+              await _runGit(['checkout', 'HEAD', '--', '.'], projDir);
+            } catch (e) {}
+          }
         } catch (e) {}
-      } else if (force) {
-        if (branchName != currentBranch) {
+
+        try {
+          await _runGit(['fetch', remoteUrl, 'HEAD'], projDir);
+          final mergeBaseRes = await Process.run(
+            'git',
+            ['merge-base', '--is-ancestor', 'HEAD', 'FETCH_HEAD'],
+            workingDirectory: projDir,
+            runInShell: true,
+          );
+          if (mergeBaseRes.exitCode != 0) {
+            return {
+              'status': 'error',
+              'errorType': 'ahead',
+              'path': projDir,
+              'message': 'Local branch is ahead of remote or diverged.'
+            };
+          }
+        } catch (e) {}
+      }
+
+      savedTracking = await _readTracking(repoName);
+
+      try {
+        await addRemote(projDir, remoteName, remoteUrl);
+        await _runGit(['fetch', remoteName], projDir);
+        final current = await getCurrentBranch(projDir);
+
+        if (current != null) {
+          await _runGit(['reset', '--hard', '$remoteName/$current'], projDir);
+        } else {
+          await _runGit(['checkout', 'master'], projDir);
+          await _runGit(['reset', '--hard', '$remoteName/master'], projDir);
+        }
+        await _runGit(['remote', 'prune', remoteName], projDir);
+      } catch (e) {
+        throw Exception('Standard pull failed: $e');
+      }
+    } else {
+      final base = Directory(_baseDir());
+      if (!base.existsSync()) {
+        base.createSync(recursive: true);
+      }
+      final res = await Process.run(
+        'git',
+        ['clone', '-o', remoteName, remoteUrl, projDir],
+        runInShell: true,
+      );
+      if (res.exitCode != 0) {
+        throw Exception('Clone failed: ${res.stderr}');
+      }
+    }
+
+    try {
+      final lines = await _runGit(['branch', '-r'], projDir);
+      final localBranches = await getBranches(projDir);
+      final localBranchNames = localBranches.map((b) => b.name).toSet();
+      final currentBranch = await getCurrentBranch(projDir);
+
+      for (final line in lines) {
+        final trimmed = line.trim();
+        if (trimmed.isEmpty) continue;
+        if (trimmed.contains('->')) continue;
+        final parts = trimmed.split('/');
+        if (parts.length < 2) continue;
+        if (parts[0] != remoteName) continue;
+        final branchName = parts.sublist(1).join('/');
+
+        if (!localBranchNames.contains(branchName)) {
           try {
-            await _runGit(['branch', '-f', branchName, trimmed], projDir);
+            await _runGit(['branch', '--track', branchName, trimmed], projDir);
           } catch (e) {}
+        } else if (force) {
+          if (branchName != currentBranch) {
+            try {
+              await _runGit(['branch', '-f', branchName, trimmed], projDir);
+            } catch (e) {}
+          }
+        }
+      }
+    } catch (e) {}
+
+    if (savedTracking != null && savedTracking.isNotEmpty) {
+      // Ensure content.docx is up to date (especially if we just cloned or reset)
+      await _forceRegenerateRepoDocx(projDir);
+
+      final docxPath = savedTracking['docxPath'] as String?;
+
+      if (docxPath != null) {
+        // Sync Repo Content -> External Docx
+        final localDocx = p.join(projDir, kRepoDocxName);
+
+        if (FileSystemEntity.isDirectorySync(docxPath)) {
+          final contentDir = Directory(p.join(projDir, kContentDirName));
+          if (contentDir.existsSync()) {
+            await _copyDir(contentDir.path, docxPath);
+          }
+        } else {
+          if (File(localDocx).existsSync()) {
+            File(localDocx).copySync(docxPath);
+          } else {
+            final contentDir = Directory(p.join(projDir, kContentDirName));
+            if (contentDir.existsSync()) {
+              await _zipDir(contentDir.path, docxPath);
+            }
+          }
         }
       }
     }
-  } catch (e) {}
 
-  if (savedTracking != null && savedTracking.isNotEmpty) {
-    // Ensure content.docx is up to date (especially if we just cloned or reset)
-    await _forceRegenerateRepoDocx(projDir);
-
-    final docxPath = savedTracking['docxPath'] as String?;
-
-    if (docxPath != null) {
-      // Sync Repo Content -> External Docx
-      final localDocx = p.join(projDir, kRepoDocxName);
-      
-      if (FileSystemEntity.isDirectorySync(docxPath)) {
-         final contentDir = Directory(p.join(projDir, kContentDirName));
-         if (contentDir.existsSync()) {
-            await _copyDir(contentDir.path, docxPath);
-         }
-      } else {
-         if (File(localDocx).existsSync()) {
-             File(localDocx).copySync(docxPath);
-         } else {
-             final contentDir = Directory(p.join(projDir, kContentDirName));
-             if (contentDir.existsSync()) {
-                await _zipDir(contentDir.path, docxPath);
-             }
-         }
-      }
-    }
-  }
-
-  await _startWatcher(repoName);
-  clearCache();
-  return {
-    'status': 'success',
-    'path': projDir,
-    'isFresh': isFresh,
-  };
+    await _startWatcher(repoName);
+    clearCache();
+    return {
+      'status': 'success',
+      'path': projDir,
+      'isFresh': isFresh,
+    };
+  });
 }
 
 Future<List<String>> listProjects() async {
