@@ -64,3 +64,5 @@ frontend/lib/diffscripts/Heidegger.spec
 *.exe
 
 fucklist.md
+
+server/lib/mammoth/node_modules
