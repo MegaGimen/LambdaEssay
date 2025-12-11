@@ -1205,6 +1205,10 @@ class _GraphPageState extends State<GraphPage> {
     );
     if (ok != true || selected == null) return;
     final name = selected!;
+    
+    // 立即显示加载遮罩
+    setState(() => loading = true);
+    
     try {
       final resp = await _postJson('http://localhost:8080/track/open', {
         'name': name,
@@ -1230,6 +1234,8 @@ class _GraphPageState extends State<GraphPage> {
       await _onUpdateRepoAction(forcePull: true);
     } catch (e) {
       setState(() => error = e.toString());
+    } finally {
+      setState(() => loading = false);
     }
   }
 
