@@ -2333,7 +2333,6 @@ class _GraphViewState extends State<_GraphView> {
           'commitId': node.id,
         }),
       );
-      print(resp.bodyBytes);
       // Pop loading dialog
       if (mounted) Navigator.pop(context);
 
