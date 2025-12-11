@@ -449,6 +449,8 @@ Future<void> _runGitToFile(
   final fullArgs = [
     '-c',
     'core.quotepath=false',
+    '-c',
+    'core.autocrlf=false',
     '-C',
     repoPath,
     ...args,
@@ -680,19 +682,11 @@ Future<bool> _checkDocxIdentical(String path1, String path2) async {
 }
 
 Future<Uint8List> previewVersion(String repoPath, String commitId) async {
-  // 1. Check cache
-  final cacheDir = Directory(p.join(_baseDir(), 'cache'));
-  if (!cacheDir.existsSync()) {
-    cacheDir.createSync(recursive: true);
-  }
-  final cacheName = '$commitId.pdf';
-  final cachePath = p.join(cacheDir.path, cacheName);
-  final cacheFile = File(cachePath);
-  if (cacheFile.existsSync()) {
-    return await cacheFile.readAsBytes();
-  }
+  // 1. Check cache (for DOCX bytes)
+  // Since we are returning raw DOCX bytes, we might not strictly need to cache if git show is fast enough.
+  // But let's keep caching logic if desired, or simplify it.
+  // For now, let's simplify and just extract the docx.
 
-  // 2. Generate if not cached
   final docxAbs = _findRepoDocx(repoPath);
   if (docxAbs == null) {
     throw Exception('No .docx file found in repository');
@@ -702,38 +696,19 @@ Future<Uint8List> previewVersion(String repoPath, String commitId) async {
   final tmpDir = await Directory.systemTemp.createTemp('gitdocx_prev_');
   try {
     final p1 = p.join(tmpDir.path, 'preview.docx');
-    final pdf = p.join(tmpDir.path, 'preview.pdf');
-
+    
+    // Extract the docx from git to a temp file
     await _runGitToFile(['show', '$commitId:$docxRel'], repoPath, p1);
 
-    final scriptPath = p.fromUri(Platform.script);
-    final repoRoot = p.dirname(p.dirname(p.dirname(scriptPath)));
-    final ps1Path = p.join(repoRoot, 'frontend', 'lib', 'docx2pdf.ps1');
-
-    if (!File(ps1Path).existsSync()) {
-      throw Exception('docx2pdf.ps1 not found at $ps1Path');
+    if (!File(p1).existsSync()) {
+      throw Exception('Failed to extract docx from commit $commitId');
     }
 
-    final res = await Process.run('powershell', [
-      '-ExecutionPolicy',
-      'Bypass',
-      '-File',
-      ps1Path,
-      '-InputPath',
-      p1,
-      '-OutputPath',
-      pdf
-    ]);
-
-    if (res.exitCode != 0 || !File(pdf).existsSync()) {
-      throw Exception(
-          'Preview generation failed: ${res.stdout}\n${res.stderr}');
-    }
-
-    // 3. Save to cache
-    await File(pdf).copy(cachePath);
-
-    return await File(pdf).readAsBytes();
+    final bytes = await File(p1).readAsBytes();
+    print('Preview DOCX size: ${bytes.length} bytes');
+    print('Preview DOCX header: ${bytes.take(4).toList()}');
+    // Return the bytes of the docx file
+    return bytes;
   } finally {
     try {
       if (tmpDir.existsSync()) {

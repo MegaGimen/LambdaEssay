@@ -4,8 +4,6 @@ import 'package:flutter/material.dart';
 // ignore: avoid_web_libraries_in_flutter, deprecated_member_use
 import 'dart:html' as html;
 // ignore: avoid_web_libraries_in_flutter, deprecated_member_use
-import 'dart:js' as js;
-// ignore: avoid_web_libraries_in_flutter, deprecated_member_use
 import 'dart:js_util' as js_util;
 
 import 'utils/platform_registry.dart';
@@ -54,6 +52,10 @@ class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
   }
 
   Future<void> _convert(Uint8List bytes) async {
+    print('Visualize: received bytes length=${bytes.length}');
+    if (bytes.length >= 4) {
+      print('Visualize: header=${bytes.sublist(0, 4)}');
+    }
     setState(() {
       _loading = true;
       _error = null;
@@ -61,28 +63,40 @@ class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
 
     try {
       // Check if mammoth is loaded
-      if (!js.context.hasProperty('mammoth')) {
-         throw Exception('Mammoth.js library not loaded');
+      if (!js_util.hasProperty(html.window, 'mammoth')) {
+        throw Exception('Mammoth.js library not loaded');
       }
 
-      final mammoth = js.context['mammoth'];
-      
-      // mammoth.convertToHtml({arrayBuffer: ...})
-      final options = js.JsObject.jsify({
-        'arrayBuffer': bytes.buffer,
-      });
+      final mammoth = js_util.getProperty(html.window, 'mammoth');
 
-      final promise = mammoth.callMethod('convertToHtml', [options]);
-      
+      // Create a JS Uint8Array from the bytes to ensure we have a valid JS ArrayBuffer
+      // This helps avoid issues with Dart ByteBuffer mapping
+      // Note: Passing Dart Uint8List to JS Uint8Array constructor works because Uint8List is Iterable.
+      final jsUint8Array = js_util.callConstructor(
+        js_util.getProperty(html.window, 'Uint8Array'), 
+        [bytes]
+      );
+      final arrayBuffer = js_util.getProperty(jsUint8Array, 'buffer');
+
+      // mammoth.convertToHtml({arrayBuffer: ...})
+      final options = js_util.newObject();
+      js_util.setProperty(options, 'arrayBuffer', arrayBuffer);
+
+      print('Visualize: calling mammoth.convertToHtml');
+      final promise = js_util.callMethod(mammoth, 'convertToHtml', [options]);
+
       final result = await js_util.promiseToFuture(promise);
+      print('Visualize: conversion result obtained');
+      
       // result is an object with 'value' (html) and 'messages'
       final htmlContent = js_util.getProperty(result, 'value');
-      // final messages = js_util.getProperty(result, 'messages');
-      
+      final messages = js_util.getProperty(result, 'messages');
+      print('Visualize: messages=$messages');
+
       // Update the DivElement
       _element.innerHtml = htmlContent;
-
     } catch (e) {
+      print('Visualize: error=$e');
       setState(() {
         _error = 'Conversion failed: $e';
       });
@@ -106,7 +120,17 @@ class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
     reader.readAsArrayBuffer(file);
     await reader.onLoad.first;
     
-    final bytes = reader.result as Uint8List;
+    final result = reader.result;
+    Uint8List bytes;
+    if (result is Uint8List) {
+      bytes = result;
+    } else if (result is ByteBuffer) {
+      bytes = result.asUint8List();
+    } else {
+      // Fallback or error
+      bytes = Uint8List(0);
+    }
+
     setState(() {
        // Update title if needed?
     });
@@ -123,17 +147,19 @@ class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
             : null,
         title: Text(widget.title ?? 'Docx Preview'),
         actions: [
-            IconButton(
-                icon: const Icon(Icons.upload_file),
-                onPressed: _pickDocx,
-                tooltip: 'Open local .docx',
-            ),
+          IconButton(
+            icon: const Icon(Icons.upload_file),
+            onPressed: _pickDocx,
+            tooltip: 'Open local .docx',
+          ),
         ],
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-              ? Center(child: Text(_error!, style: const TextStyle(color: Colors.red)))
+              ? Center(
+                  child:
+                      Text(_error!, style: const TextStyle(color: Colors.red)))
               : HtmlElementView(viewType: _viewType),
     );
   }

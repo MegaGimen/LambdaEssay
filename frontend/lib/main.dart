@@ -2314,6 +2314,7 @@ class _GraphViewState extends State<_GraphView> {
   }
 
   Future<void> _previewVersion(CommitNode node) async {
+    print("FuckYou");
     if (_comparing) return;
     setState(() => _comparing = true);
     try {
@@ -2332,7 +2333,7 @@ class _GraphViewState extends State<_GraphView> {
           'commitId': node.id,
         }),
       );
-
+      print(resp.bodyBytes);
       // Pop loading dialog
       if (mounted) Navigator.pop(context);
 
@@ -3354,7 +3355,6 @@ class _GraphViewState extends State<_GraphView> {
 
     // 2. & 3. Explicit merge edges check and First Parent fix check removed
 
-
     if (bestInfo != null && best <= 8.0) return bestInfo;
 
     // 4. Check custom edges
@@ -3366,7 +3366,8 @@ class _GraphViewState extends State<_GraphView> {
       final laneC = laneOf[child];
       final rowP = rowOf[parent];
       final laneP = laneOf[parent];
-      if (rowC == null || laneC == null || rowP == null || laneP == null) continue;
+      if (rowC == null || laneC == null || rowP == null || laneP == null)
+        continue;
 
       final x = laneC * laneWidth + laneWidth / 2;
       final y = rowC * rowHeight + rowHeight / 2;
@@ -3596,31 +3597,17 @@ class GraphPainter extends CustomPainter {
 
         paintEdge.strokeWidth = isCurrent ? 4.0 : (isHover ? 3.0 : 2.0);
 
-
         canvas.drawPath(path, paintEdge);
       }
     }
 
     // 补全 First Parent 连线逻辑已移除
 
-
-
-
-
-
-
-
-
-
-
-
-
-
     // 补全 First Parent 连线 (防止 Chains 数据缺失导致的断链)
     // 仅补画 First Parent，不处理其他父节点，也不添加额外的高亮效果
     for (final c in commits) {
       if (c.parents.isEmpty) continue;
-      
+
       final rowC = rowOf[c.id];
       final laneC = laneOf[c.id];
       if (rowC == null || laneC == null) continue;
@@ -3631,7 +3618,7 @@ class GraphPainter extends CustomPainter {
       // 仅检查 First Parent
       final p0Id = c.parents[0];
       final key0 = '${c.id}|$p0Id';
-      
+
       // 如果 Chains 遍历中没有画过这条线，则补画
       if (!pairDrawn.containsKey(key0)) {
         final rowP = rowOf[p0Id];
@@ -3639,7 +3626,6 @@ class GraphPainter extends CustomPainter {
         if (rowP != null && laneP != null) {
           final px = laneP * laneWidth + laneWidth / 2;
           final py = rowP * rowHeight + rowHeight / 2;
-
 
           final paintMain = Paint()
             ..style = PaintingStyle.stroke
@@ -3671,19 +3657,20 @@ class GraphPainter extends CustomPainter {
       if (edge.length < 2) continue;
       final child = edge[0];
       final parent = edge[1];
-      
+
       final rowC = rowOf[child];
       final laneC = laneOf[child];
       final rowP = rowOf[parent];
       final laneP = laneOf[parent];
-      
-      if (rowC == null || laneC == null || rowP == null || laneP == null) continue;
-      
+
+      if (rowC == null || laneC == null || rowP == null || laneP == null)
+        continue;
+
       final x = laneC * laneWidth + laneWidth / 2;
       final y = rowC * rowHeight + rowHeight / 2;
       final px = laneP * laneWidth + laneWidth / 2;
       final py = rowP * rowHeight + rowHeight / 2;
-      
+
       final path = Path();
       path.moveTo(x, y);
       path.lineTo(px, py);

@@ -287,9 +287,10 @@ Future<void> main(List<String> args) async {
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
-      final pdf = await previewVersion(repoPath, commitId);
-      return _cors(Response.ok(pdf, headers: {
-        'Content-Type': 'application/pdf',
+      final docxBytes = await previewVersion(repoPath, commitId);
+      return _cors(Response.ok(docxBytes, headers: {
+        'Content-Type':
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       }));
     } catch (e) {
       return _cors(Response(500,
