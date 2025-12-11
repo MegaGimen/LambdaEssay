@@ -1663,7 +1663,9 @@ class _GraphPageState extends State<GraphPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return Stack(
+      children: [
+        Scaffold(
       appBar: AppBar(title: const Text('Git Graph 可视化')),
       body: Column(
         children: [
@@ -1862,10 +1864,20 @@ class _GraphPageState extends State<GraphPage> {
                     onMerge: _performMerge,
                     onFindIdentical: _findIdentical,
                     identicalCommitIds: identicalCommitIds,
+                    onLoading: (v) => setState(() => loading = v),
                   ),
           ),
         ],
       ),
+    ),
+    if (loading)
+      const Opacity(
+        opacity: 0.3,
+        child: ModalBarrier(dismissible: false, color: Colors.black),
+      ),
+    if (loading)
+      const Center(child: CircularProgressIndicator()),
+    ],
     );
   }
 }
@@ -1880,6 +1892,7 @@ class _GraphView extends StatefulWidget {
   final Future<void> Function(String)? onMerge;
   final Future<void> Function()? onFindIdentical;
   final List<String>? identicalCommitIds;
+  final Function(bool)? onLoading;
   const _GraphView({
     required this.data,
     this.working,
@@ -1890,6 +1903,7 @@ class _GraphView extends StatefulWidget {
     this.onMerge,
     this.onFindIdentical,
     this.identicalCommitIds,
+    this.onLoading,
   });
   @override
   State<_GraphView> createState() => _GraphViewState();
@@ -1943,15 +1957,12 @@ class _GraphViewState extends State<_GraphView> {
   Future<void> _onCompare() async {
     if (_selectedNodes.length != 2) return;
     if (_comparing) return;
+    
+    // Notify parent to lock UI
+    widget.onLoading?.call(true);
     setState(() => _comparing = true);
+    
     try {
-      // Show loading dialog
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (ctx) => const Center(child: CircularProgressIndicator()),
-      );
-
       final nodes = _selectedNodes.toList();
       final commits = widget.data.commits;
       int idx1 = commits.indexWhere((c) => c.id == nodes[0]);
@@ -1980,14 +1991,15 @@ class _GraphViewState extends State<_GraphView> {
         }),
       );
 
-      // Pop loading dialog
-      if (mounted) Navigator.pop(context);
-
       if (resp.statusCode != 200) {
         throw Exception(resp.body);
       }
       final pdfBytes = resp.bodyBytes;
       if (!mounted) return;
+      
+      // Unlock UI before navigation
+      widget.onLoading?.call(false);
+      
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -1999,9 +2011,7 @@ class _GraphViewState extends State<_GraphView> {
         ),
       );
     } catch (e) {
-      // Ensure loading dialog is closed if error occurs
-      if (mounted && _comparing) Navigator.pop(context);
-
+      widget.onLoading?.call(false);
       if (mounted) {
         ScaffoldMessenger.of(
           context,
@@ -2009,6 +2019,8 @@ class _GraphViewState extends State<_GraphView> {
       }
     } finally {
       if (mounted) setState(() => _comparing = false);
+      // Ensure unlocked in case we didn't unlock before
+      widget.onLoading?.call(false);
     }
   }
 
@@ -2088,6 +2100,8 @@ class _GraphViewState extends State<_GraphView> {
       ).showSnackBar(const SnackBar(content: Text('请填写完整信息')));
       return;
     }
+    
+    widget.onLoading?.call(true);
     try {
       final resp = await http.post(
         Uri.parse('http://localhost:8080/commit'),
@@ -2114,6 +2128,8 @@ class _GraphViewState extends State<_GraphView> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('提交失败: $e')));
+    } finally {
+      widget.onLoading?.call(false);
     }
   }
 
@@ -2148,6 +2164,8 @@ class _GraphViewState extends State<_GraphView> {
     if (ok != true) return;
     final name = nameCtrl.text.trim();
     if (name.isEmpty) return;
+    
+    widget.onLoading?.call(true);
     try {
       final resp = await http.post(
         Uri.parse('http://localhost:8080/branch/create'),
@@ -2164,10 +2182,13 @@ class _GraphViewState extends State<_GraphView> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('创建失败: $e')));
+    } finally {
+      widget.onLoading?.call(false);
     }
   }
 
   Future<void> _doSwitchBranch(String name) async {
+    widget.onLoading?.call(true);
     try {
       final resp = await http.post(
         Uri.parse('http://localhost:8080/branch/switch'),
@@ -2197,6 +2218,8 @@ class _GraphViewState extends State<_GraphView> {
           context,
         ).showSnackBar(SnackBar(content: Text('切换失败: $e')));
       }
+    } finally {
+      widget.onLoading?.call(false);
     }
   }
 
@@ -2315,15 +2338,11 @@ class _GraphViewState extends State<_GraphView> {
 
   Future<void> _previewVersion(CommitNode node) async {
     if (_comparing) return;
+    
+    widget.onLoading?.call(true);
     setState(() => _comparing = true);
+    
     try {
-      // Show loading dialog
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (ctx) => const Center(child: CircularProgressIndicator()),
-      );
-
       final resp = await http.post(
         Uri.parse('http://localhost:8080/preview'),
         headers: {'Content-Type': 'application/json'},
@@ -2333,14 +2352,14 @@ class _GraphViewState extends State<_GraphView> {
         }),
       );
 
-      // Pop loading dialog
-      if (mounted) Navigator.pop(context);
-
       if (resp.statusCode != 200) {
         throw Exception('预览失败: ${resp.body}');
       }
       final bytes = resp.bodyBytes;
       if (!mounted) return;
+      
+      widget.onLoading?.call(false);
+      
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -2351,14 +2370,14 @@ class _GraphViewState extends State<_GraphView> {
         ),
       );
     } catch (e) {
-      // Ensure loading dialog is closed if error occurs
-      if (mounted && _comparing) Navigator.pop(context);
+      widget.onLoading?.call(false);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error: $e')),
       );
     } finally {
       if (mounted) setState(() => _comparing = false);
+      widget.onLoading?.call(false);
     }
   }
 
@@ -2383,6 +2402,8 @@ class _GraphViewState extends State<_GraphView> {
       ),
     );
     if (ok != true) return;
+
+    widget.onLoading?.call(true);
 
     if (!mounted) return;
     ScaffoldMessenger.of(context)
@@ -2415,6 +2436,8 @@ class _GraphViewState extends State<_GraphView> {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Error: $e')));
+    } finally {
+      widget.onLoading?.call(false);
     }
   }
 
@@ -2457,6 +2480,8 @@ class _GraphViewState extends State<_GraphView> {
     );
     if (ok != true) return;
 
+    widget.onLoading?.call(true);
+
     if (!mounted) return;
     ScaffoldMessenger.of(context)
         .showSnackBar(const SnackBar(content: Text('正在重置分支...')));
@@ -2488,6 +2513,8 @@ class _GraphViewState extends State<_GraphView> {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Error: $e')));
+    } finally {
+      widget.onLoading?.call(false);
     }
   }
 
