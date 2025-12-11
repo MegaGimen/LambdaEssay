@@ -1169,7 +1169,7 @@ class _GraphPageState extends State<GraphPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
+        builder: (context, innerSetState) => AlertDialog(
           title: const Text('打开追踪项目'),
           content: SizedBox(
             width: 360,
@@ -1185,7 +1185,7 @@ class _GraphPageState extends State<GraphPage> {
                             ))
                         .toList(),
                     onChanged: (v) {
-                      setState(() => selected = v);
+                      innerSetState(() => selected = v);
                     },
                   ),
           ),
@@ -1195,8 +1195,13 @@ class _GraphPageState extends State<GraphPage> {
               child: const Text('取消'),
             ),
             ElevatedButton(
-              onPressed:
-                  selected == null ? null : () => Navigator.pop(context, true),
+              onPressed: selected == null
+                  ? null
+                  : () {
+                      // 立即设置loading，防止UI延迟
+                      setState(() => loading = true);
+                      Navigator.pop(context, true);
+                    },
               child: const Text('打开'),
             ),
           ],
