@@ -1,8 +1,14 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
-// ignore: avoid_web_libraries_in_flutter
+// ignore: avoid_web_libraries_in_flutter, deprecated_member_use
 import 'dart:html' as html;
+// ignore: avoid_web_libraries_in_flutter, deprecated_member_use
+import 'dart:js' as js;
+// ignore: avoid_web_libraries_in_flutter, deprecated_member_use
+import 'dart:js_util' as js_util;
+
+import 'utils/platform_registry.dart';
 
 class VisualizeDocxPage extends StatefulWidget {
   final Uint8List? initialBytes;
@@ -21,53 +27,77 @@ class VisualizeDocxPage extends StatefulWidget {
 }
 
 class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
-  Uint8List? _pdfBytes;
-  String? _fileName;
-  final PdfViewerController _pdfViewerController = PdfViewerController();
+  bool _loading = false;
+  String? _error;
+  final String _viewType = 'docx-view-${DateTime.now().microsecondsSinceEpoch}';
+  late html.DivElement _element;
 
   @override
   void initState() {
     super.initState();
+    // Create a DivElement to render the HTML
+    _element = html.DivElement()
+      ..style.width = '100%'
+      ..style.height = '100%'
+      ..style.overflow = 'auto'
+      ..style.padding = '20px'
+      ..style.backgroundColor = 'white'
+      ..style.color = 'black'; // Ensure text is visible
+
+    // Register the view factory
+    // ignore: undefined_prefixed_name
+    registerViewFactory(_viewType, (int viewId) => _element);
+
     if (widget.initialBytes != null) {
-      _pdfBytes = widget.initialBytes;
-      _fileName = widget.title;
-    }
-    // Add listeners to prevent browser zoom
-    // This attempts to block the default browser zoom behavior when the user uses Ctrl+Scroll or Ctrl +/-
-    // allowing the PDF viewer's internal zoom or just preventing UI scaling.
-    // ignore: undefined_prefixed_name
-    html.window.addEventListener('wheel', _preventBrowserZoom, true);
-    // ignore: undefined_prefixed_name
-    html.window.addEventListener('keydown', _preventBrowserKeyZoom, true);
-  }
-
-  @override
-  void dispose() {
-    // ignore: undefined_prefixed_name
-    html.window.removeEventListener('wheel', _preventBrowserZoom, true);
-    // ignore: undefined_prefixed_name
-    html.window.removeEventListener('keydown', _preventBrowserKeyZoom, true);
-    super.dispose();
-  }
-
-  void _preventBrowserZoom(html.Event e) {
-    if (e is html.WheelEvent && e.ctrlKey) {
-      e.preventDefault();
+      _convert(widget.initialBytes!);
     }
   }
 
-  void _preventBrowserKeyZoom(html.Event e) {
-    if (e is html.KeyboardEvent && e.ctrlKey) {
-      // Prevent Ctrl + (+, -, 0, =)
-      if (e.key == '=' || e.key == '-' || e.key == '+' || e.key == '0') {
-        e.preventDefault();
+  Future<void> _convert(Uint8List bytes) async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      // Check if mammoth is loaded
+      if (!js.context.hasProperty('mammoth')) {
+         throw Exception('Mammoth.js library not loaded');
+      }
+
+      final mammoth = js.context['mammoth'];
+      
+      // mammoth.convertToHtml({arrayBuffer: ...})
+      final options = js.JsObject.jsify({
+        'arrayBuffer': bytes.buffer,
+      });
+
+      final promise = mammoth.callMethod('convertToHtml', [options]);
+      
+      final result = await js_util.promiseToFuture(promise);
+      // result is an object with 'value' (html) and 'messages'
+      final htmlContent = js_util.getProperty(result, 'value');
+      // final messages = js_util.getProperty(result, 'messages');
+      
+      // Update the DivElement
+      _element.innerHtml = htmlContent;
+
+    } catch (e) {
+      setState(() {
+        _error = 'Conversion failed: $e';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
       }
     }
   }
 
-  Future<void> _pickPdf() async {
+  Future<void> _pickDocx() async {
     final input = html.FileUploadInputElement();
-    input.accept = '.pdf';
+    input.accept = '.docx';
     input.click();
     await input.onChange.first;
     if (input.files?.isEmpty ?? true) return;
@@ -75,10 +105,12 @@ class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
     final reader = html.FileReader();
     reader.readAsArrayBuffer(file);
     await reader.onLoad.first;
+    
+    final bytes = reader.result as Uint8List;
     setState(() {
-      _pdfBytes = reader.result as Uint8List;
-      _fileName = file.name;
+       // Update title if needed?
     });
+    _convert(bytes);
   }
 
   @override
@@ -89,31 +121,20 @@ class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
             ? IconButton(
                 icon: const Icon(Icons.arrow_back), onPressed: widget.onBack)
             : null,
-        title: Text(_fileName ?? widget.title ?? 'PDF 预览'),
-      ),
-      body: _pdfBytes == null
-          ? Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Text('请上传 PDF 文件进行预览'),
-                  const SizedBox(height: 20),
-                  ElevatedButton.icon(
-                    onPressed: _pickPdf,
-                    icon: const Icon(Icons.upload_file),
-                    label: const Text('上传 PDF'),
-                  ),
-                ],
-              ),
-            )
-          : SfPdfViewer.memory(
-              _pdfBytes!,
-              controller: _pdfViewerController,
+        title: Text(widget.title ?? 'Docx Preview'),
+        actions: [
+            IconButton(
+                icon: const Icon(Icons.upload_file),
+                onPressed: _pickDocx,
+                tooltip: 'Open local .docx',
             ),
+        ],
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+              ? Center(child: Text(_error!, style: const TextStyle(color: Colors.red)))
+              : HtmlElementView(viewType: _viewType),
     );
   }
-}
-
-void main() {
-  runApp(const MaterialApp(home: VisualizeDocxPage()));
 }
