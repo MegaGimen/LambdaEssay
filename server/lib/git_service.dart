@@ -9,12 +9,44 @@ import 'models.dart';
 final Map<String, GraphResponse> _graphCache = <String, GraphResponse>{};
 
 const String kContentDirName = 'doc_content';
+const String kRepoDocxName = 'content.docx';
 
 void clearCache() {
   _graphCache.clear();
 }
 
 // --- Helpers for Docx/Folder operations ---
+
+Future<void> _syncToDocx(String repoPath) async {
+  // Zip doc_content -> content.docx
+  final contentDir = p.join(repoPath, kContentDirName);
+  final docxPath = p.join(repoPath, kRepoDocxName);
+  if (Directory(contentDir).existsSync()) {
+    await _zipDir(contentDir, docxPath);
+  }
+}
+
+Future<void> _syncFromDocx(String repoPath, String sourceDocxPath) async {
+  // Copy source -> content.docx
+  // Unzip content.docx -> doc_content
+  final docxPath = p.join(repoPath, kRepoDocxName);
+  
+  if (FileSystemEntity.isDirectorySync(sourceDocxPath)) {
+      // If source is a folder, zip it to content.docx
+      await _zipDir(sourceDocxPath, docxPath);
+  } else {
+      // Copy file
+      File(sourceDocxPath).copySync(docxPath);
+  }
+  
+  final contentDir = Directory(p.join(repoPath, kContentDirName));
+  if (contentDir.existsSync()) {
+      contentDir.deleteSync(recursive: true);
+  }
+  contentDir.createSync();
+  await _unzipDocx(docxPath, contentDir.path);
+}
+
 
 Future<void> _unzipDocx(String docxPath, String destDir) async {
   String zipPath = docxPath;
@@ -285,6 +317,7 @@ Future<void> createBranch(String repoPath, String branchName) async {
 Future<void> switchBranch(String projectName, String branchName) async {
   final repoPath = _projectDir(projectName);
   await _runGit(['checkout', '-f', branchName], repoPath);
+  await _syncToDocx(repoPath);
   clearCache();
 }
 
@@ -310,7 +343,14 @@ Future<Uint8List> compareWorking(String repoPath) async {
   final tmpDir = await Directory.systemTemp.createTemp('gitdocx_cmp_work_');
   try {
     final p1 = p.join(tmpDir.path, 'HEAD.docx');
-    final p2 = p.join(tmpDir.path, 'Working.docx');
+    String p2 = p.join(repoPath, kRepoDocxName);
+    
+    // If content.docx doesn't exist, create it from doc_content
+    if (!File(p2).existsSync()) {
+        p2 = p.join(tmpDir.path, 'Working.docx');
+        await _zipDir(contentDir.path, p2);
+    }
+
     final pdf = p.join(tmpDir.path, 'diff.pdf');
 
     // HEAD -> p1
@@ -320,9 +360,6 @@ Future<Uint8List> compareWorking(String repoPath) async {
       // If no HEAD, maybe empty? Handle gracefully or throw
       throw Exception('Could not get HEAD content: $e');
     }
-
-    // Working -> p2
-    await _zipDir(contentDir.path, p2);
 
     final scriptPath = p.fromUri(Platform.script);
     final repoRoot = p.dirname(p.dirname(p.dirname(scriptPath)));
@@ -523,22 +560,18 @@ Future<Map<String, dynamic>> createTrackingProject(
   if (!gitDir.existsSync()) {
     await _runGit(['init'], projDir);
     final gitignore = File(p.join(projDir, '.gitignore'));
-    await gitignore.writeAsString('tracking.json\n');
+    await gitignore.writeAsString('tracking.json\n*.docx\n');
   }
 
   // Handle doc content
-  final contentDir = Directory(p.join(projDir, kContentDirName));
-  if (contentDir.existsSync()) {
-    contentDir.deleteSync(recursive: true);
-  }
-  contentDir.createSync();
-
   if (docxPath != null && docxPath.trim().isNotEmpty) {
-    if (FileSystemEntity.isDirectorySync(docxPath)) {
-      await _copyDir(docxPath, contentDir.path);
-    } else if (FileSystemEntity.isFileSync(docxPath)) {
-      await _unzipDocx(docxPath, contentDir.path);
-    }
+      await _syncFromDocx(projDir, docxPath);
+  } else {
+      // Ensure empty content dir exists
+      final contentDir = Directory(p.join(projDir, kContentDirName));
+      if (!contentDir.existsSync()) contentDir.createSync();
+      // Create empty docx?
+      await _syncToDocx(projDir); 
   }
 
   final tracking = await _readTracking(name);
@@ -546,7 +579,7 @@ Future<Map<String, dynamic>> createTrackingProject(
   if (docxPath != null && docxPath.trim().isNotEmpty) {
     tracking['docxPath'] = _sanitizeFsPath(docxPath);
   }
-  tracking['repoDocxPath'] = contentDir.path;
+  tracking['repoDocxPath'] = p.join(projDir, kContentDirName);
 
   await _writeTracking(name, tracking);
   await _startWatcher(name);
@@ -645,6 +678,7 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
         if (isIdentical) {
             // Restore working copy (repo/doc_content) to HEAD
              await _runGit(['checkout', 'HEAD', '--', kContentDirName], projDir);
+             await _syncToDocx(projDir); // Sync content.docx
              restored = true;
         }
     }
@@ -655,15 +689,7 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
   print('restored? $restored');
   if (!restored) {
     // Update repo content from source
-    // Clear content dir
-    if (contentDir.existsSync()) contentDir.deleteSync(recursive: true);
-    contentDir.createSync();
-    
-    if (FileSystemEntity.isDirectorySync(sourcePath!)) {
-        await _copyDir(sourcePath, contentDir.path);
-    } else {
-        await _unzipDocx(sourcePath, contentDir.path);
-    }
+    await _syncFromDocx(projDir, sourcePath!);
   }
 
   final head = await getHead(projDir);
@@ -791,6 +817,7 @@ Future<Uint8List> previewVersion(String repoPath, String commitId) async {
 Future<void> resetBranch(String projectName, String commitId) async {
   final repoPath = _projectDir(projectName);
   await _runGit(['reset', '--hard', commitId], repoPath);
+  await _syncToDocx(repoPath);
   clearCache();
 }
 
@@ -800,21 +827,31 @@ Future<void> rollbackVersion(String projectName, String commitId) async {
   // Checkout doc_content from commitId to working dir
   // git checkout commitId -- doc_content
   await _runGit(['checkout', commitId, '--', kContentDirName], repoPath);
+  
+  // Sync to content.docx
+  await _syncToDocx(repoPath);
 
   // Sync to external
   final tracking = await _readTracking(projectName);
   final docxPath = tracking['docxPath'] as String?;
 
   if (docxPath != null) {
-    final contentDir = Directory(p.join(repoPath, kContentDirName));
+    // We can use content.docx to update external if external is file
+    final localDocx = p.join(repoPath, kRepoDocxName);
+    
     if (FileSystemEntity.isDirectorySync(docxPath)) {
         // Target is dir: Copy contentDir to docxPath
-        // Clean target first? Maybe risky. But user asked for rollback.
-        // We overwrite.
+        final contentDir = Directory(p.join(repoPath, kContentDirName));
         await _copyDir(contentDir.path, docxPath);
     } else {
-        // Target is file: Zip contentDir to docxPath
-        await _zipDir(contentDir.path, docxPath);
+        // Target is file: Copy content.docx to docxPath
+        if (File(localDocx).existsSync()) {
+            File(localDocx).copySync(docxPath);
+        } else {
+            // Fallback
+            final contentDir = Directory(p.join(repoPath, kContentDirName));
+            await _zipDir(contentDir.path, docxPath);
+        }
     }
   }
   clearCache();
@@ -1188,16 +1225,28 @@ Future<Map<String, dynamic>> pullFromRemote(
   } catch (e) {}
 
   if (savedTracking != null && savedTracking.isNotEmpty) {
+    // Ensure content.docx is up to date (especially if we just cloned or reset)
+    await _syncToDocx(projDir);
+
     final docxPath = savedTracking['docxPath'] as String?;
 
     if (docxPath != null) {
       // Sync Repo Content -> External Docx
-      final contentDir = Directory(p.join(projDir, kContentDirName));
-      if (contentDir.existsSync()) {
-         if (FileSystemEntity.isDirectorySync(docxPath)) {
+      final localDocx = p.join(projDir, kRepoDocxName);
+      
+      if (FileSystemEntity.isDirectorySync(docxPath)) {
+         final contentDir = Directory(p.join(projDir, kContentDirName));
+         if (contentDir.existsSync()) {
             await _copyDir(contentDir.path, docxPath);
+         }
+      } else {
+         if (File(localDocx).existsSync()) {
+             File(localDocx).copySync(docxPath);
          } else {
-            await _zipDir(contentDir.path, docxPath);
+             final contentDir = Directory(p.join(projDir, kContentDirName));
+             if (contentDir.existsSync()) {
+                await _zipDir(contentDir.path, docxPath);
+             }
          }
       }
     }
@@ -1241,6 +1290,7 @@ Future<void> rebasePull(String repoName, String username, String token) async {
   try {
     await _runGit(
         ['pull', '--rebase', '-X', 'theirs', remoteName, current], projDir);
+    await _syncToDocx(projDir);
   } catch (e) {
     try {
       await _runGit(['rebase', '--abort'], projDir);
@@ -1348,15 +1398,8 @@ Future<void> completeMerge(String repoName, String targetBranch) async {
   final tracking = await _readTracking(repoName);
   final docxPath = tracking['docxPath'] as String?;
   if (docxPath != null) {
-      final contentDir = Directory(p.join(projDir, kContentDirName));
-      if (contentDir.existsSync()) contentDir.deleteSync(recursive: true);
-      contentDir.createSync();
-      
-      if (FileSystemEntity.isDirectorySync(docxPath)) {
-          await _copyDir(docxPath, contentDir.path);
-      } else if (File(docxPath).existsSync()) {
-          await _unzipDocx(docxPath, contentDir.path);
-      }
+      // Sync to content.docx & doc_content
+      await _syncFromDocx(projDir, docxPath);
   }
   
   final oldHead = await getHead(projDir);
