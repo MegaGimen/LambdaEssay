@@ -791,41 +791,42 @@ Future<bool> _checkDocxIdentical(String externalPath, String compareToDocx) asyn
           path1 = zip1;
       }
       
-      // Use existing compare logic via HTTP or direct?
-      // Direct call is easier since we are in same process, 
-      // but _checkDocxIdentical in original code called localhost:5000/compare.
-      // localhost:5000 is 'compare' service (Heidegger?). 
-      // If we assume the compare service handles .docx, we are good.
-      // Yes, the original code used localhost:5000.
-      
       final f1 = File(path1);
       final f2 = File(path2);
       if (!f1.existsSync() || !f2.existsSync()) return false;
 
       final client = HttpClient();
-      final req = await client.post('localhost', 5000, '/compare');
-      final boundary = '---gitbin-boundary-${DateTime.now().millisecondsSinceEpoch}';
-      req.headers.contentType = ContentType('multipart', 'form-data', parameters: {'boundary': boundary});
+      client.connectionTimeout = const Duration(seconds: 10);
+      try {
+        final req = await client.post('localhost', 5000, '/compare');
+        final boundary = '---gitbin-boundary-${DateTime.now().millisecondsSinceEpoch}';
+        req.headers.contentType = ContentType('multipart', 'form-data', parameters: {'boundary': boundary});
 
-      void writePart(String fieldName, String filename, List<int> content) {
-        req.write('--$boundary\r\n');
-        req.write('Content-Disposition: form-data; name="$fieldName"; filename="$filename"\r\n');
-        req.write('Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document\r\n\r\n');
-        req.add(content);
-        req.write('\r\n');
-      }
+        void writePart(String fieldName, String filename, List<int> content) {
+          req.write('--$boundary\r\n');
+          req.write('Content-Disposition: form-data; name="$fieldName"; filename="$filename"\r\n');
+          req.write('Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document\r\n\r\n');
+          req.add(content);
+          req.write('\r\n');
+        }
 
-      writePart('file1', p.basename(path1), await f1.readAsBytes());
-      writePart('file2', p.basename(path2), await f2.readAsBytes());
-      req.write('--$boundary--\r\n');
+        writePart('file1', p.basename(path1), await f1.readAsBytes());
+        writePart('file2', p.basename(path2), await f2.readAsBytes());
+        req.write('--$boundary--\r\n');
 
-      final resp = await req.close();
-      if (resp.statusCode != 200) {
+        final resp = await req.close().timeout(const Duration(seconds: 30));
+        if (resp.statusCode != 200) {
+          return false;
+        }
+        final bodyStr = await utf8.decodeStream(resp);
+        final body = jsonDecode(bodyStr) as Map<String, dynamic>;
+        return body['identical'] == true;
+      } catch (e) {
+        print('Check identical failed (timeout or error): $e');
         return false;
+      } finally {
+        client.close();
       }
-      final bodyStr = await utf8.decodeStream(resp);
-      final body = jsonDecode(bodyStr) as Map<String, dynamic>;
-      return body['identical'] == true;
   } catch (e) {
       print('Check identical failed: $e');
       return false;
@@ -1411,69 +1412,71 @@ Future<void> forkLocal(String repoName, String newBranchName) async {
 
 Future<void> prepareMerge(String repoName, String targetBranch) async {
   final projDir = _projectDir(repoName);
-  final trackingFile = File(p.join(projDir, 'tracking.json'));
-  if (!trackingFile.existsSync()) {
-    throw Exception('No tracking project found');
-  }
+  return _withRepoLock(projDir, () async {
+    final trackingFile = File(p.join(projDir, 'tracking.json'));
+    if (!trackingFile.existsSync()) {
+      throw Exception('No tracking project found');
+    }
 
-  final savedTracking = jsonDecode(await trackingFile.readAsString());
-  final docxPath = savedTracking['docxPath'] as String?;
+    final savedTracking = jsonDecode(await trackingFile.readAsString());
+    final docxPath = savedTracking['docxPath'] as String?;
 
-  if (docxPath == null) {
-    throw Exception('Tracking configuration invalid');
-  }
+    if (docxPath == null) {
+      throw Exception('Tracking configuration invalid');
+    }
 
-  final tmpDir = await Directory.systemTemp.createTemp('merge_prep_');
-  try {
-      // 1. Target -> target.docx
-      final targetDocx = p.join(tmpDir.path, 'target.docx');
-      await _gitArchiveToDocx(projDir, targetBranch, targetDocx);
-      
-      // 2. HEAD -> head.docx
-      final headDocx = p.join(tmpDir.path, 'head.docx');
-      await _gitArchiveToDocx(projDir, 'HEAD', headDocx);
-      
-      // 3. Compare -> diff.docx
-      final diffDocx = p.join(tmpDir.path, 'diff.docx');
-      final psScript = r'c:\Users\m1369\Documents\gitbin\frontend\lib\doccmp.ps1';
-      
-      final pRes = await Process.run('powershell', [
-          '-ExecutionPolicy', 'Bypass',
-          '-File', psScript,
-          '-OriginalPath', headDocx,
-          '-RevisedPath', targetDocx,
-          '-PdfPath', diffDocx,
-          '-IsDocx'
-      ]);
-      
-      if (pRes.exitCode != 0 || !File(diffDocx).existsSync()) {
-          throw Exception('Merge comparison failed');
-      }
-      
-      // 4. Update External (docxPath)
-      // Backup
-      final backupPath = '$docxPath.bak';
-      if (FileSystemEntity.isDirectorySync(docxPath)) {
-         // Backup Dir?
-         // _copyDir(docxPath, backupPath);
-      } else if (File(docxPath).existsSync()) {
-         File(docxPath).copySync(backupPath);
-      }
-      
-      if (FileSystemEntity.isDirectorySync(docxPath)) {
-          // Unzip diffDocx to docxPath
-          // Clean target?
-          // Directory(docxPath).deleteSync(recursive: true);
-          // Directory(docxPath).createSync();
-          await _unzipDocx(diffDocx, docxPath);
-      } else {
-          // Overwrite file
-          File(diffDocx).copySync(docxPath);
-      }
-      
-  } finally {
-      try { tmpDir.deleteSync(recursive: true); } catch(_) {}
-  }
+    final tmpDir = await Directory.systemTemp.createTemp('merge_prep_');
+    try {
+        // 1. Target -> target.docx
+        final targetDocx = p.join(tmpDir.path, 'target.docx');
+        await _gitArchiveToDocx(projDir, targetBranch, targetDocx);
+        
+        // 2. HEAD -> head.docx
+        final headDocx = p.join(tmpDir.path, 'head.docx');
+        await _gitArchiveToDocx(projDir, 'HEAD', headDocx);
+        
+        // 3. Compare -> diff.docx
+        final diffDocx = p.join(tmpDir.path, 'diff.docx');
+        final psScript = r'c:\Users\m1369\Documents\gitbin\frontend\lib\doccmp.ps1';
+        
+        final pRes = await Process.run('powershell', [
+            '-ExecutionPolicy', 'Bypass',
+            '-File', psScript,
+            '-OriginalPath', headDocx,
+            '-RevisedPath', targetDocx,
+            '-PdfPath', diffDocx,
+            '-IsDocx'
+        ]);
+        
+        if (pRes.exitCode != 0 || !File(diffDocx).existsSync()) {
+            throw Exception('Merge comparison failed');
+        }
+        
+        // 4. Update External (docxPath)
+        // Backup
+        final backupPath = '$docxPath.bak';
+        if (FileSystemEntity.isDirectorySync(docxPath)) {
+           // Backup Dir?
+           // _copyDir(docxPath, backupPath);
+        } else if (File(docxPath).existsSync()) {
+           File(docxPath).copySync(backupPath);
+        }
+        
+        if (FileSystemEntity.isDirectorySync(docxPath)) {
+            // Unzip diffDocx to docxPath
+            // Clean target?
+            // Directory(docxPath).deleteSync(recursive: true);
+            // Directory(docxPath).createSync();
+            await _unzipDocx(diffDocx, docxPath);
+        } else {
+            // Overwrite file
+            File(diffDocx).copySync(docxPath);
+        }
+        
+    } finally {
+        try { tmpDir.deleteSync(recursive: true); } catch(_) {}
+    }
+  });
 }
 
 Future<void> restoreDocx(String repoName) async {
@@ -1483,61 +1486,65 @@ Future<void> restoreDocx(String repoName) async {
 
 Future<void> completeMerge(String repoName, String targetBranch) async {
   final projDir = _projectDir(repoName);
-  
-  // 1. Sync External -> Repo Content
-  final tracking = await _readTracking(repoName);
-  final docxPath = tracking['docxPath'] as String?;
-  if (docxPath != null) {
-      // Sync to content.docx & doc_content
-      await _updateContentDocx(projDir, docxPath);
-  }
-  
-  final oldHead = await getHead(projDir);
-  
-  // 2. Merge -s ours
-  try {
-    await _runGit(
-        ['merge', '--no-commit', '--no-ff', '-s', 'ours', targetBranch],
-        projDir);
-  } catch (e) {
-    if (!e.toString().contains('Already up to date')) throw e;
-  }
-  
-  // Handle edges
-  final edgesFile = File(p.join(projDir, 'edges'));
-  // ... (Edge logic same as before, omitted for brevity, but needed)
-  // Re-implementing edge logic quickly:
-  List<String>? targetEdges;
-  try {
-     final out = await _runGit(['show', '$targetBranch:edges'], projDir);
-     targetEdges = out;
-  } catch (_) {}
-  
-  if (edgesFile.existsSync() && targetEdges != null && targetEdges.isNotEmpty) {
-      final current = await edgesFile.readAsLines();
-      if (current.isNotEmpty) current.removeAt(0);
-      if (targetEdges.isNotEmpty) targetEdges.removeAt(0);
-      final merged = {...current, ...targetEdges};
-      await edgesFile.writeAsString('0000000000000000000000000000000000000000\n${merged.join('\n')}');
-  } else if (!edgesFile.existsSync() && targetEdges != null) {
-      await edgesFile.writeAsString(targetEdges.join('\n'));
-  }
-  
-  final targetHashLines = await _runGit(['rev-parse', targetBranch], projDir);
-  final targetHash = targetHashLines.isNotEmpty ? targetHashLines.first.trim() : null;
-  if (targetHash != null && oldHead != null) {
-      final lines = edgesFile.existsSync() ? await edgesFile.readAsLines() : <String>[];
-      if (lines.isEmpty) lines.add('0000000000000000000000000000000000000000');
-      final edgeLine = '$oldHead $targetHash';
-      if (!lines.contains(edgeLine)) {
-          lines.add(edgeLine);
-          await edgesFile.writeAsString(lines.join('\n'));
-      }
-  }
+  return _withRepoLock(projDir, () async {
+    // 1. Sync External -> Repo Content
+    final tracking = await _readTracking(repoName);
+    final docxPath = tracking['docxPath'] as String?;
+    if (docxPath != null) {
+        // Sync to content.docx & doc_content
+        await _updateContentDocx(projDir, docxPath);
+    }
+    
+    final oldHead = await getHead(projDir);
+    
+    // 2. Merge -s ours
+    try {
+      await _runGit(
+          ['merge', '--no-commit', '--no-ff', '-s', 'ours', targetBranch],
+          projDir);
+    } catch (e) {
+      if (!e.toString().contains('Already up to date')) throw e;
+    }
 
-  await _runGit(['add', '.'], projDir);
-  await _runGit(['commit', '-m', 'Merge branch \'$targetBranch\' into HEAD'], projDir);
-  clearCache();
+    // 3. Flush content.docx to doc_content so git sees the changes from user resolution
+    if (docxPath != null) {
+        await _flushDocxToContent(projDir);
+    }
+    
+    // Handle edges
+    final edgesFile = File(p.join(projDir, 'edges'));
+    List<String>? targetEdges;
+    try {
+       final out = await _runGit(['show', '$targetBranch:edges'], projDir);
+       targetEdges = out;
+    } catch (_) {}
+    
+    if (edgesFile.existsSync() && targetEdges != null && targetEdges.isNotEmpty) {
+        final current = await edgesFile.readAsLines();
+        if (current.isNotEmpty) current.removeAt(0);
+        if (targetEdges.isNotEmpty) targetEdges.removeAt(0);
+        final merged = {...current, ...targetEdges};
+        await edgesFile.writeAsString('0000000000000000000000000000000000000000\n${merged.join('\n')}');
+    } else if (!edgesFile.existsSync() && targetEdges != null) {
+        await edgesFile.writeAsString(targetEdges.join('\n'));
+    }
+    
+    final targetHashLines = await _runGit(['rev-parse', targetBranch], projDir);
+    final targetHash = targetHashLines.isNotEmpty ? targetHashLines.first.trim() : null;
+    if (targetHash != null && oldHead != null) {
+        final lines = edgesFile.existsSync() ? await edgesFile.readAsLines() : <String>[];
+        if (lines.isEmpty) lines.add('0000000000000000000000000000000000000000');
+        final edgeLine = '$oldHead $targetHash';
+        if (!lines.contains(edgeLine)) {
+            lines.add(edgeLine);
+            await edgesFile.writeAsString(lines.join('\n'));
+        }
+    }
+
+    await _runGit(['add', '.'], projDir);
+    await _runGit(['commit', '-m', 'Merge branch \'$targetBranch\' into HEAD'], projDir);
+    clearCache();
+  });
 }
 
 Future<List<String>> findIdenticalCommit(String name) async {
