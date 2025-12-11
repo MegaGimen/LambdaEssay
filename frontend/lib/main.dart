@@ -763,12 +763,12 @@ class _GraphPageState extends State<GraphPage> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Text('这是一个新的克隆（或已被重置），请重新设置要追踪的Word文档(.docx)'),
+                const Text('这是一个新的克隆（或已被重置），请重新设置要追踪的Word文档(.docx)或解包文件夹'),
                 const SizedBox(height: 8),
                 TextField(
                   controller: docxCtrl,
                   decoration: const InputDecoration(
-                    labelText: 'docx文件路径 c:\\path\\to\\file.docx',
+                    labelText: 'docx文件路径或解包文件夹路径 c:\\path\\to\\...',
                   ),
                 ),
               ],

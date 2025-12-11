@@ -1,8 +1,26 @@
 [
   {
+    "id": 1765347191622,
+    "text": "仓库在清单里但依旧报错",
+    "completed": true,
+    "createdAt": "2025-12-10T06:13:11.622Z"
+  },
+  {
+    "id": 1765343811235,
+    "text": "如果分支回退到merge之前，那么应该清理edge文件的相关显示",
+    "completed": true,
+    "createdAt": "2025-12-10T05:16:51.235Z"
+  },
+  {
+    "id": 1765342764076,
+    "text": "在执行强制pull之后，没有提示更新追踪文档",
+    "completed": true,
+    "createdAt": "2025-12-10T04:59:24.076Z"
+  },
+  {
     "id": 1765336980028,
     "text": "edge文件的上传有问题",
-    "completed": false,
+    "completed": true,
     "createdAt": "2025-12-10T03:23:00.028Z"
   },
   {
@@ -20,7 +38,7 @@
   {
     "id": 1765336344991,
     "text": "在pull的时候可能会出现git remote的输出没有的情况。可以在这一步里获取链接",
-    "completed": false,
+    "completed": true,
     "createdAt": "2025-12-10T03:12:24.991Z"
   },
   {
@@ -32,7 +50,7 @@
   {
     "id": 1765336335672,
     "text": "pull时增加硬合并的选项，意味着直接让远程的代替我这个分支的，而不执行merge操作。",
-    "completed": false,
+    "completed": true,
     "createdAt": "2025-12-10T03:12:15.672Z"
   },
   {
@@ -68,13 +86,13 @@
   {
     "id": 1765336293276,
     "text": "目前在处理崔立民的著作时，doccompare组件出现了严重问题，依旧是内容不变但不identical。参见《宇宙起源》。其实不只是clm。我发现commit后，暂存区依旧会有状态，这意味着/comp",
-    "completed": false,
+    "completed": true,
     "createdAt": "2025-12-10T03:11:33.276Z"
   },
   {
     "id": 1765336286376,
     "text": "设置core.autocrlf=false，防止Linux和Windows转换出现问题",
-    "completed": false,
+    "completed": true,
     "createdAt": "2025-12-10T03:11:26.376Z"
   },
   {
@@ -98,7 +116,7 @@
   {
     "id": 1765336266670,
     "text": "pull应该增加强制pull的功能，但需要警告用户。",
-    "completed": false,
+    "completed": true,
     "createdAt": "2025-12-10T03:11:06.670Z"
   },
   {
