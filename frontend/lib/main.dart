@@ -2027,68 +2027,98 @@ class _GraphViewState extends State<_GraphView> {
   Future<void> _onCommit() async {
     final authorCtrl = TextEditingController();
     final msgCtrl = TextEditingController();
+    
+    // Dialog state
+    bool isPreviewing = false;
+
     final ok = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('提交更改'),
-        content: SizedBox(
-          width: 400,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: authorCtrl,
-                decoration: const InputDecoration(labelText: '作者姓名'),
+      builder: (_) => StatefulBuilder(
+        builder: (context, setState) {
+          return AlertDialog(
+            title: const Text('提交更改'),
+            content: SizedBox(
+              width: 400,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: authorCtrl,
+                    decoration: const InputDecoration(labelText: '作者姓名'),
+                    enabled: !isPreviewing,
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: msgCtrl,
+                    decoration: const InputDecoration(
+                      labelText: '备注信息 (Commit Message)',
+                    ),
+                    maxLines: 3,
+                    enabled: !isPreviewing,
+                  ),
+                ],
               ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: msgCtrl,
-                decoration: const InputDecoration(
-                  labelText: '备注信息 (Commit Message)',
-                ),
-                maxLines: 3,
+            ),
+            actions: [
+              TextButton(
+                onPressed: isPreviewing
+                    ? null
+                    : () async {
+                        setState(() => isPreviewing = true);
+                        widget.onLoading?.call(true);
+                        try {
+                          final resp = await http.post(
+                            Uri.parse('http://localhost:8080/compare_working'),
+                            headers: {'Content-Type': 'application/json'},
+                            body: jsonEncode({'repoPath': widget.repoPath}),
+                          );
+                          if (resp.statusCode != 200) {
+                            throw Exception(resp.body);
+                          }
+                          if (!mounted) return;
+
+                          // Push and wait for return to keep buttons disabled
+                          await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => VisualizeDocxPage(
+                                initialBytes: resp.bodyBytes,
+                                title: 'Working Copy Diff',
+                                onBack: () => Navigator.pop(context),
+                              ),
+                            ),
+                          );
+                        } catch (e) {
+                          ScaffoldMessenger.of(
+                            context,
+                          ).showSnackBar(SnackBar(content: Text('预览失败: $e')));
+                        } finally {
+                          if (context.mounted) {
+                            setState(() => isPreviewing = false);
+                          }
+                          widget.onLoading?.call(false);
+                        }
+                      },
+                child: isPreviewing
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Text('预览差异'),
+              ),
+              TextButton(
+                onPressed:
+                    isPreviewing ? null : () => Navigator.pop(context, false),
+                child: const Text('取消'),
+              ),
+              ElevatedButton(
+                onPressed:
+                    isPreviewing ? null : () => Navigator.pop(context, true),
+                child: const Text('提交'),
               ),
             ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () async {
-              try {
-                final resp = await http.post(
-                  Uri.parse('http://localhost:8080/compare_working'),
-                  headers: {'Content-Type': 'application/json'},
-                  body: jsonEncode({'repoPath': widget.repoPath}),
-                );
-                if (resp.statusCode != 200) throw Exception(resp.body);
-                if (!mounted) return;
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => VisualizeDocxPage(
-                      initialBytes: resp.bodyBytes,
-                      title: 'Working Copy Diff',
-                      onBack: () => Navigator.pop(context),
-                    ),
-                  ),
-                );
-              } catch (e) {
-                ScaffoldMessenger.of(
-                  context,
-                ).showSnackBar(SnackBar(content: Text('预览失败: $e')));
-              }
-            },
-            child: const Text('预览差异'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('提交'),
-          ),
-        ],
+          );
+        },
       ),
     );
     if (ok != true) return;
