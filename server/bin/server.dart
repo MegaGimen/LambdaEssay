@@ -74,8 +74,18 @@ Future<void> main(List<String> args) async {
     } else {
       print('Heidegger.exe not found at $heideggerPath');
     }
+
+    // Start doc2html service
+    final doc2htmlPath = p.join(scriptDir, 'doc2html.exe');
+    if (File(doc2htmlPath).existsSync()) {
+      await _killPort(3000);
+      print('Starting doc2html service from $doc2htmlPath...');
+      await Process.start(doc2htmlPath, [], mode: ProcessStartMode.normal);
+    } else {
+      print('doc2html.exe not found at $doc2htmlPath');
+    }
   } catch (e) {
-    print('Failed to start Heidegger: $e');
+    print('Failed to start background services: $e');
   }
   await initTrackingService();
   final router = Router();

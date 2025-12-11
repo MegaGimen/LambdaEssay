@@ -1,10 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 // ignore: avoid_web_libraries_in_flutter, deprecated_member_use
 import 'dart:html' as html;
-// ignore: avoid_web_libraries_in_flutter, deprecated_member_use
-import 'dart:js_util' as js_util;
 
 import 'utils/platform_registry.dart';
 
@@ -62,65 +63,43 @@ class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
     });
 
     try {
-      // Check if mammoth is loaded
-      if (!js_util.hasProperty(html.window, 'mammoth')) {
-        throw Exception('Mammoth.js library not loaded');
+      // Use localhost:3000/convert to convert docx to html
+      // doc2html.exe is expected to be running on port 3000
+      final uri = Uri.parse('http://localhost:3000/convert');
+      final request = http.MultipartRequest('POST', uri);
+      
+      request.files.add(http.MultipartFile.fromBytes(
+        'file',
+        bytes,
+        filename: 'document.docx',
+        contentType: MediaType('application', 'vnd.openxmlformats-officedocument.wordprocessingml.document'),
+      ));
+
+      print('Visualize: sending request to $uri');
+      final streamedResponse = await request.send();
+      final response = await http.Response.fromStream(streamedResponse);
+      
+      print('Visualize: response status=${response.statusCode}');
+
+      if (response.statusCode == 200) {
+        final jsonBody = jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+        if (jsonBody['success'] == true) {
+           final htmlContent = jsonBody['html'] as String;
+           // The styles are already included in the HTML from doc2html server
+           // But we can wrap it if needed. The server code provided shows it includes full HTML structure.
+           // However, inserting full HTML into a div might be tricky if it has <html><head><body> tags.
+           // InnerHTML usually handles it by stripping html/head/body tags but keeping styles if possible,
+           // or we might need to extract body content.
+           // Let's try setting innerHtml directly first.
+           
+           _element.className = 'mammoth-content';
+           _element.innerHtml = htmlContent;
+        } else {
+           throw Exception(jsonBody['error'] ?? 'Unknown error from converter');
+        }
+      } else {
+        throw Exception('Server returned ${response.statusCode}: ${response.body}');
       }
-
-      final mammoth = js_util.getProperty(html.window, 'mammoth');
-
-      // Create a JS Uint8Array from the bytes to ensure we have a valid JS ArrayBuffer
-      // This helps avoid issues with Dart ByteBuffer mapping
-      // Note: Passing Dart Uint8List to JS Uint8Array constructor works because Uint8List is Iterable.
-      final jsUint8Array = js_util.callConstructor(
-        js_util.getProperty(html.window, 'Uint8Array'), 
-        [bytes]
-      );
-      final arrayBuffer = js_util.getProperty(jsUint8Array, 'buffer');
-
-      // mammoth.convertToHtml({arrayBuffer: ..., styleMap: ...})
-      final options = js_util.newObject();
-      js_util.setProperty(options, 'arrayBuffer', arrayBuffer);
-      
-      // Add explicit style map to ensure highlights and other elements are mapped correctly
-      final styleMap = [
-        "highlight => mark",
-        "p[style-name='Heading 1'] => h1:fresh",
-        "p[style-name='Heading 2'] => h2:fresh",
-        "p[style-name='Heading 3'] => h3:fresh",
-        "p[style-name='Heading 4'] => h4:fresh",
-        "table => table.mammoth-table:fresh"
-      ];
-      final jsStyleMap = js_util.jsify(styleMap);
-      js_util.setProperty(options, 'styleMap', jsStyleMap);
-
-      print('Visualize: calling mammoth.convertToHtml');
-      final promise = js_util.callMethod(mammoth, 'convertToHtml', [options]);
-
-      final result = await js_util.promiseToFuture(promise);
-      print('Visualize: conversion result obtained');
-      
-      // result is an object with 'value' (html) and 'messages'
-      final htmlContent = js_util.getProperty(result, 'value') as String;
-      final messages = js_util.getProperty(result, 'messages');
-      print('Visualize: messages=$messages');
-      
-      if (htmlContent.length > 0) {
-        print('Visualize: HTML content start=${htmlContent.substring(0, htmlContent.length > 500 ? 500 : htmlContent.length)}');
-      }
-
-      // Process highlights and styles
-      // 1. Process explicit highlights (regex fallback)
-      var processedHtml = _processHighlights(htmlContent);
-      // 2. Force table borders using inline styles (most reliable)
-      processedHtml = _forceTableStyles(processedHtml);
-      // 3. Wrap with CSS
-      final finalHtml = _wrapWithStyles(processedHtml);
-
-      // Update the DivElement
-      // Add a class for styling scope
-      _element.className = 'mammoth-content';
-      _element.innerHtml = finalHtml;
     } catch (e) {
       print('Visualize: error=$e');
       setState(() {
@@ -133,84 +112,6 @@ class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
         });
       }
     }
-  }
-
-  String _processHighlights(String html) {
-    var result = html;
-    final patterns = [
-      r'<span[^>]*background:yellow[^>]*>(.*?)<\/span>',
-      r'<span[^>]*background-color:yellow[^>]*>(.*?)<\/span>',
-      r'<span[^>]*background-color:#?ffff00[^>]*>(.*?)<\/span>',
-      r'<span[^>]*background:#?ffff00[^>]*>(.*?)<\/span>',
-    ];
-
-    for (final pattern in patterns) {
-      result = result.replaceAllMapped(
-        RegExp(pattern, caseSensitive: false, multiLine: true),
-        (match) => '<mark>${match.group(1)}</mark>',
-      );
-    }
-    return result;
-  }
-
-  String _forceTableStyles(String html) {
-    // Inject inline styles for tables to ensure borders appear
-    // This is more reliable than CSS classes in some rendering contexts
-    var result = html.replaceAll(
-      '<table>', 
-      '<table style="border-collapse: collapse; width: 100%; border: 1px solid black; margin: 10px 0;">'
-    );
-    // Also try to catch tables with classes if mammoth adds them
-    result = result.replaceAllMapped(
-      RegExp(r'<table class="[^"]*">'), 
-      (match) => '${match.group(0)?.replaceAll('>', '')} style="border-collapse: collapse; width: 100%; border: 1px solid black; margin: 10px 0;">'
-    );
-    
-    // Add borders to cells
-    result = result.replaceAll('<td>', '<td style="border: 1px solid black; padding: 8px;">');
-    result = result.replaceAll('<th>', '<th style="border: 1px solid black; padding: 8px; background-color: #f2f2f2;">');
-    return result;
-  }
-
-  String _wrapWithStyles(String content) {
-    // Styles adapted from server.js
-    // Scoped to .mammoth-content to avoid global pollution if possible
-    const styles = '''
-<style>
-  .mammoth-content * { 
-    font-family: Arial, "Microsoft YaHei", "微软雅黑", sans-serif !important;
-  }
-  
-  .mammoth-content table {
-    border-collapse: collapse !important;
-    width: 100% !important;
-    border: 1px solid #000 !important;
-    margin: 10px 0 !important;
-  }
-  
-  .mammoth-content th, .mammoth-content td {
-    border: 1px solid #000 !important;
-    padding: 8px !important;
-  }
-  
-  .mammoth-content th {
-    background-color: #f2f2f2 !important;
-  }
-  
-  .mammoth-content mark {
-    background-color: yellow !important;
-    padding: 2px 4px !important;
-  }
-  
-  /* Root level styles */
-  .mammoth-content {
-    font-family: Arial, "Microsoft YaHei", "微软雅黑", sans-serif !important;
-    line-height: 1.6 !important;
-    color: black !important;
-  }
-</style>
-''';
-    return styles + content;
   }
 
   Future<void> _pickDocx() async {
