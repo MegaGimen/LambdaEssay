@@ -89,12 +89,18 @@ class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
       print('Visualize: conversion result obtained');
       
       // result is an object with 'value' (html) and 'messages'
-      final htmlContent = js_util.getProperty(result, 'value');
+      final htmlContent = js_util.getProperty(result, 'value') as String;
       final messages = js_util.getProperty(result, 'messages');
       print('Visualize: messages=$messages');
 
+      // Process highlights and styles
+      final processedHtml = _processHighlights(htmlContent);
+      final finalHtml = _wrapWithStyles(processedHtml);
+
       // Update the DivElement
-      _element.innerHtml = htmlContent;
+      // Add a class for styling scope
+      _element.className = 'mammoth-content';
+      _element.innerHtml = finalHtml;
     } catch (e) {
       print('Visualize: error=$e');
       setState(() {
@@ -107,6 +113,65 @@ class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
         });
       }
     }
+  }
+
+  String _processHighlights(String html) {
+    var result = html;
+    final patterns = [
+      r'<span[^>]*background:yellow[^>]*>(.*?)<\/span>',
+      r'<span[^>]*background-color:yellow[^>]*>(.*?)<\/span>',
+      r'<span[^>]*background-color:#?ffff00[^>]*>(.*?)<\/span>',
+      r'<span[^>]*background:#?ffff00[^>]*>(.*?)<\/span>',
+    ];
+
+    for (final pattern in patterns) {
+      result = result.replaceAllMapped(
+        RegExp(pattern, caseSensitive: false, multiLine: true),
+        (match) => '<mark>${match.group(1)}</mark>',
+      );
+    }
+    return result;
+  }
+
+  String _wrapWithStyles(String content) {
+    // Styles adapted from server.js
+    // Scoped to .mammoth-content to avoid global pollution if possible
+    const styles = '''
+<style>
+  .mammoth-content * { 
+    font-family: Arial, "Microsoft YaHei", "微软雅黑", sans-serif;
+  }
+  
+  .mammoth-content table {
+    border-collapse: collapse;
+    width: 100%;
+    border: 1px solid #000;
+    margin: 10px 0;
+  }
+  
+  .mammoth-content th, .mammoth-content td {
+    border: 1px solid #000;
+    padding: 8px;
+  }
+  
+  .mammoth-content th {
+    background-color: #f2f2f2;
+  }
+  
+  .mammoth-content mark {
+    background-color: yellow;
+    padding: 2px 4px;
+  }
+  
+  /* Root level styles */
+  .mammoth-content {
+    font-family: Arial, "Microsoft YaHei", "微软雅黑", sans-serif;
+    line-height: 1.6;
+    color: black;
+  }
+</style>
+''';
+    return styles + content;
   }
 
   Future<void> _pickDocx() async {
