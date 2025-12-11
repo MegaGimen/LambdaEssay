@@ -348,6 +348,9 @@ Future<void> commitChanges(
     if (File(p.join(repoPath, 'edges')).existsSync()) {
       await _runGit(['add', 'edges'], repoPath);
     }
+    if (File(p.join(repoPath, '.gitignore')).existsSync()) {
+      await _runGit(['add', '.gitignore'], repoPath);
+    }
     final safeAuthor = author.trim().isEmpty ? 'Unknown' : author.trim();
     final authorArg = '$safeAuthor <$safeAuthor@gitdocx.local>';
     await _runGit(['commit', '--author=$authorArg', '-m', message], repoPath);
