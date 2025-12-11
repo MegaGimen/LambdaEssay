@@ -78,9 +78,21 @@ class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
       );
       final arrayBuffer = js_util.getProperty(jsUint8Array, 'buffer');
 
-      // mammoth.convertToHtml({arrayBuffer: ...})
+      // mammoth.convertToHtml({arrayBuffer: ..., styleMap: ...})
       final options = js_util.newObject();
       js_util.setProperty(options, 'arrayBuffer', arrayBuffer);
+      
+      // Add explicit style map to ensure highlights and other elements are mapped correctly
+      final styleMap = [
+        "highlight => mark",
+        "p[style-name='Heading 1'] => h1:fresh",
+        "p[style-name='Heading 2'] => h2:fresh",
+        "p[style-name='Heading 3'] => h3:fresh",
+        "p[style-name='Heading 4'] => h4:fresh",
+        "table => table.mammoth-table:fresh"
+      ];
+      final jsStyleMap = js_util.jsify(styleMap);
+      js_util.setProperty(options, 'styleMap', jsStyleMap);
 
       print('Visualize: calling mammoth.convertToHtml');
       final promise = js_util.callMethod(mammoth, 'convertToHtml', [options]);
@@ -92,9 +104,17 @@ class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
       final htmlContent = js_util.getProperty(result, 'value') as String;
       final messages = js_util.getProperty(result, 'messages');
       print('Visualize: messages=$messages');
+      
+      if (htmlContent.length > 0) {
+        print('Visualize: HTML content start=${htmlContent.substring(0, htmlContent.length > 500 ? 500 : htmlContent.length)}');
+      }
 
       // Process highlights and styles
-      final processedHtml = _processHighlights(htmlContent);
+      // 1. Process explicit highlights (regex fallback)
+      var processedHtml = _processHighlights(htmlContent);
+      // 2. Force table borders using inline styles (most reliable)
+      processedHtml = _forceTableStyles(processedHtml);
+      // 3. Wrap with CSS
       final finalHtml = _wrapWithStyles(processedHtml);
 
       // Update the DivElement
@@ -133,41 +153,60 @@ class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
     return result;
   }
 
+  String _forceTableStyles(String html) {
+    // Inject inline styles for tables to ensure borders appear
+    // This is more reliable than CSS classes in some rendering contexts
+    var result = html.replaceAll(
+      '<table>', 
+      '<table style="border-collapse: collapse; width: 100%; border: 1px solid black; margin: 10px 0;">'
+    );
+    // Also try to catch tables with classes if mammoth adds them
+    result = result.replaceAllMapped(
+      RegExp(r'<table class="[^"]*">'), 
+      (match) => '${match.group(0)?.replaceAll('>', '')} style="border-collapse: collapse; width: 100%; border: 1px solid black; margin: 10px 0;">'
+    );
+    
+    // Add borders to cells
+    result = result.replaceAll('<td>', '<td style="border: 1px solid black; padding: 8px;">');
+    result = result.replaceAll('<th>', '<th style="border: 1px solid black; padding: 8px; background-color: #f2f2f2;">');
+    return result;
+  }
+
   String _wrapWithStyles(String content) {
     // Styles adapted from server.js
     // Scoped to .mammoth-content to avoid global pollution if possible
     const styles = '''
 <style>
   .mammoth-content * { 
-    font-family: Arial, "Microsoft YaHei", "微软雅黑", sans-serif;
+    font-family: Arial, "Microsoft YaHei", "微软雅黑", sans-serif !important;
   }
   
   .mammoth-content table {
-    border-collapse: collapse;
-    width: 100%;
-    border: 1px solid #000;
-    margin: 10px 0;
+    border-collapse: collapse !important;
+    width: 100% !important;
+    border: 1px solid #000 !important;
+    margin: 10px 0 !important;
   }
   
   .mammoth-content th, .mammoth-content td {
-    border: 1px solid #000;
-    padding: 8px;
+    border: 1px solid #000 !important;
+    padding: 8px !important;
   }
   
   .mammoth-content th {
-    background-color: #f2f2f2;
+    background-color: #f2f2f2 !important;
   }
   
   .mammoth-content mark {
-    background-color: yellow;
-    padding: 2px 4px;
+    background-color: yellow !important;
+    padding: 2px 4px !important;
   }
   
   /* Root level styles */
   .mammoth-content {
-    font-family: Arial, "Microsoft YaHei", "微软雅黑", sans-serif;
-    line-height: 1.6;
-    color: black;
+    font-family: Arial, "Microsoft YaHei", "微软雅黑", sans-serif !important;
+    line-height: 1.6 !important;
+    color: black !important;
   }
 </style>
 ''';
