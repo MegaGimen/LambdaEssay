@@ -130,6 +130,7 @@ Future<void> main(List<String> args) async {
       };
 
       channel.stream.listen((message) {
+        // print('Raw WebSocket message: $message');
         try {
            final data = jsonDecode(message as String);
            if (data is Map) {
@@ -159,9 +160,11 @@ Future<void> main(List<String> args) async {
                             print('Failed to auto-update project $projectName: $e');
                          });
                       } else {
-                         // print('No tracking project found for docx: $path');
+                         print('No tracking project found for docx: $path');
                       }
                    });
+                } else {
+                   print('Plugin reported save event but path is null');
                 }
              } else {
                print('Received from plugin: $message');

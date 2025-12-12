@@ -1496,19 +1496,26 @@ Future<List<String>> listProjects() async {
 }
 
 Future<String?> findProjectByDocxPath(String docxPath) async {
+  print('DEBUG: Searching project for docx: $docxPath');
   final projects = await listProjects();
   for (final name in projects) {
     try {
       final tracking = await _readTracking(name);
       final trackedPath = tracking['docxPath'] as String?;
       if (trackedPath != null) {
-        // Normalize paths for comparison
-        if (p.equals(p.normalize(trackedPath), p.normalize(docxPath))) {
+        final normTracked = p.normalize(trackedPath).toLowerCase();
+        final normDocx = p.normalize(docxPath).toLowerCase();
+        // print('DEBUG: Checking $name: $normTracked vs $normDocx');
+        
+        // Normalize paths for comparison (manual lower case to be sure)
+        if (normTracked == normDocx || p.equals(trackedPath, docxPath)) {
+          print('DEBUG: Match found: $name');
           return name;
         }
       }
     } catch (_) {}
   }
+  print('DEBUG: No project matched for $docxPath');
   return null;
 }
 
