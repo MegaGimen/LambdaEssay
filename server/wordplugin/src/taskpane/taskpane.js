@@ -19,6 +19,9 @@ Office.onReady((info) => {
 
     // Connect to WebSocket Server
     connectWebSocket();
+
+    // Start monitoring automatically
+    startAutoSaveMonitor();
   }
 });
 
@@ -186,6 +189,29 @@ export async function replaceDocument(payload, id) {
 let monitorInterval;
 let lastSavedState = null;
 
+function startAutoSaveMonitor() {
+    if (monitorInterval) clearInterval(monitorInterval);
+    log("Auto-save monitor started.");
+    monitorInterval = setInterval(() => {
+        checkSaveStatus();
+    }, 1000);
+}
+
+async function sendSaveEvent() {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+       const currentUrl = Office.context.document.url;
+       let normUrl = currentUrl ? currentUrl.replace(/^file:\/\/\//, '').replace(/\//g, '\\') : '';
+       try { normUrl = decodeURIComponent(normUrl); } catch(e) {}
+       
+       ws.send(JSON.stringify({
+          type: 'event',
+          event: 'saved',
+          path: normUrl
+       }));
+       log("Sent save event to server");
+    }
+}
+
 async function checkSaveStatus() {
      await Word.run(async (context) => {
         const doc = context.document;
@@ -193,33 +219,22 @@ async function checkSaveStatus() {
         await context.sync();
         
         if (lastSavedState !== doc.saved) {
+            // Check for transition from Dirty (false) to Saved (true)
+            // Ignore initial state (null)
+            if (lastSavedState === false && doc.saved === true) {
+                log("Detected Document Save! Triggering Sync...");
+                await sendSaveEvent();
+            }
+            
             lastSavedState = doc.saved;
-            log(`Document Saved State: ${doc.saved ? "Saved" : "Unsaved (Dirty)"}`);
+            // log(`Document Saved State: ${doc.saved ? "Saved" : "Unsaved (Dirty)"}`);
         }
-    }).catch(errorHandler);
+    }).catch((e) => {
+        // Suppress minor errors
+    });
 }
 
 export async function monitorSave() {
-    const btnLabel = document.getElementById("monitor-save").querySelector(".ms-Button-label");
-    
-    if (monitorInterval) {
-        clearInterval(monitorInterval);
-        monitorInterval = null;
-        log("Stopped monitoring save status.");
-        btnLabel.innerText = "Start Monitoring Save";
-        return;
-    }
-
-    log("Started monitoring save status...");
-    btnLabel.innerText = "Stop Monitoring Save";
-    
-    // Reset state so we get an initial log
-    lastSavedState = null;
-
-    // Check immediately
-    checkSaveStatus();
-
-    monitorInterval = setInterval(() => {
-        checkSaveStatus();
-    }, 2000);
+    // Legacy button handler - now just logs status
+    log("Save monitoring is active automatically.");
 }

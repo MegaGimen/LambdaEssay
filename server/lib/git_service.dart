@@ -73,7 +73,13 @@ Future<void> _updateContentDocx(String repoPath, String sourceDocxPath) async {
   if (FileSystemEntity.isDirectorySync(sourceDocxPath)) {
     await _zipDir(sourceDocxPath, docxPath);
   } else {
-    File(sourceDocxPath).copySync(docxPath);
+    try {
+      final bytes = File(sourceDocxPath).readAsBytesSync();
+      File(docxPath).writeAsBytesSync(bytes, flush: true);
+    } catch (e) {
+      print("Error copying source docx (locked?): $e");
+      rethrow;
+    }
   }
 }
 
@@ -1487,6 +1493,23 @@ Future<List<String>> listProjects() async {
     }
   } catch (_) {}
   return projects;
+}
+
+Future<String?> findProjectByDocxPath(String docxPath) async {
+  final projects = await listProjects();
+  for (final name in projects) {
+    try {
+      final tracking = await _readTracking(name);
+      final trackedPath = tracking['docxPath'] as String?;
+      if (trackedPath != null) {
+        // Normalize paths for comparison
+        if (p.equals(p.normalize(trackedPath), p.normalize(docxPath))) {
+          return name;
+        }
+      }
+    } catch (_) {}
+  }
+  return null;
 }
 
 Future<void> rebasePull(String repoName, String username, String token) async {

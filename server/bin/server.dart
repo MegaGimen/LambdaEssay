@@ -132,21 +132,40 @@ Future<void> main(List<String> args) async {
       channel.stream.listen((message) {
         try {
            final data = jsonDecode(message as String);
-           if (data is Map && data['type'] == 'response' && data['id'] != null) {
-              final id = data['id'];
-              // Check if we have a pending request
-              if (_pendingRequests.containsKey(id)) {
-                 if (data['status'] == 'success') {
-                    // If success, complete the main completer immediately
-                    if (!_pendingRequests[id]!.isCompleted) {
-                       _pendingRequests[id]!.complete(data);
-                    }
-                 } else {
-                    print('Plugin reported error/mismatch: ${data['message']}');
-                 }
-              }
-           } else {
-             print('Received from plugin: $message');
+           if (data is Map) {
+             if (data['type'] == 'response' && data['id'] != null) {
+                final id = data['id'];
+                // Check if we have a pending request
+                if (_pendingRequests.containsKey(id)) {
+                   if (data['status'] == 'success') {
+                      // If success, complete the main completer immediately
+                      if (!_pendingRequests[id]!.isCompleted) {
+                         _pendingRequests[id]!.complete(data);
+                      }
+                   } else {
+                      print('Plugin reported error/mismatch: ${data['message']}');
+                   }
+                }
+             } else if (data['type'] == 'event' && data['event'] == 'saved') {
+                final path = data['path'] as String?;
+                if (path != null) {
+                   print('Plugin reported save event for: $path');
+                   findProjectByDocxPath(path).then((projectName) {
+                      if (projectName != null) {
+                         print('Auto-updating project: $projectName');
+                         updateTrackingProject(projectName).then((_) {
+                            print('Project $projectName updated successfully.');
+                         }).catchError((e) {
+                            print('Failed to auto-update project $projectName: $e');
+                         });
+                      } else {
+                         // print('No tracking project found for docx: $path');
+                      }
+                   });
+                }
+             } else {
+               print('Received from plugin: $message');
+             }
            }
         } catch(e) {
              print('WebSocket message error: $e');
