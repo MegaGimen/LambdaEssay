@@ -13,7 +13,7 @@ import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 import 'dart:async';
 
-WebSocketChannel? _activePluginSocket;
+List<WebSocketChannel> _activePluginSockets = [];
 final _pendingRequests = <String, Completer<dynamic>>{};
 final _uuid = Uuid();
 
@@ -99,27 +99,33 @@ Future<void> main(List<String> args) async {
   router.get('/ws', (Request req) {
     return webSocketHandler((channel, protocol) {
       print('Word Plugin connected');
-      _activePluginSocket = channel;
+      _activePluginSockets.add(channel);
 
       pluginSender = (Map<String, dynamic> message) async {
-         if (_activePluginSocket == null) return false;
+         if (_activePluginSockets.isEmpty) return false;
          final id = _uuid.v4();
          message['id'] = id;
          
-         final completer = Completer<dynamic>();
-         _pendingRequests[id] = completer;
+         // Send to all connected plugins
+         for (final socket in _activePluginSockets) {
+            try {
+               socket.sink.add(jsonEncode(message));
+            } catch (e) {
+               print('Failed to send to socket: $e');
+            }
+         }
+
+         final mainCompleter = Completer<dynamic>();
+         _pendingRequests[id] = mainCompleter;
          
          try {
-           _activePluginSocket!.sink.add(jsonEncode(message));
-           // Timeout after 30 seconds
-           final response = await completer.future.timeout(const Duration(seconds: 30));
-           if (response is Map && response['status'] == 'success') return true;
-           if (response is Map) print('Plugin returned error: ${response['message']}');
-           return false;
+             // Wait for first success or timeout
+             final response = await mainCompleter.future.timeout(const Duration(seconds: 30));
+             if (response is Map && response['status'] == 'success') return true;
+             return false;
          } catch (e) {
-           print('Plugin request failed/timeout: $e');
-           _pendingRequests.remove(id);
-           return false;
+             _pendingRequests.remove(id);
+             return false;
          }
       };
 
@@ -128,9 +134,16 @@ Future<void> main(List<String> args) async {
            final data = jsonDecode(message as String);
            if (data is Map && data['type'] == 'response' && data['id'] != null) {
               final id = data['id'];
-              final completer = _pendingRequests.remove(id);
-              if (completer != null && !completer.isCompleted) {
-                 completer.complete(data);
+              // Check if we have a pending request
+              if (_pendingRequests.containsKey(id)) {
+                 if (data['status'] == 'success') {
+                    // If success, complete the main completer immediately
+                    if (!_pendingRequests[id]!.isCompleted) {
+                       _pendingRequests[id]!.complete(data);
+                    }
+                 } else {
+                    print('Plugin reported error/mismatch: ${data['message']}');
+                 }
               }
            } else {
              print('Received from plugin: $message');
@@ -140,14 +153,14 @@ Future<void> main(List<String> args) async {
         }
       }, onDone: () {
         print('Word Plugin disconnected');
-        if (_activePluginSocket == channel) {
-          _activePluginSocket = null;
+        _activePluginSockets.remove(channel);
+        if (_activePluginSockets.isEmpty) {
           pluginSender = null;
         }
       }, onError: (e) {
         print('WebSocket error: $e');
-        if (_activePluginSocket == channel) {
-          _activePluginSocket = null;
+        _activePluginSockets.remove(channel);
+        if (_activePluginSockets.isEmpty) {
           pluginSender = null;
         }
       });
@@ -158,7 +171,7 @@ Future<void> main(List<String> args) async {
   router.get('/api/health', (Request req) async {
     return _cors(Response.ok(
         jsonEncode(
-            {'status': 'ok', 'connected': _activePluginSocket != null}),
+            {'status': 'ok', 'connected': _activePluginSockets.isNotEmpty}),
         headers: {
           'Content-Type': 'application/json; charset=utf-8',
         }));
