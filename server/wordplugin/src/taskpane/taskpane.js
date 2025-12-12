@@ -22,6 +22,7 @@ Office.onReady((info) => {
   }
 });
 
+
 function connectWebSocket() {
     log(`Connecting to ${WS_URL}...`);
     ws = new WebSocket(WS_URL);
@@ -49,9 +50,9 @@ function connectWebSocket() {
             log(`Received command: ${data.action}`);
             
             if (data.action === 'save') {
-                await saveDocument();
+                await saveDocument(data.id);
             } else if (data.action === 'replace') {
-                await replaceDocument(data.payload);
+                await replaceDocument(data.payload, data.id);
             }
         } catch (e) {
             log("Error processing message: " + e.message);
@@ -101,11 +102,37 @@ export async function saveDocument() {
   }).catch(errorHandler);
 }
 
-export async function replaceDocument(payload) {
+export async function replaceDocument(payload, id) {
   return Word.run(async (context) => {
-    const body = context.document.body;
-    
     const { content, type, options } = payload;
+    
+    // Check path if required
+    if (options && options.checkPath) {
+       const currentUrl = Office.context.document.url;
+       // Normalize paths for comparison
+       // Remove file:/// and convert forward slashes to backslashes or vice versa
+       let normCurrent = currentUrl ? currentUrl.replace(/^file:\/\/\//, '').replace(/\//g, '\\') : '';
+       try { normCurrent = decodeURIComponent(normCurrent); } catch(e) {}
+       
+       let normTarget = options.checkPath.replace(/\//g, '\\');
+       
+       // Handle drive letter capitalization differences
+       if (normCurrent.toLowerCase() !== normTarget.toLowerCase()) {
+          console.log(`Path mismatch. Current: ${normCurrent}, Target: ${normTarget}`);
+          log(`Path mismatch. Current: ${normCurrent}, Target: ${normTarget}`);
+          if (ws && ws.readyState === WebSocket.OPEN && id) {
+             ws.send(JSON.stringify({
+                type: 'response',
+                id: id,
+                status: 'error',
+                message: `Document path mismatch. Expected ${normTarget}, got ${normCurrent}`
+             }));
+          }
+          return;
+       }
+    }
+
+    const body = context.document.body;
     
     if (type === 'html') {
         // use Replace to overwrite existing content
@@ -135,7 +162,25 @@ export async function replaceDocument(payload) {
 
     await context.sync();
     log("Document content replaced via API.");
-  }).catch(errorHandler);
+    
+    if (ws && ws.readyState === WebSocket.OPEN && id) {
+       ws.send(JSON.stringify({
+          type: 'response',
+          id: id,
+          status: 'success'
+       }));
+    }
+  }).catch((error) => {
+      errorHandler(error);
+      if (ws && ws.readyState === WebSocket.OPEN && id) {
+         ws.send(JSON.stringify({
+            type: 'response',
+            id: id,
+            status: 'error',
+            message: error.message
+         }));
+      }
+  });
 }
 
 let monitorInterval;
