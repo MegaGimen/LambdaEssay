@@ -114,27 +114,37 @@ Future<void> _writeExternalDocx(String repoPath, String sourcePath) async {
   }
 
   if (!handled) {
-     print('Updating external docx via disk write: $docxPath');
-     if (FileSystemEntity.isDirectorySync(docxPath)) {
-        if (FileSystemEntity.isDirectorySync(sourcePath)) {
-           await _copyDir(sourcePath, docxPath);
-        } else {
-           // Unzip source file to target dir
-           if (Directory(docxPath).existsSync()) {
-              Directory(docxPath).deleteSync(recursive: true);
-           }
-           Directory(docxPath).createSync();
-           await _unzipDocx(sourcePath, docxPath);
-        }
-     } else {
-        if (FileSystemEntity.isDirectorySync(sourcePath)) {
-           // Zip source dir to target file
-           await _zipDir(sourcePath, docxPath);
-        } else {
-           File(sourcePath).copySync(docxPath);
-        }
-     }
-  }
+             print('Updating external docx via disk write: $docxPath');
+             try {
+               if (FileSystemEntity.isDirectorySync(docxPath)) {
+                  if (FileSystemEntity.isDirectorySync(sourcePath)) {
+                     await _copyDir(sourcePath, docxPath);
+                  } else {
+                     // Unzip source file to target dir
+                     if (Directory(docxPath).existsSync()) {
+                        Directory(docxPath).deleteSync(recursive: true);
+                     }
+                     Directory(docxPath).createSync();
+                     await _unzipDocx(sourcePath, docxPath);
+                  }
+               } else {
+                  if (FileSystemEntity.isDirectorySync(sourcePath)) {
+                     // Zip source dir to target file
+                     await _zipDir(sourcePath, docxPath);
+                  } else {
+                     // Safer copy: read bytes and write bytes to avoid 183
+                     // File(sourcePath).copySync(docxPath);
+                     final bytes = File(sourcePath).readAsBytesSync();
+                     File(docxPath).writeAsBytesSync(bytes, flush: true);
+                  }
+               }
+             } catch (e) {
+                print('Disk write failed: $e');
+                // If it was a PathExistsException (183), maybe we can't overwrite?
+                // But writeAsBytesSync should truncate and write.
+                rethrow;
+             }
+          }
 }
 
 Future<void> _flushDocxToContent(String repoPath) async {
@@ -1044,6 +1054,7 @@ Future<void> rollbackVersion(String projectName, String commitId) async {
 
     if (docxPath != null) {
       final localDocx = p.join(repoPath, kRepoDocxName);
+      // Ensure we use _writeExternalDocx for robust handling
       if (File(localDocx).existsSync()) {
         await _writeExternalDocx(repoPath, localDocx);
       } else {
