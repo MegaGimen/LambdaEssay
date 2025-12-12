@@ -14,6 +14,7 @@ import 'package:uuid/uuid.dart';
 import 'dart:async';
 
 List<WebSocketChannel> _activePluginSockets = [];
+List<WebSocketChannel> _activeFrontendSockets = [];
 final _pendingRequests = <String, Completer<dynamic>>{};
 final _uuid = Uuid();
 
@@ -151,18 +152,16 @@ Future<void> main(List<String> args) async {
                 final path = data['path'] as String?;
                 if (path != null) {
                    print('Plugin reported save event for: $path');
-                   findProjectByDocxPath(path).then((projectName) {
-                      if (projectName != null) {
-                         print('Auto-updating project: $projectName');
-                         updateTrackingProject(projectName).then((_) {
-                            print('Project $projectName updated successfully.');
-                         }).catchError((e) {
-                            print('Failed to auto-update project $projectName: $e');
-                         });
-                      } else {
-                         print('No tracking project found for docx: $path');
-                      }
-                   });
+                   for (final socket in _activeFrontendSockets) {
+                     try {
+                       socket.sink.add(jsonEncode({
+                         'type': 'repo_updated',
+                         'path': path,
+                       }));
+                     } catch (e) {
+                       print('Failed to notify frontend: $e');
+                     }
+                   }
                 } else {
                    print('Plugin reported save event but path is null');
                 }
@@ -185,6 +184,24 @@ Future<void> main(List<String> args) async {
         if (_activePluginSockets.isEmpty) {
           pluginSender = null;
         }
+      });
+    })(req);
+  });
+
+  // WebSocket endpoint for Frontend Client
+  router.get('/ws/client', (Request req) {
+    return webSocketHandler((channel, protocol) {
+      print('Frontend Client connected');
+      _activeFrontendSockets.add(channel);
+
+      channel.stream.listen((message) {
+        // Client usually just listens
+      }, onDone: () {
+        print('Frontend Client disconnected');
+        _activeFrontendSockets.remove(channel);
+      }, onError: (e) {
+        print('Frontend WebSocket error: $e');
+        _activeFrontendSockets.remove(channel);
       });
     })(req);
   });
