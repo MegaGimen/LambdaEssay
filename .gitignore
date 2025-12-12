@@ -68,4 +68,4 @@ fucklist.md
 server/lib/mammoth/node_modules
 server/bin/doc2html.exe
 
-server/wordplugin
+server/wordplugin/node_modules
