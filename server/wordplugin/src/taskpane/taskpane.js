@@ -6,7 +6,7 @@
 /* global document, Office, Word, setInterval, clearInterval, WebSocket */
 
 let ws;
-const WS_URL = "ws://localhost:3001";
+const WS_URL = "ws://localhost:8080/ws";
 
 Office.onReady((info) => {
   if (info.host === Office.HostType.Word) {

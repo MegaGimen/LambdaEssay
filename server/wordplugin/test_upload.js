@@ -29,7 +29,7 @@ async function uploadDocument() {
     }
 
     try {
-        const response = await axios.post('http://localhost:3001/api/document', form, {
+        const response = await axios.post('http://localhost:8080/api/document', form, {
             headers: {
                 ...form.getHeaders()
             }
