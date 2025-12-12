@@ -105,19 +105,32 @@ export async function replaceDocument(payload) {
   return Word.run(async (context) => {
     const body = context.document.body;
     
-    // Clear existing content
-    body.clear();
-    
-    const { content, type } = payload;
+    const { content, type, options } = payload;
     
     if (type === 'html') {
-        body.insertHtml(content, Word.InsertLocation.start);
+        // use Replace to overwrite existing content
+        body.insertHtml(content, Word.InsertLocation.replace);
     } else if (type === 'base64') {
-        // Assuming base64 encoded docx
-        body.insertFileFromBase64(content, Word.InsertLocation.start);
+        // use Replace to overwrite existing content, which handles styles better than clear() + insert()
+        body.insertFileFromBase64(content, Word.InsertLocation.replace);
     } else {
         // Default text
+        // insertParagraph does not support 'Replace', so we clear first
+        body.clear();
         body.insertParagraph(content, Word.InsertLocation.start);
+    }
+
+    // Handle force options (Direct Formatting Override)
+    if (options) {
+        if (options.fontName) {
+            body.font.name = options.fontName;
+            log(`Forced font name: ${options.fontName}`);
+        }
+        if (options.fontSize) {
+            body.font.size = options.fontSize;
+            log(`Forced font size: ${options.fontSize}`);
+        }
+        // Add more style overrides as needed
     }
 
     await context.sync();

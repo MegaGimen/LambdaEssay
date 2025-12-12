@@ -76,13 +76,23 @@ app.post('/api/document', upload.single('file'), (req, res) => {
         type = req.body.type || 'text';
     }
 
+    // Parse options
+    let options = {};
+    if (req.body.options) {
+        try {
+            options = typeof req.body.options === 'string' ? JSON.parse(req.body.options) : req.body.options;
+        } catch (e) {
+            console.error("Failed to parse options:", e);
+        }
+    }
+
     if (!content) {
         return res.status(400).json({ error: 'Content is required (either as file or JSON body)' });
     }
 
     activeSocket.send(JSON.stringify({ 
         action: 'replace', 
-        payload: { content, type } 
+        payload: { content, type, options } 
     }));
 
     res.json({ message: 'Replace command sent' });
