@@ -4,9 +4,13 @@ import 'dart:typed_data';
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart';
 import 'package:shelf_router/shelf_router.dart';
+import 'package:shelf_web_socket/shelf_web_socket.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:path/path.dart' as p;
 import '../lib/git_service.dart';
 import 'package:http/http.dart' as http;
+
+WebSocketChannel? _activePluginSocket;
 
 Response _cors(Response r) {
   return r.change(headers: {
@@ -84,6 +88,163 @@ Future<void> main(List<String> args) async {
     return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
       'Content-Type': 'application/json; charset=utf-8',
     }));
+  });
+
+  // WebSocket endpoint for Word Plugin
+  router.get('/ws', (Request req) {
+    return webSocketHandler((channel, protocol) {
+      print('Word Plugin connected');
+      _activePluginSocket = channel;
+      channel.stream.listen((message) {
+        print('Received from plugin: $message');
+      }, onDone: () {
+        print('Word Plugin disconnected');
+        if (_activePluginSocket == channel) {
+          _activePluginSocket = null;
+        }
+      }, onError: (e) {
+        print('WebSocket error: $e');
+        if (_activePluginSocket == channel) {
+          _activePluginSocket = null;
+        }
+      });
+    })(req);
+  });
+
+  // Word Plugin API: Health Check
+  router.get('/api/health', (Request req) async {
+    return _cors(Response.ok(
+        jsonEncode(
+            {'status': 'ok', 'connected': _activePluginSocket != null}),
+        headers: {
+          'Content-Type': 'application/json; charset=utf-8',
+        }));
+  });
+
+  // Word Plugin API: Trigger Save
+  router.post('/api/save', (Request req) async {
+    if (_activePluginSocket == null) {
+      return _cors(Response(503,
+          body: jsonEncode({'error': 'Plugin not connected'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    _activePluginSocket!.sink.add(jsonEncode({'action': 'save'}));
+    return _cors(Response.ok(jsonEncode({'message': 'Save command sent'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  });
+
+  // Word Plugin API: Replace Document
+  router.post('/api/document', (Request req) async {
+    if (_activePluginSocket == null) {
+      return _cors(Response(503,
+          body: jsonEncode({'error': 'Plugin not connected'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+
+    String? content;
+    String type = 'text';
+    Map<String, dynamic> options = {};
+
+    final contentType = req.headers['content-type'] ?? '';
+    
+    if (contentType.toLowerCase().contains('application/json')) {
+      final body = await req.readAsString();
+      try {
+        final data = jsonDecode(body) as Map<String, dynamic>;
+        content = data['content'] as String?;
+        type = (data['type'] as String?) ?? 'text';
+        if (data['options'] != null) {
+           if (data['options'] is String) {
+             try {
+                options = jsonDecode(data['options']) as Map<String, dynamic>;
+             } catch(_) {}
+           } else {
+             options = data['options'] as Map<String, dynamic>;
+           }
+        }
+      } catch (e) {
+         return _cors(Response(400,
+          body: jsonEncode({'error': 'Invalid JSON'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+      }
+    } else if (contentType.toLowerCase().contains('multipart/form-data')) {
+      final boundary = _boundaryOf(contentType);
+      if (boundary == null) {
+         return _cors(Response(400,
+          body: jsonEncode({'error': 'Invalid multipart boundary'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+      }
+      final bytesBuilder = BytesBuilder();
+      await for (final chunk in req.read()) {
+        bytesBuilder.add(chunk);
+      }
+      final bodyBytes = bytesBuilder.takeBytes();
+      final parts = _parseMultipart(bodyBytes, boundary);
+      
+      final filePart = parts.firstWhere(
+        (p) => (p.name ?? '') == 'file',
+        orElse: () => _MultipartPart(null, null, Uint8List(0)),
+      );
+
+      if (filePart.data.isNotEmpty) {
+        content = base64Encode(filePart.data);
+        type = 'base64';
+      } else {
+        // Try to find content in other parts if not file
+         final contentPart = parts.firstWhere(
+          (p) => (p.name ?? '') == 'content',
+          orElse: () => _MultipartPart(null, null, Uint8List(0)),
+        );
+        if (contentPart.data.isNotEmpty) {
+           content = utf8.decode(contentPart.data);
+        }
+      }
+
+      // Parse type if provided in form
+       final typePart = parts.firstWhere(
+          (p) => (p.name ?? '') == 'type',
+          orElse: () => _MultipartPart(null, null, Uint8List(0)),
+        );
+        if (typePart.data.isNotEmpty) {
+           type = utf8.decode(typePart.data);
+        }
+
+      // Parse options
+       final optionsPart = parts.firstWhere(
+          (p) => (p.name ?? '') == 'options',
+          orElse: () => _MultipartPart(null, null, Uint8List(0)),
+        );
+        if (optionsPart.data.isNotEmpty) {
+           try {
+             options = jsonDecode(utf8.decode(optionsPart.data));
+           } catch (e) {
+             print('Failed to parse options: $e');
+           }
+        }
+
+    } else {
+       return _cors(Response(400,
+          body: jsonEncode({'error': 'Unsupported Content-Type'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+
+    if (content == null || content.isEmpty) {
+       return _cors(Response(400,
+          body: jsonEncode({'error': 'Content is required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+
+    _activePluginSocket!.sink.add(jsonEncode({
+      'action': 'replace',
+      'payload': {
+        'content': content,
+        'type': type,
+        'options': options
+      }
+    }));
+
+    return _cors(Response.ok(jsonEncode({'message': 'Replace command sent'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
   });
 
   router.post('/reset', (Request req) async {
