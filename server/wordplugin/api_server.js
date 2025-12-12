@@ -3,9 +3,16 @@ const http = require('http');
 const WebSocket = require('ws');
 const cors = require('cors');
 const bodyParser = require('body-parser');
+const multer = require('multer');
 
 const app = express();
 const port = 3001;
+
+// Configure Multer for memory storage
+const upload = multer({ 
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 50 * 1024 * 1024 } // Limit to 50MB
+});
 
 // Middleware
 app.use(cors());
@@ -51,23 +58,31 @@ app.post('/api/save', (req, res) => {
 });
 
 // Replace Document
-app.post('/api/document', (req, res) => {
+app.post('/api/document', upload.single('file'), (req, res) => {
     if (!activeSocket) {
         return res.status(503).json({ error: 'Plugin not connected' });
     }
 
-    const { content, type } = req.body;
+    let content, type;
 
-    if (!content) {
-        return res.status(400).json({ error: 'Content is required' });
+    // Check if file was uploaded
+    if (req.file) {
+        console.log(`Received file: ${req.file.originalname}, size: ${req.file.size}`);
+        content = req.file.buffer.toString('base64');
+        type = 'base64';
+    } else {
+        // Fallback to JSON body
+        content = req.body.content;
+        type = req.body.type || 'text';
     }
 
-    // Default type to 'text' if not provided
-    const contentType = type || 'text'; 
+    if (!content) {
+        return res.status(400).json({ error: 'Content is required (either as file or JSON body)' });
+    }
 
     activeSocket.send(JSON.stringify({ 
         action: 'replace', 
-        payload: { content, type: contentType } 
+        payload: { content, type } 
     }));
 
     res.json({ message: 'Replace command sent' });
