@@ -67,3 +67,5 @@ fucklist.md
 
 server/lib/mammoth/node_modules
 server/bin/doc2html.exe
+
+server/wordplugin
