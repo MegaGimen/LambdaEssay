@@ -6,6 +6,8 @@ import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'models.dart';
 
+Future<dynamic> Function(Map<String, dynamic>)? pluginSender;
+
 class Mutex {
   Future<void> _last = Future.value();
 
@@ -72,6 +74,66 @@ Future<void> _updateContentDocx(String repoPath, String sourceDocxPath) async {
     await _zipDir(sourceDocxPath, docxPath);
   } else {
     File(sourceDocxPath).copySync(docxPath);
+  }
+}
+
+Future<void> _writeExternalDocx(String repoPath, String sourcePath) async {
+  final name = p.basename(repoPath);
+  final tracking = await _readTracking(name);
+  final docxPath = tracking['docxPath'] as String?;
+  
+  if (docxPath == null) return;
+
+  bool handled = false;
+  // Try plugin first if source is a file (plugin expects file/base64)
+  if (pluginSender != null && File(sourcePath).existsSync()) {
+    try {
+      final bytes = await File(sourcePath).readAsBytes();
+      final base64Content = base64Encode(bytes);
+      
+      final result = await pluginSender!({
+        'action': 'replace',
+        'payload': {
+          'content': base64Content,
+          'type': 'base64',
+          'options': {
+             'checkPath': docxPath
+          }
+        }
+      });
+      
+      if (result == true) {
+         handled = true;
+         print('Updated external docx via plugin: $docxPath');
+      } else {
+         print('Plugin update skipped/failed (result: $result)');
+      }
+    } catch (e) {
+      print('Plugin write attempt failed: $e');
+    }
+  }
+
+  if (!handled) {
+     print('Updating external docx via disk write: $docxPath');
+     if (FileSystemEntity.isDirectorySync(docxPath)) {
+        if (FileSystemEntity.isDirectorySync(sourcePath)) {
+           await _copyDir(sourcePath, docxPath);
+        } else {
+           // Unzip source file to target dir
+           if (Directory(docxPath).existsSync()) {
+              Directory(docxPath).deleteSync(recursive: true);
+           }
+           Directory(docxPath).createSync();
+           await _unzipDocx(sourcePath, docxPath);
+        }
+     } else {
+        if (FileSystemEntity.isDirectorySync(sourcePath)) {
+           // Zip source dir to target file
+           await _zipDir(sourcePath, docxPath);
+        } else {
+           File(sourcePath).copySync(docxPath);
+        }
+     }
   }
 }
 
@@ -416,6 +478,13 @@ Future<void> switchBranch(String projectName, String branchName) async {
   return _withRepoLock(repoPath, () async {
     await _runGit(['checkout', '-f', branchName], repoPath);
     await _forceRegenerateRepoDocx(repoPath);
+    
+    // Sync to external docx
+    final localDocx = p.join(repoPath, kRepoDocxName);
+    if (File(localDocx).existsSync()) {
+        await _writeExternalDocx(repoPath, localDocx);
+    }
+    
     clearCache();
   });
 }
@@ -974,23 +1043,13 @@ Future<void> rollbackVersion(String projectName, String commitId) async {
     final docxPath = tracking['docxPath'] as String?;
 
     if (docxPath != null) {
-      // We can use content.docx to update external if external is file
       final localDocx = p.join(repoPath, kRepoDocxName);
-
-      if (FileSystemEntity.isDirectorySync(docxPath)) {
-        // Target is dir: Copy contentDir to docxPath
-        final contentDir = Directory(p.join(repoPath, kContentDirName));
-        await _copyDir(contentDir.path, docxPath);
+      if (File(localDocx).existsSync()) {
+        await _writeExternalDocx(repoPath, localDocx);
       } else {
-        // Target is file: Copy content.docx to docxPath
-        if (File(localDocx).existsSync()) {
-          File(localDocx).copySync(docxPath);
-        } else {
-          // Fallback
-          final contentDir = Directory(p.join(repoPath, kContentDirName));
-          if (contentDir.existsSync()) {
-            await _zipDir(contentDir.path, docxPath);
-          }
+        final contentDir = Directory(p.join(repoPath, kContentDirName));
+        if (contentDir.existsSync()) {
+          await _writeExternalDocx(repoPath, contentDir.path);
         }
       }
     }
@@ -1382,21 +1441,14 @@ Future<Map<String, dynamic>> pullFromRemote(
       if (docxPath != null) {
         // Sync Repo Content -> External Docx
         final localDocx = p.join(projDir, kRepoDocxName);
-
-        if (FileSystemEntity.isDirectorySync(docxPath)) {
-          final contentDir = Directory(p.join(projDir, kContentDirName));
-          if (contentDir.existsSync()) {
-            await _copyDir(contentDir.path, docxPath);
-          }
+        if (File(localDocx).existsSync()) {
+            await _writeExternalDocx(projDir, localDocx);
         } else {
-          if (File(localDocx).existsSync()) {
-            File(localDocx).copySync(docxPath);
-          } else {
-            final contentDir = Directory(p.join(projDir, kContentDirName));
-            if (contentDir.existsSync()) {
-              await _zipDir(contentDir.path, docxPath);
-            }
-          }
+             // If localDocx missing (unlikely after regenerate), try contentDir
+             final contentDir = Directory(p.join(projDir, kContentDirName));
+             if (contentDir.existsSync()) {
+                 await _writeExternalDocx(projDir, contentDir.path);
+             }
         }
       }
     }
@@ -1532,10 +1584,13 @@ Future<void> prepareMerge(String repoName, String targetBranch) async {
         // Clean target?
         // Directory(docxPath).deleteSync(recursive: true);
         // Directory(docxPath).createSync();
-        await _unzipDocx(diffDocx, docxPath);
+        // await _unzipDocx(diffDocx, docxPath);
+        
+        // Use _writeExternalDocx for consistency (it handles dir unzipping too)
+        await _writeExternalDocx(projDir, diffDocx);
       } else {
         // Overwrite file
-        File(diffDocx).copySync(docxPath);
+        await _writeExternalDocx(projDir, diffDocx);
       }
     } finally {
       try {

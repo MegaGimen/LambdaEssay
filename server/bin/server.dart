@@ -10,7 +10,12 @@ import 'package:path/path.dart' as p;
 import '../lib/git_service.dart';
 import 'package:http/http.dart' as http;
 
+import 'package:uuid/uuid.dart';
+import 'dart:async';
+
 WebSocketChannel? _activePluginSocket;
+final _pendingRequests = <String, Completer<dynamic>>{};
+final _uuid = Uuid();
 
 Response _cors(Response r) {
   return r.change(headers: {
@@ -95,17 +100,55 @@ Future<void> main(List<String> args) async {
     return webSocketHandler((channel, protocol) {
       print('Word Plugin connected');
       _activePluginSocket = channel;
+
+      pluginSender = (Map<String, dynamic> message) async {
+         if (_activePluginSocket == null) return false;
+         final id = _uuid.v4();
+         message['id'] = id;
+         
+         final completer = Completer<dynamic>();
+         _pendingRequests[id] = completer;
+         
+         try {
+           _activePluginSocket!.sink.add(jsonEncode(message));
+           // Timeout after 30 seconds
+           final response = await completer.future.timeout(const Duration(seconds: 30));
+           if (response is Map && response['status'] == 'success') return true;
+           if (response is Map) print('Plugin returned error: ${response['message']}');
+           return false;
+         } catch (e) {
+           print('Plugin request failed/timeout: $e');
+           _pendingRequests.remove(id);
+           return false;
+         }
+      };
+
       channel.stream.listen((message) {
-        print('Received from plugin: $message');
+        try {
+           final data = jsonDecode(message as String);
+           if (data is Map && data['type'] == 'response' && data['id'] != null) {
+              final id = data['id'];
+              final completer = _pendingRequests.remove(id);
+              if (completer != null && !completer.isCompleted) {
+                 completer.complete(data);
+              }
+           } else {
+             print('Received from plugin: $message');
+           }
+        } catch(e) {
+             print('WebSocket message error: $e');
+        }
       }, onDone: () {
         print('Word Plugin disconnected');
         if (_activePluginSocket == channel) {
           _activePluginSocket = null;
+          pluginSender = null;
         }
       }, onError: (e) {
         print('WebSocket error: $e');
         if (_activePluginSocket == channel) {
           _activePluginSocket = null;
+          pluginSender = null;
         }
       });
     })(req);
@@ -123,19 +166,25 @@ Future<void> main(List<String> args) async {
 
   // Word Plugin API: Trigger Save
   router.post('/api/save', (Request req) async {
-    if (_activePluginSocket == null) {
+    if (pluginSender == null) {
       return _cors(Response(503,
           body: jsonEncode({'error': 'Plugin not connected'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
-    _activePluginSocket!.sink.add(jsonEncode({'action': 'save'}));
-    return _cors(Response.ok(jsonEncode({'message': 'Save command sent'}),
-        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    final success = await pluginSender!({'action': 'save'});
+    if (success) {
+      return _cors(Response.ok(jsonEncode({'message': 'Save command sent'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    } else {
+      return _cors(Response(500,
+          body: jsonEncode({'error': 'Save failed or timed out'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
   });
 
   // Word Plugin API: Replace Document
   router.post('/api/document', (Request req) async {
-    if (_activePluginSocket == null) {
+    if (pluginSender == null) {
       return _cors(Response(503,
           body: jsonEncode({'error': 'Plugin not connected'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
@@ -234,17 +283,23 @@ Future<void> main(List<String> args) async {
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
 
-    _activePluginSocket!.sink.add(jsonEncode({
+    final success = await pluginSender!({
       'action': 'replace',
       'payload': {
         'content': content,
         'type': type,
         'options': options
       }
-    }));
+    });
 
-    return _cors(Response.ok(jsonEncode({'message': 'Replace command sent'}),
-        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    if (success) {
+      return _cors(Response.ok(jsonEncode({'message': 'Replace command sent'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    } else {
+       return _cors(Response(500,
+          body: jsonEncode({'error': 'Replace failed or timed out'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
   });
 
   router.post('/reset', (Request req) async {
