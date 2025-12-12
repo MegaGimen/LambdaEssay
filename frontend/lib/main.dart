@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:http/http.dart' as http;
+import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'visualize.dart';
 
@@ -133,10 +134,56 @@ class _GraphPageState extends State<GraphPage> {
 
   static const String baseUrl = 'http://localhost:8080';
 
+  WebSocketChannel? _channel;
+
   @override
   void initState() {
     super.initState();
     _checkLogin();
+    _connectWebSocket();
+  }
+
+  @override
+  void dispose() {
+    _channel?.sink.close();
+    pathCtrl.dispose();
+    limitCtrl.dispose();
+    docxPathCtrl.dispose();
+    userCtrl.dispose();
+    passCtrl.dispose();
+    emailCtrl.dispose();
+    verifyCodeCtrl.dispose();
+    super.dispose();
+  }
+
+  void _connectWebSocket() {
+    if (!mounted) return;
+    try {
+      _channel = WebSocketChannel.connect(Uri.parse('ws://localhost:8080/ws/client'));
+      _channel!.stream.listen((message) {
+        if (!mounted) return;
+        try {
+          final data = jsonDecode(message);
+          if (data['type'] == 'repo_updated') {
+             print("Received repo update notification");
+             if (currentProjectName != null) {
+                _onUpdateRepoAction();
+             }
+          }
+        } catch (e) {
+          print("WebSocket message error: $e");
+        }
+      }, onError: (e) {
+        print("WebSocket connection error: $e");
+        if (mounted) Future.delayed(const Duration(seconds: 5), _connectWebSocket);
+      }, onDone: () {
+        print("WebSocket connection closed");
+        if (mounted) Future.delayed(const Duration(seconds: 5), _connectWebSocket);
+      });
+    } catch (e) {
+      print("WebSocket connection failed: $e");
+      if (mounted) Future.delayed(const Duration(seconds: 5), _connectWebSocket);
+    }
   }
 
   Future<void> _checkLogin() async {
