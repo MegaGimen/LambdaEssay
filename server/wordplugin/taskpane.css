@@ -1,0 +1,43 @@
+body {
+    font-family: "Segoe UI", "Segoe UI Web (West European)", "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", sans-serif;
+    padding: 10px;
+    background-color: #f3f2f1;
+}
+
+h1 {
+    font-size: 20px;
+    margin-bottom: 20px;
+}
+
+.button-container {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+button {
+    padding: 10px 20px;
+    background-color: #0078d4;
+    color: white;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+button:hover {
+    background-color: #106ebe;
+}
+
+#status {
+    background-color: white;
+    padding: 10px;
+    border: 1px solid #ccc;
+    min-height: 100px;
+}
+
+#console-output {
+    white-space: pre-wrap;
+    font-family: monospace;
+    font-size: 12px;
+}

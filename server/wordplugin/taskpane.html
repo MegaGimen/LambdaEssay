@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Word Plugin Test</title>
+    <!-- Office JavaScript API -->
+    <script type="text/javascript" src="https://appsforoffice.microsoft.com/lib/1.1/hosted/office.js"></script>
+    <link href="taskpane.css" rel="stylesheet" type="text/css" />
+</head>
+
+<body>
+    <div id="content">
+        <h1>Word API Test</h1>
+        <div class="button-container">
+            <button id="insert-text">Insert Text</button>
+            <button id="save-doc">Save Document</button>
+            <button id="check-saved">Check Saved Status</button>
+            <button id="register-monitor">Monitor Selection (Mock Save Monitor)</button>
+        </div>
+        <div id="status">
+            <h3>Status:</h3>
+            <pre id="console-output"></pre>
+        </div>
+    </div>
+    <script type="text/javascript" src="taskpane.js"></script>
+</body>
+
+</html>
