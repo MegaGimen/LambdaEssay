@@ -3,7 +3,10 @@
  * See LICENSE in the project root for license information.
  */
 
-/* global document, Office, Word, setInterval, clearInterval */
+/* global document, Office, Word, setInterval, clearInterval, WebSocket */
+
+let ws;
+const WS_URL = "ws://localhost:3001";
 
 Office.onReady((info) => {
   if (info.host === Office.HostType.Word) {
@@ -13,8 +16,56 @@ Office.onReady((info) => {
     document.getElementById("write-text").onclick = writeText;
     document.getElementById("save-document").onclick = saveDocument;
     document.getElementById("monitor-save").onclick = monitorSave;
+
+    // Connect to WebSocket Server
+    connectWebSocket();
   }
 });
+
+function connectWebSocket() {
+    log(`Connecting to ${WS_URL}...`);
+    ws = new WebSocket(WS_URL);
+
+    ws.onopen = () => {
+        log("Connected to API Server");
+        updateConnectionStatus(true);
+    };
+
+    ws.onclose = () => {
+        log("Disconnected from API Server");
+        updateConnectionStatus(false);
+        // Try to reconnect after 5 seconds
+        setTimeout(connectWebSocket, 5000);
+    };
+
+    ws.onerror = (error) => {
+        console.error("WebSocket error:", error);
+        log("Connection Error");
+    };
+
+    ws.onmessage = async (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            log(`Received command: ${data.action}`);
+            
+            if (data.action === 'save') {
+                await saveDocument();
+            } else if (data.action === 'replace') {
+                await replaceDocument(data.payload);
+            }
+        } catch (e) {
+            log("Error processing message: " + e.message);
+        }
+    };
+}
+
+function updateConnectionStatus(connected) {
+    const statusDiv = document.getElementById("connection-status");
+    if (statusDiv) {
+        statusDiv.innerText = connected ? "API: Connected" : "API: Disconnected";
+        statusDiv.style.color = connected ? "green" : "red";
+    }
+}
 
 function log(message) {
     const logDiv = document.getElementById("status-log");
@@ -47,6 +98,30 @@ export async function saveDocument() {
     context.document.save();
     await context.sync();
     log("Document saved via API.");
+  }).catch(errorHandler);
+}
+
+export async function replaceDocument(payload) {
+  return Word.run(async (context) => {
+    const body = context.document.body;
+    
+    // Clear existing content
+    body.clear();
+    
+    const { content, type } = payload;
+    
+    if (type === 'html') {
+        body.insertHtml(content, Word.InsertLocation.start);
+    } else if (type === 'base64') {
+        // Assuming base64 encoded docx
+        body.insertFileFromBase64(content, Word.InsertLocation.start);
+    } else {
+        // Default text
+        body.insertParagraph(content, Word.InsertLocation.start);
+    }
+
+    await context.sync();
+    log("Document content replaced via API.");
   }).catch(errorHandler);
 }
 
