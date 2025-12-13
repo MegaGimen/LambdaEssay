@@ -1390,7 +1390,8 @@ Future<Map<String, dynamic>> pullFromRemote(
           }
         } else {
           if (File(localDocx).existsSync()) {
-            File(localDocx).copySync(docxPath);
+            final bytes = await File(localDocx).readAsBytes();
+            await File(docxPath).writeAsBytes(bytes);
           } else {
             final contentDir = Directory(p.join(projDir, kContentDirName));
             if (contentDir.existsSync()) {
