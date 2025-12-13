@@ -334,7 +334,6 @@ Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
       '--encoding=UTF-8',
       '--pretty=format:%H|%P|%d|%s|%an|%ad',
       '--date-order',
-      '--remotes',
     ];
     if (limit != null && limit > 0) {
       logArgs.add('--max-count=$limit');
