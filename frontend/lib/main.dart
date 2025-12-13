@@ -3286,12 +3286,23 @@ class _GraphViewState extends State<_GraphView> {
     final laneOf = <String, int>{};
     final byId = {for (final c in data.commits) c.id: c};
 
-    // 1. 对分支进行排序 (master 优先)
+    // 1. 对分支进行排序 (master 优先，然后按 Head 提交的新旧排序)
     final orderedBranches = List<Branch>.from(data.branches);
+    final commitIndex = <String, int>{};
+    for (var i = 0; i < data.commits.length; i++) {
+      commitIndex[data.commits[i].id] = i;
+    }
+
     orderedBranches.sort((a, b) {
       int pa = a.name == 'master' ? 0 : 1;
       int pb = b.name == 'master' ? 0 : 1;
       if (pa != pb) return pa - pb;
+
+      // Sort by head commit index (smaller index = newer = higher priority)
+      final idxA = commitIndex[a.head] ?? 999999;
+      final idxB = commitIndex[b.head] ?? 999999;
+      if (idxA != idxB) return idxA - idxB;
+
       return a.name.compareTo(b.name);
     });
 

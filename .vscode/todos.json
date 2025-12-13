@@ -56,7 +56,7 @@
   {
     "id": 1765336324415,
     "text": "如果有A和B两条分支，B进行了一个commit，这会导致A缩短，应该变长才对",
-    "completed": false,
+    "completed": true,
     "createdAt": "2025-12-10T03:12:04.415Z"
   },
   {
@@ -74,7 +74,7 @@
   {
     "id": 1765336310945,
     "text": "实时监控文件更改，而不是手动点击，不然容易忘，忘了就麻烦大了",
-    "completed": false,
+    "completed": true,
     "createdAt": "2025-12-10T03:11:50.945Z"
   },
   {
@@ -92,7 +92,7 @@
   {
     "id": 1765336286376,
     "text": "设置core.autocrlf=false，防止Linux和Windows转换出现问题",
-    "completed": false,
+    "completed": true,
     "createdAt": "2025-12-10T03:11:26.376Z"
   },
   {
@@ -104,7 +104,7 @@
   {
     "id": 1765336278510,
     "text": "commit和reset后要自动刷新仓库",
-    "completed": false,
+    "completed": true,
     "createdAt": "2025-12-10T03:11:18.510Z"
   },
   {
