@@ -1,5 +1,23 @@
 [
   {
+    "id": 1765615043522,
+    "text": "拐弯边的捕获只捕获了一部分",
+    "completed": false,
+    "createdAt": "2025-12-13T08:37:23.522Z"
+  },
+  {
+    "id": 1765615039484,
+    "text": "让pull和push做选择时可以预览",
+    "completed": false,
+    "createdAt": "2025-12-13T08:37:19.484Z"
+  },
+  {
+    "id": 1765615035934,
+    "text": "解决5000端口/compare失败的问题",
+    "completed": false,
+    "createdAt": "2025-12-13T08:37:15.934Z"
+  },
+  {
     "id": 1765347191622,
     "text": "仓库在清单里但依旧报错",
     "completed": true,
