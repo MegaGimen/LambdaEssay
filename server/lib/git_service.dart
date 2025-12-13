@@ -254,23 +254,62 @@ Future<String?> getCurrentBranch(String repoPath) async {
   }
 }
 
-Future<List<List<String>>> _readEdges(String repoPath) async {
-  final f = File(p.join(repoPath, 'edges'));
-  if (!f.existsSync()) return [];
-  try {
-    final lines = await f.readAsLines();
-    if (lines.isEmpty) return [];
-    final edges = <List<String>>[];
-    for (var i = 1; i < lines.length; i++) {
-      final parts = lines[i].trim().split(RegExp(r'\s+'));
-      if (parts.length >= 2) {
-        edges.add(parts.sublist(0, 2));
-      }
-    }
-    return edges;
-  } catch (_) {
-    return [];
+Future<List<List<String>>> _collectAllEdges(
+    String repoPath, List<CommitNode> commits) async {
+  final uniquePairs = <String>{};
+  final commitIds = commits.map((c) => c.id).toSet();
+  final allParents = <String>{};
+  for (final c in commits) {
+    allParents.addAll(c.parents);
   }
+
+  Future<void> fetch(CommitNode c) async {
+    try {
+      final res = await Process.run(
+        'git',
+        ['show', '${c.id}:edges'],
+        workingDirectory: repoPath,
+        stdoutEncoding: utf8,
+      );
+      if (res.exitCode == 0) {
+        final content = res.stdout.toString();
+        final lines = LineSplitter.split(content).toList();
+        if (lines.length > 1) {
+          for (var i = 1; i < lines.length; i++) {
+            final line = lines[i].trim();
+            if (line.isEmpty) continue;
+            final parts = line.split(RegExp(r'\s+'));
+            if (parts.length >= 2) {
+              uniquePairs.add('${parts[0]}|${parts[1]}');
+            }
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  final int batchSize = 20;
+  for (var i = 0; i < commits.length; i += batchSize) {
+    final end =
+        (i + batchSize < commits.length) ? i + batchSize : commits.length;
+    final batch = commits.sublist(i, end);
+    await Future.wait(batch.map(fetch));
+  }
+
+  final result = <List<String>>[];
+  for (final pair in uniquePairs) {
+    final parts = pair.split('|');
+    final u = parts[0];
+    final v = parts[1];
+
+    if (!commitIds.contains(u) || !commitIds.contains(v)) continue;
+
+    if (!allParents.contains(u)) continue;
+    if (!allParents.contains(v)) continue;
+
+    result.add([u, v]);
+  }
+  return result;
 }
 
 Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
@@ -285,7 +324,7 @@ Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
     final branches = await getBranches(repoPath);
     final chains = await getBranchChains(repoPath, branches, limit: limit);
     final current = await getCurrentBranch(repoPath);
-    final customEdges = await _readEdges(repoPath);
+    // final customEdges = await _readEdges(repoPath); // Replaced by _collectAllEdges
 
     final logArgs = [
       'log',
@@ -327,6 +366,9 @@ Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
         ),
       );
     }
+
+    final customEdges = await _collectAllEdges(repoPath, commits);
+
     final resp = GraphResponse(
         commits: commits,
         branches: branches,
