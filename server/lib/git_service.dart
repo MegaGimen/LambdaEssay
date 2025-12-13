@@ -1650,3 +1650,59 @@ Future<List<String>> findIdenticalCommit(String name) async {
   }
   return identicals;
 }
+
+Future<void> _ensureWebhook(String repoName, String owner, String token) async {
+  final giteaUrl = 'http://47.242.109.145:3000/';
+  final targetUrl = 'http://http://47.242.109.145:4829/webhook';
+  final headers = {
+    'Authorization': 'token $token',
+    'Content-Type': 'application/json',
+  };
+
+  try {
+    // 1. List existing hooks
+    final listResp = await http.get(
+      Uri.parse('$giteaUrl/api/v1/repos/$owner/$repoName/hooks'),
+      headers: headers,
+    );
+
+    if (listResp.statusCode == 200) {
+      final List<dynamic> hooks = jsonDecode(listResp.body);
+      for (final hook in hooks) {
+        final config = hook['config'];
+        if (config != null && config['url'] == targetUrl) {
+          print('Webhook already exists for $repoName');
+          return;
+        }
+      }
+    } else {
+      print('Failed to list webhooks: ${listResp.statusCode} ${listResp.body}');
+    }
+
+    // 2. Create hook
+    print('Creating webhook for $repoName...');
+    final createResp = await http.post(
+      Uri.parse('$giteaUrl/api/v1/repos/$owner/$repoName/hooks'),
+      headers: headers,
+      body: jsonEncode({
+        'type': 'gitea',
+        'config': {
+          'content_type': 'json',
+          'url': targetUrl,
+          'http_method': 'post',
+        },
+        'events': ['push'],
+        'active': true,
+      }),
+    );
+
+    if (createResp.statusCode == 201) {
+      print('Webhook created successfully for $repoName');
+    } else {
+      print(
+          'Failed to create webhook: ${createResp.statusCode} ${createResp.body}');
+    }
+  } catch (e) {
+    print('Error setting up webhook: $e');
+  }
+}

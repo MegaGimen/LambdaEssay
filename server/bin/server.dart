@@ -6,6 +6,8 @@ import 'package:shelf/shelf_io.dart';
 import 'package:shelf_router/shelf_router.dart';
 import 'package:path/path.dart' as p;
 import '../lib/git_service.dart';
+import '../lib/backup_service.dart';
+import '../lib/diff/repocmp.dart';
 import 'package:http/http.dart' as http;
 
 Response _cors(Response r) {
@@ -63,6 +65,12 @@ Future<void> _killPort(int port) async {
 }
 
 Future<void> main(List<String> args) async {
+    final setGlobal = await Process.run('git', ['config', '--global', 'core.autocrlf', 'false']);
+  if (setGlobal.exitCode == 0) {
+    print('✓ 已设置全局 core.autocrlf = false');
+  } else {
+    print('✗ 设置失败: ${setGlobal.stderr}');
+  }
   // Start Heidegger service in background
   try {
     final scriptDir = p.dirname(Platform.script.toFilePath());
@@ -184,6 +192,83 @@ Future<void> main(List<String> args) async {
       return _cors(Response(500,
           body: jsonEncode({'error': e.toString()}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/backup/commits', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoName = data['repoName'] as String?;
+    final force = data['force'] as bool? ?? false;
+    if (repoName == null || repoName.isEmpty) {
+      return _cors(Response(400, body: 'Repo name required'));
+    }
+    try {
+      final commits = await listBackupCommits(repoName, force: force);
+      return _cors(Response.ok(jsonEncode({'commits': commits})));
+    } catch (e) {
+      return _cors(Response(500, body: e.toString()));
+    }
+  });
+
+  router.post('/backup/graph', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoName = data['repoName'] as String?;
+    final commitId = data['commitId'] as String?;
+    if (repoName == null || commitId == null) {
+      return _cors(Response(400, body: 'Repo name and commitId required'));
+    }
+    try {
+      final graph = await getBackupChildGraph(repoName, commitId);
+      return _cors(Response.ok(jsonEncode(graph)));
+    } catch (e) {
+      return _cors(Response(500, body: e.toString()));
+    }
+  });
+
+  router.post('/compare_repos', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoName = (data['repoName'] as String?)?.trim() ?? '';
+    final commitA = data['commitA'] as String?;
+    final commitB = data['commitB'] as String?;
+    final localPath = data['localPath'] as String?;
+
+    if (repoName.isEmpty || commitA == null || commitB == null) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoName, commitA, commitB required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+
+    try {
+      final result = await compareReposWithLocal(repoName, localPath, commitA, commitB);
+      return _cors(Response.ok(jsonEncode(result.toJson()), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      var stackTrace = StackTrace.current;
+      print(stackTrace);
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/backup/preview', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoName = data['repoName'] as String?;
+    final commitId = data['commitId'] as String?;
+    if (repoName == null || commitId == null) {
+      return _cors(Response(400, body: 'Repo name and commitId required'));
+    }
+    try {
+      final bytes = await previewBackupChildDoc(repoName, commitId);
+      return _cors(
+          Response.ok(bytes, headers: {'Content-Type': 'application/pdf'}));
+    } catch (e) {
+      return _cors(Response(500, body: e.toString()));
     }
   });
 
@@ -969,6 +1054,29 @@ Future<void> main(List<String> args) async {
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
   });
+  router.post('/backup/commits', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoName = (data['repoName'] as String?)?.trim() ?? '';
+    final force = data['force'] == true;
+
+    if (repoName.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoName required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      final commits = await listBackupCommits(repoName, force: force);
+      return _cors(Response.ok(jsonEncode({'commits': commits}), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
 
   final handler =
       const Pipeline().addMiddleware(logRequests()).addHandler(router);

@@ -5,6 +5,9 @@ import 'package:flutter/gestures.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'visualize.dart';
+import 'models.dart';
+import 'graph_view.dart';
+import 'backup.dart';
 
 void main() {
   runApp(const GitGraphApp());
@@ -2878,6 +2881,27 @@ class _GraphViewState extends State<_GraphView> {
                         onPressed: _resetView,
                         icon: const Icon(Icons.home),
                         label: const Text('返回主视角'),
+                      ),
+                      const SizedBox(width: 8),
+                      ElevatedButton.icon(
+                        onPressed: () {
+                          if (widget.projectName == null || widget.repoPath.isEmpty) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('请先打开一个项目')),
+                            );
+                            return;
+                          }
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (_) => BackupPage(
+                                      projectName: widget.projectName!,
+                                      repoPath: widget.repoPath,
+                                    )),
+                          );
+                        },
+                        icon: const Icon(Icons.history),
+                        label: const Text('历史备份'),
                       ),
                     ],
                   ),
