@@ -1372,7 +1372,7 @@ Future<Map<String, dynamic>> pullFromRemote(
         }
       }
     } catch (e) {}
-
+/*
     if (savedTracking != null && savedTracking.isNotEmpty) {
       // Ensure content.docx is up to date (especially if we just cloned or reset)
       await _forceRegenerateRepoDocx(projDir);
@@ -1401,7 +1401,7 @@ Future<Map<String, dynamic>> pullFromRemote(
         }
       }
     }
-
+*/
     await _startWatcher(repoName);
     clearCache();
     return {
