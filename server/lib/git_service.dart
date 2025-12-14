@@ -273,6 +273,29 @@ Future<List<Branch>> getBranches(String repoPath) async {
   return result;
 }
 
+Future<List<Branch>> getRemoteBranches(String repoPath, String? remoteName) async {
+  final args = [
+    'for-each-ref',
+    '--format=%(refname:short)|%(objectname)',
+  ];
+  if (remoteName != null && remoteName.isNotEmpty) {
+    args.add('refs/remotes/$remoteName');
+  } else {
+    args.add('refs/remotes');
+  }
+
+  final lines = await _runGit(args, repoPath);
+  final result = <Branch>[];
+  for (final l in lines) {
+    if (l.trim().isEmpty) continue;
+    final parts = l.split('|');
+    if (parts.length >= 2) {
+      result.add(Branch(name: parts[0], head: parts[1]));
+    }
+  }
+  return result;
+}
+
 Future<String?> getCurrentBranch(String repoPath) async {
   try {
     final lines = await _runGit(['branch', '--show-current'], repoPath);
@@ -347,29 +370,54 @@ Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
     });
   }
 
-  Future<GraphResponse> _getGraphUnlocked(String repoPath, {int? limit}) async {
-    final key = '${repoPath}|${limit ?? 0}';
-    final cached = _graphCache[key];
-    if (cached != null) {
-      print('Graph cache hit for $key');
-      return cached;
+  Future<GraphResponse> _getGraphUnlocked(String repoPath,
+      {int? limit,
+      bool includeLocal = true,
+      List<String>? remoteNames}) async {
+    final key = '${repoPath}|${limit ?? 0}|$includeLocal|$remoteNames';
+    // final cached = _graphCache[key];
+    // if (cached != null) {
+    //   print('Graph cache hit for $key');
+    //   return cached;
+    // }
+    // Disable cache for preview accuracy
+    print('Graph fetching for $key...');
+    
+    final branches = <Branch>[];
+    if (includeLocal) {
+      branches.addAll(await getBranches(repoPath));
     }
-    print('Graph cache miss for $key, fetching...');
-    final branches = await getBranches(repoPath);
+    if (remoteNames != null) {
+       for (final r in remoteNames) {
+          branches.addAll(await getRemoteBranches(repoPath, r));
+       }
+    }
+
     final chains = await getBranchChains(repoPath, branches, limit: limit);
     final current = await getCurrentBranch(repoPath);
-    // final customEdges = await _readEdges(repoPath); // Replaced by _collectAllEdges
 
     final logArgs = [
       'log',
-      '--branches',
-      '--remotes',
+    ];
+    if (includeLocal) logArgs.add('--branches');
+    if (remoteNames != null) {
+      if (remoteNames.isEmpty) {
+        logArgs.add('--remotes'); // All remotes
+      } else {
+        for (final r in remoteNames) {
+          logArgs.add('--remotes=$r');
+        }
+      }
+    }
+    
+    logArgs.addAll([
       '--tags',
       '--date=iso',
       '--encoding=UTF-8',
       '--pretty=format:%H|%P|%d|%s|%an|%ad',
       '--date-order',
-    ];
+    ]);
+
     if (limit != null && limit > 0) {
       logArgs.add('--max-count=$limit');
     }
@@ -411,10 +459,10 @@ Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
         currentBranch: current,
         customEdges: customEdges);
     _graphCache[key] = resp;
-    return resp;
-  }
+      return resp;
+    }
 
-Future<void> commitChanges(
+  Future<void> commitChanges(
     String repoPath, String author, String message) async {
   return _withRepoLock(repoPath, () async {
     // 1. Unzip content.docx -> doc_content
@@ -1508,7 +1556,7 @@ Future<PullPreviewResult> previewPull(
     clearCache();
 
     // 2. Get Current Graph
-    final currentGraph = await _getGraphUnlocked(projDir);
+    final currentGraph = await _getGraphUnlocked(projDir, includeLocal: true);
     
     // 3. Get Target Graph
     // Since we fetched, _getGraphUnlocked (now with --remotes) includes remote commits.
@@ -1522,13 +1570,31 @@ Future<PullPreviewResult> previewPull(
        targetBranchName = '$remoteName/$currentBranch';
     }
 
-    // Clone currentGraph but change currentBranch
-    final targetGraph = GraphResponse(
-      commits: currentGraph.commits,
-      branches: currentGraph.branches,
-      chains: currentGraph.chains,
-      currentBranch: targetBranchName ?? currentGraph.currentBranch,
-      customEdges: currentGraph.customEdges,
+    final targetGraph = await _getGraphUnlocked(projDir, 
+      includeLocal: false, 
+      remoteNames: [remoteName]
+    );
+    // Adjust targetGraph's currentBranch to point to the remote ref
+    if (targetBranchName != null) {
+       // We need to return a new GraphResponse because fields are final
+       // Wait, GraphResponse fields are final? Yes.
+       // So we construct a new one based on targetGraph.
+       // But targetGraph was just fetched. We can just use it?
+       // The _getGraphUnlocked sets 'currentBranch' to local HEAD.
+       // For targetGraph, we want 'currentBranch' to be the remote branch name.
+       // This highlights it in the UI.
+       
+       // Actually _getGraphUnlocked calls getCurrentBranch (local).
+       // So targetGraph.currentBranch is the local branch name.
+       // We should override it.
+    }
+    
+    final finalTargetGraph = GraphResponse(
+      commits: targetGraph.commits,
+      branches: targetGraph.branches,
+      chains: targetGraph.chains,
+      currentBranch: targetBranchName ?? targetGraph.currentBranch,
+      customEdges: targetGraph.customEdges,
     );
 
     GraphResponse? resultGraph;
@@ -1599,7 +1665,7 @@ Future<PullPreviewResult> previewPull(
 
     return PullPreviewResult(
       current: currentGraph,
-      target: targetGraph, // effectively same commits, but we pass it for symmetry
+      target: finalTargetGraph,
       result: resultGraph,
       rowMapping: mapping,
       hasConflicts: hasConflicts,
