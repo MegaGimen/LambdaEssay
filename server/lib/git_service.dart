@@ -412,9 +412,10 @@ Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
     
     logArgs.addAll([
       '--tags',
+      '--decorate=full',
       '--date=iso',
       '--encoding=UTF-8',
-      '--pretty=format:%H|%P|%d|%s|%an|%ad',
+      '--pretty=format:%H|%P|%D|%s|%an|%ad',
       '--date-order',
     ]);
 
@@ -434,7 +435,7 @@ Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
 
       final parents = rawParents;
       final dec = parts[2];
-      final refs = _parseRefs(dec);
+      final refs = _parseRefs(dec, includeLocal: includeLocal, remoteNames: remoteNames);
       final subject = parts[3];
       final author = parts[4];
       final date = parts[5];
@@ -574,23 +575,118 @@ Future<Uint8List> compareWorking(String repoPath) async {
   });
 }
 
-List<String> _parseRefs(String decoration) {
+List<String> _parseRefs(String decoration, {bool includeLocal = true, List<String>? remoteNames}) {
   final s = decoration.trim();
   if (s.isEmpty) return <String>[];
-  final start = s.indexOf('(');
-  final end = s.lastIndexOf(')');
-  if (start < 0 || end < 0 || end <= start) return <String>[];
-  final inner = s.substring(start + 1, end);
-  final items = inner.split(',');
+  
+  // %D format: "HEAD -> refs/heads/master, refs/remotes/origin/master, tag: v1"
+  // It does NOT have wrapping parenthesis like %d
+  
+  // However, if we were using %d, it would be "(HEAD -> master, origin/master)".
+  // We switched to %D.
+  // But wait, if I switched to %D, the old parsing logic (expecting parenthesis) might fail if %D doesn't wrap.
+  // Git doc says: %D: "ref names without the ' (', ')' wrapping."
+  // So I need to remove the parenthesis stripping logic or handle both.
+  // Let's handle just the split.
+  
+  // Split by comma
+  final items = s.split(',');
   final refs = <String>{};
+  
   for (var i in items) {
-    final t = i.trim();
+    var t = i.trim();
     if (t.isEmpty) continue;
-    if (t.startsWith('origin/')) continue;
-    final cleaned = t
-        .replaceAll(RegExp(r'^HEAD ->\s*'), '')
-        .replaceAll(RegExp(r'^tag:\s*'), '');
-    refs.add(cleaned);
+    
+    // Handle HEAD -> ...
+    if (t.startsWith('HEAD -> ')) {
+      t = t.substring(8).trim();
+    }
+    
+    // Handle tag: ...
+    if (t.startsWith('tag: ')) {
+      // Tags are usually global, we might want to keep them or filter?
+      // Let's keep them as is, or strip 'tag: '?
+      // Original logic stripped 'tag: '.
+      t = 'refs/tags/${t.substring(5).trim()}'; 
+      // Actually standard ref is refs/tags/...
+    }
+    
+    // Now t should be a full ref like 'refs/heads/master' or 'refs/remotes/origin/master'
+    // But sometimes it might be just 'master' if %D is not fully qualified? 
+    // %D gives full refs usually? 
+    // "ref names without the ' (', ')' wrapping." 
+    // Actually, %D gives "HEAD -> master, origin/master" (short names)? 
+    // No, %D gives "HEAD -> refs/heads/master, refs/remotes/origin/master" (full names) IS NOT GUARANTEED?
+    // Let's verify git documentation.
+    // %d: ref names, like the --decorate option of git-log.
+    // %D: ref names without the " (", ")" wrapping.
+    // --decorate=full vs --decorate=short (default).
+    // git log defaults to short decoration.
+    // So %D will likely output SHORT names if we don't specify --decorate=full.
+    
+    // To be safe, I should use --decorate=full in logArgs?
+    // But wait, I can just interpret what I get.
+    // If I see 'refs/heads/', it's local.
+    // If I see 'refs/remotes/', it's remote.
+    // If I see 'origin/...', it's likely remote (short).
+    
+    // Let's assume we ADD '--decorate=full' to logArgs to be robust.
+    // I will add another Edit to add '--decorate=full'.
+    
+    bool isLocal = false;
+    bool isRemote = false;
+    bool isTag = false;
+    
+    if (t.startsWith('refs/heads/')) {
+      isLocal = true;
+    } else if (t.startsWith('refs/remotes/')) {
+      isRemote = true;
+    } else if (t.startsWith('refs/tags/')) {
+      isTag = true;
+    } else {
+      // Fallback for short names or other refs
+      if (t.startsWith('origin/') || (remoteNames != null && remoteNames.any((r) => t.startsWith('$r/')))) {
+        isRemote = true;
+      } else {
+        // Assume local if not remote?
+        // Or assume local if it doesn't look like a remote?
+        isLocal = true;
+      }
+    }
+    
+    if (isLocal && !includeLocal) continue;
+    if (isRemote) {
+      // Check if allowed remote
+      if (remoteNames == null) {
+        // If remoteNames is null (and includeLocal is true/false), what do we do?
+        // Usually if includeLocal is true, we might hide remotes?
+        // User said: "In displaying local, flagrantly filter out ALL remote branches".
+        // So if includeLocal=true (Local View), we DROP isRemote.
+        // Wait, 'remoteNames' is null in Local View?
+        // In _getGraphUnlocked(includeLocal: true), remoteNames is null.
+        // So if remoteNames is null, we DROP remotes?
+        // Yes, let's assume if remoteNames is null/empty, we don't want remotes.
+        continue; 
+      }
+      
+      // If remoteNames is provided, we check if it matches
+      bool matches = false;
+      for (final r in remoteNames) {
+        if (t.contains('/$r/') || t.startsWith('$r/')) {
+           matches = true;
+           break;
+        }
+      }
+      if (!matches) continue;
+    }
+    
+    // Clean up for display
+    var clean = t;
+    if (clean.startsWith('refs/heads/')) clean = clean.substring(11);
+    else if (clean.startsWith('refs/remotes/')) clean = clean.substring(13);
+    else if (clean.startsWith('refs/tags/')) clean = clean.substring(10);
+    
+    refs.add(clean);
   }
   return refs.toList();
 }
