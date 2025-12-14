@@ -169,6 +169,7 @@ class _PullPreviewPageState extends State<PullPreviewPage> {
               transformationController: _tc,
               customRowMapping: _rowMapping,
               showCurrentHead: false,
+              showLegend: true,
             ),
           ),
         ),
