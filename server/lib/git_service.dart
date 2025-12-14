@@ -363,6 +363,7 @@ Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
     final logArgs = [
       'log',
       '--branches',
+      '--remotes',
       '--tags',
       '--date=iso',
       '--encoding=UTF-8',
@@ -1509,20 +1510,26 @@ Future<PullPreviewResult> previewPull(
     // 2. Get Current Graph
     final currentGraph = await _getGraphUnlocked(projDir);
     
-    // 3. Get Target Graph (We can simulate this by ensuring FETCH_HEAD is visible? 
-    // actually getGraph shows all branches including remote tracking branches if we fetched)
-    // But we want to explicitly identify the target.
-    // The target is refs/remotes/remoteName/current_branch usually.
-    // Or just FETCH_HEAD.
-    // Let's just use the same graph for Target but we might highlight differently in frontend?
-    // Actually, the frontend expects a GraphResponse. 
-    // If we want "Target Preview", we essentially want the graph as it looks like on the remote.
-    // But since it's a distributed system, the "Remote" graph is just a subset (or superset) of our graph 
-    // where 'master' points to 'origin/master'.
-    // So currentGraph actually contains the target commits if we fetched.
-    // So 'targetGraph' is effectively the same dataset as 'currentGraph' but the "current head" concept is different.
-    // But let's stick to returning the full graph.
-    final targetGraph = currentGraph; 
+    // 3. Get Target Graph
+    // Since we fetched, _getGraphUnlocked (now with --remotes) includes remote commits.
+    // We want to construct a GraphResponse that "looks like" the remote.
+    // Basically, we want the same graph data, but with 'currentBranch' set to the remote branch.
+    // E.g. 'origin/master' (or whatever current branch tracks).
+    
+    String? targetBranchName;
+    final currentBranch = await getCurrentBranch(projDir);
+    if (currentBranch != null) {
+       targetBranchName = '$remoteName/$currentBranch';
+    }
+
+    // Clone currentGraph but change currentBranch
+    final targetGraph = GraphResponse(
+      commits: currentGraph.commits,
+      branches: currentGraph.branches,
+      chains: currentGraph.chains,
+      currentBranch: targetBranchName ?? currentGraph.currentBranch,
+      customEdges: currentGraph.customEdges,
+    );
 
     GraphResponse? resultGraph;
     bool hasConflicts = false;
