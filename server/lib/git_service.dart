@@ -678,6 +678,10 @@ List<String> _parseRefs(String decoration, {bool includeLocal = true, List<Strin
         }
       }
       if (!matches) continue;
+      
+      // EXPLICITLY EXCLUDE REMOTE HEAD (e.g. refs/remotes/origin/HEAD)
+      // It usually points to the default branch on remote, but in graph view it's noise.
+      if (t.endsWith('/HEAD')) continue;
     }
     
     // Clean up for display
