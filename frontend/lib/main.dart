@@ -639,6 +639,22 @@ class _GraphPageState extends State<GraphPage> {
               },
               child: const Text('强制覆盖 (Force Overwrite)'),
             ),
+            const SizedBox(height: 16),
+            TextButton.icon(
+              icon: const Icon(Icons.compare_arrows),
+              label: const Text('预览冲突差异 (Preview Differences)'),
+              onPressed: () async {
+                if (currentProjectName == null || _username == null || _token == null) return;
+                // Use 'force' preview type which shows side-by-side comparison
+                // This is effectively what "preview conflict" means (mine vs theirs)
+                await Navigator.push(context, MaterialPageRoute(builder: (_) => PullPreviewPage(
+                  repoName: currentProjectName!,
+                  username: _username!,
+                  token: _token!,
+                  type: 'force', 
+                )));
+              },
+            ),
         ],
       ),
     );

@@ -212,47 +212,49 @@ Future<void> _gitArchiveToDocx(
 // ------------------------------------------
 
 Future<List<String>> _runGit(List<String> args, String repoPath) async {
-  final fullArgs = [
-    '-c',
-    'i18n.logOutputEncoding=UTF-8',
-    '-c',
-    'core.quotepath=false',
-    '-C',
-    repoPath,
-    ...args,
-  ];
-  try {
-    final res = await Process.run(
-      'git',
-      fullArgs,
-      stdoutEncoding: utf8,
-      stderrEncoding: utf8,
-    );
-    if (res.exitCode != 0) {
-      print("git error (exitCode=${res.exitCode}) args=$args");
-      print(res.stderr);
-      print(res.stdout);
-      throw Exception(res.stderr is String ? res.stderr : 'git error');
+    final fullArgs = [
+      '-c',
+      'i18n.logOutputEncoding=UTF-8',
+      '-c',
+      'core.quotepath=false',
+      '-C',
+      repoPath,
+      ...args,
+    ];
+    try {
+      final res = await Process.run(
+        'git',
+        fullArgs,
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+        environment: {'GIT_TERMINAL_PROMPT': '0'}, // Prevent interactive prompts
+      );
+      if (res.exitCode != 0) {
+        print("git error (exitCode=${res.exitCode}) args=$args");
+        print(res.stderr);
+        print(res.stdout);
+        throw Exception(res.stderr is String ? res.stderr : 'git error');
+      }
+      final out =
+          res.stdout is String ? res.stdout as String : utf8.decode(res.stdout);
+      return LineSplitter.split(out).toList();
+    } on FormatException {
+      print("Git format error!!!");
+      final res = await Process.run(
+        'git',
+        fullArgs,
+        stdoutEncoding: systemEncoding,
+        stderrEncoding: systemEncoding,
+        environment: {'GIT_TERMINAL_PROMPT': '0'},
+      );
+      if (res.exitCode != 0) {
+        print("git error fallback");
+        throw Exception(res.stderr is String ? res.stderr : 'git error');
+      }
+      final out = res.stdout as String;
+      return LineSplitter.split(out).toList();
     }
-    final out =
-        res.stdout is String ? res.stdout as String : utf8.decode(res.stdout);
-    return LineSplitter.split(out).toList();
-  } on FormatException {
-    print("Git format error!!!");
-    final res = await Process.run(
-      'git',
-      fullArgs,
-      stdoutEncoding: systemEncoding,
-      stderrEncoding: systemEncoding,
-    );
-    if (res.exitCode != 0) {
-      print("git error fallback");
-      throw Exception(res.stderr is String ? res.stderr : 'git error');
-    }
-    final out = res.stdout as String;
-    return LineSplitter.split(out).toList();
   }
-}
 
 Future<List<Branch>> getBranches(String repoPath) async {
   final lines = await _runGit([
@@ -340,7 +342,12 @@ Future<List<List<String>>> _collectAllEdges(
 }
 
 Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
-  return _withRepoLock(repoPath, () async {
+    return _withRepoLock(repoPath, () async {
+      return _getGraphUnlocked(repoPath, limit: limit);
+    });
+  }
+
+  Future<GraphResponse> _getGraphUnlocked(String repoPath, {int? limit}) async {
     final key = '${repoPath}|${limit ?? 0}';
     final cached = _graphCache[key];
     if (cached != null) {
@@ -404,8 +411,7 @@ Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
         customEdges: customEdges);
     _graphCache[key] = resp;
     return resp;
-  });
-}
+  }
 
 Future<void> commitChanges(
     String repoPath, String author, String message) async {
@@ -1501,7 +1507,7 @@ Future<PullPreviewResult> previewPull(
     clearCache();
 
     // 2. Get Current Graph
-    final currentGraph = await getGraph(projDir);
+    final currentGraph = await _getGraphUnlocked(projDir);
     
     // 3. Get Target Graph (We can simulate this by ensuring FETCH_HEAD is visible? 
     // actually getGraph shows all branches including remote tracking branches if we fetched)
@@ -1549,7 +1555,7 @@ Future<PullPreviewResult> previewPull(
 
         // Get Result Graph
         clearCache(); // Must clear to see new commits/branch
-        resultGraph = await getGraph(projDir);
+        resultGraph = await _getGraphUnlocked(projDir);
 
       } finally {
         // Cleanup
