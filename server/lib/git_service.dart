@@ -58,6 +58,7 @@ Future<T> _withRepoLock<T>(String repoPath, Future<T> Function() block) async {
 }
 
 final Map<String, GraphResponse> _graphCache = <String, GraphResponse>{};
+final Map<String, String> _previewRestorePoints = {};
 
 const String kContentDirName = 'doc_content';
 const String kRepoDocxName = 'content.docx';
@@ -638,14 +639,14 @@ List<String> _parseRefs(String decoration, {bool includeLocal = true, List<Strin
     
     bool isLocal = false;
     bool isRemote = false;
-    bool isTag = false;
+    // bool isTag = false;
     
     if (t.startsWith('refs/heads/')) {
       isLocal = true;
     } else if (t.startsWith('refs/remotes/')) {
       isRemote = true;
     } else if (t.startsWith('refs/tags/')) {
-      isTag = true;
+      // isTag = true;
     } else {
       // Fallback for short names or other refs
       if (t.startsWith('origin/') || (remoteNames != null && remoteNames.any((r) => t.startsWith('$r/')))) {
@@ -1635,11 +1636,44 @@ Future<void> rebasePull(String repoName, String username, String token) async {
   clearCache();
 }
 
+Future<void> cancelPull(String repoName) async {
+  final projDir = _projectDir(repoName);
+  return _withRepoLock(projDir, () async {
+    // 1. Try to abort any ongoing rebase/merge
+    try {
+      await _runGit(['rebase', '--abort'], projDir);
+    } catch (_) {}
+    try {
+      await _runGit(['merge', '--abort'], projDir);
+    } catch (_) {}
+
+    // 2. Restore to original HEAD if saved
+    final originalHead = _previewRestorePoints[projDir];
+    if (originalHead != null) {
+      try {
+        await _runGit(['reset', '--hard', originalHead], projDir);
+        await _forceRegenerateRepoDocx(projDir);
+      } catch (e) {
+        print('Error restoring HEAD: $e');
+      }
+      _previewRestorePoints.remove(projDir);
+    }
+    clearCache();
+  });
+}
+
 Future<PullPreviewResult> previewPull(
     String repoName, String username, String token, String type) async {
   final projDir = _projectDir(repoName);
   return _withRepoLock(projDir, () async {
     final remoteName = repoName.toLowerCase();
+    
+    // Save current HEAD for restoration
+    final currentHead = await getHead(projDir);
+    if (currentHead != null) {
+      _previewRestorePoints[projDir] = currentHead;
+    }
+
     // 1. Fetch Remote
     final owner = await _resolveRepoOwner(repoName, token);
     final remoteUrl =
@@ -1652,7 +1686,6 @@ Future<PullPreviewResult> previewPull(
       await _runGit(['fetch', remoteName], projDir);
     } catch (e) {
       print('Fetch failed during preview: $e');
-      // Continue anyway? If fetch fails, we might not have latest, but maybe we have something.
     }
 
     // Clear cache to ensure fresh graphs
@@ -1662,11 +1695,6 @@ Future<PullPreviewResult> previewPull(
     final currentGraph = await _getGraphUnlocked(projDir, includeLocal: true);
     
     // 3. Get Target Graph
-    // Since we fetched, _getGraphUnlocked (now with --remotes) includes remote commits.
-    // We want to construct a GraphResponse that "looks like" the remote.
-    // Basically, we want the same graph data, but with 'currentBranch' set to the remote branch.
-    // E.g. 'origin/master' (or whatever current branch tracks).
-    
     String? targetBranchName;
     final currentBranch = await getCurrentBranch(projDir);
     if (currentBranch != null) {
@@ -1677,20 +1705,6 @@ Future<PullPreviewResult> previewPull(
       includeLocal: false, 
       remoteNames: [remoteName]
     );
-    // Adjust targetGraph's currentBranch to point to the remote ref
-    if (targetBranchName != null) {
-       // We need to return a new GraphResponse because fields are final
-       // Wait, GraphResponse fields are final? Yes.
-       // So we construct a new one based on targetGraph.
-       // But targetGraph was just fetched. We can just use it?
-       // The _getGraphUnlocked sets 'currentBranch' to local HEAD.
-       // For targetGraph, we want 'currentBranch' to be the remote branch name.
-       // This highlights it in the UI.
-       
-       // Actually _getGraphUnlocked calls getCurrentBranch (local).
-       // So targetGraph.currentBranch is the local branch name.
-       // We should override it.
-    }
     
     final finalTargetGraph = GraphResponse(
       commits: targetGraph.commits,
@@ -1705,65 +1719,53 @@ Future<PullPreviewResult> previewPull(
     List<String> conflictingFiles = [];
 
     if (type == 'rebase') {
-      final currentBranch = await getCurrentBranch(projDir);
       if (currentBranch == null) throw Exception('Detached HEAD');
 
-      final tempBranch = 'preview_${type}_${DateTime.now().millisecondsSinceEpoch}';
-      
+      // Direct rebase on current branch
       try {
-        // Create temp branch
-        await _runGit(['checkout', '-b', tempBranch], projDir);
-
-        // Rebase
-        try {
-          await _runGit(['pull', '--rebase', remoteName, currentBranch], projDir);
-        } catch (e) {
-          // Check for conflicts
-            final status = await _runGit(['status', '--porcelain'], projDir);
-            if (status.any((l) => l.startsWith('UU') || l.startsWith('AA'))) {
-              hasConflicts = true;
-              conflictingFiles = status
-                  .where((l) => l.startsWith('UU') || l.startsWith('AA'))
-                  .map((l) => l.substring(3).trim())
-                  .toList();
-            }
-        }
-
-        // Get Result Graph
-        clearCache(); // Must clear to see new commits/branch
-        resultGraph = await _getGraphUnlocked(projDir);
-
-      } finally {
-        // Cleanup
-        try {
-            await _runGit(['rebase', '--abort'], projDir);
-        } catch (_) {}
-        
-        await _runGit(['checkout', currentBranch], projDir);
-        await _runGit(['branch', '-D', tempBranch], projDir);
-        clearCache();
+        await _runGit(['rebase', '$remoteName/$currentBranch'], projDir);
+        await _forceRegenerateRepoDocx(projDir);
+      } catch (e) {
+        // Check for conflicts
+          final status = await _runGit(['status', '--porcelain'], projDir);
+          if (status.any((l) => l.startsWith('UU') || l.startsWith('AA'))) {
+            hasConflicts = true;
+            conflictingFiles = status
+                .where((l) => l.startsWith('UU') || l.startsWith('AA'))
+                .map((l) => l.substring(3).trim())
+                .toList();
+          }
       }
+
+      // Get Result Graph (in-place)
+      clearCache();
+      resultGraph = await _getGraphUnlocked(projDir, includeLocal: true, remoteNames: [remoteName]);
+
     } else if (type == 'branch' || type == 'fork') {
-      // Fork result is identical to current graph (just different branch name)
-      // So we can reuse currentGraph as result
-      resultGraph = currentGraph;
+       if (currentBranch == null) throw Exception('Detached HEAD');
+       
+       // Merge
+       try {
+         await _runGit(['merge', '$remoteName/$currentBranch'], projDir);
+         await _forceRegenerateRepoDocx(projDir);
+       } catch (e) {
+          final status = await _runGit(['status', '--porcelain'], projDir);
+          if (status.any((l) => l.startsWith('UU') || l.startsWith('AA'))) {
+             hasConflicts = true;
+             conflictingFiles = status
+                .where((l) => l.startsWith('UU') || l.startsWith('AA'))
+                .map((l) => l.substring(3).trim())
+                .toList();
+          }
+       }
+       clearCache();
+       resultGraph = await _getGraphUnlocked(projDir, includeLocal: true, remoteNames: [remoteName]);
     }
-    // force: resultGraph remains null
 
     // Compute Unified Mapping
     final graphs = [currentGraph];
     if (resultGraph != null) graphs.add(resultGraph);
     
-    // We don't really need to add targetGraph to mapping calculation if it's identical to currentGraph commits-wise.
-    // But if we fetched new commits, currentGraph (before temp branch) might not have them?
-    // Wait, getGraph calls 'git log --branches --remotes'.
-    // If we fetched, 'refs/remotes/...' is updated.
-    // So currentGraph ALREADY contains the remote commits.
-    // So 'targetGraph' is just a pointer change (focus on remote branch).
-    // The commits are the same.
-    // But 'resultGraph' (rebase) creates NEW commits (rewritten).
-    // So we need to map currentGraph and resultGraph.
-
     final mapping = _computeUnifiedMapping(graphs);
 
     return PullPreviewResult(
