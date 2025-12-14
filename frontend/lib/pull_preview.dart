@@ -24,6 +24,7 @@ class PullPreviewPage extends StatefulWidget {
 
 class _PullPreviewPageState extends State<PullPreviewPage> {
   bool _loading = true;
+  bool _cancelLoading = false;
   String? _error;
   
   GraphData? _current;
@@ -85,70 +86,113 @@ class _PullPreviewPageState extends State<PullPreviewPage> {
     }
   }
 
+  Future<void> _onCancel() async {
+    setState(() {
+      _cancelLoading = true;
+    });
+    try {
+      final url = 'http://localhost:8080/pull/cancel';
+      await http.post(
+        Uri.parse(url),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'repoName': widget.repoName,
+        }),
+      );
+    } catch (e) {
+      print('Cancel failed: $e');
+    } finally {
+      if (mounted) {
+        Navigator.pop(context, false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Text('Pull Preview: ${widget.type.toUpperCase()}'),
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-              ? Center(child: Text('Error: $_error', style: const TextStyle(color: Colors.red)))
-              : Column(
-                  children: [
-                    if (_hasConflicts)
-                      Container(
-                        color: Colors.red.shade100,
-                        padding: const EdgeInsets.all(8),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.warning, color: Colors.red),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                '检测到冲突！以下文件存在冲突：\n${_conflictingFiles.join(", ")}',
-                                style: const TextStyle(color: Colors.red),
-                              ),
+      body: Stack(
+        children: [
+          _loading
+              ? const Center(child: CircularProgressIndicator())
+              : _error != null
+                  ? Center(child: Text('Error: $_error', style: const TextStyle(color: Colors.red)))
+                  : Column(
+                      children: [
+                        if (_hasConflicts)
+                          Container(
+                            color: Colors.red.shade100,
+                            padding: const EdgeInsets.all(8),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.warning, color: Colors.red),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    '检测到冲突！以下文件存在冲突：\n${_conflictingFiles.join(", ")}',
+                                    style: const TextStyle(color: Colors.red),
+                                  ),
+                                ),
+                              ],
                             ),
-                          ],
+                          ),
+                        Expanded(
+                          child: Row(
+                            children: [
+                              Expanded(child: _buildGraphCol('当前本地 (Current)', _current!)),
+                              const VerticalDivider(width: 1),
+                              Expanded(child: _buildGraphCol('远程目标 (Target)', _target!)),
+                              if (_result != null) ...[
+                                 const VerticalDivider(width: 1),
+                                 Expanded(child: _buildGraphCol('预览结果 (Result)', _result!)),
+                              ]
+                            ],
+                          ),
                         ),
-                      ),
-                    Expanded(
-                      child: Row(
-                        children: [
-                          Expanded(child: _buildGraphCol('当前本地 (Current)', _current!)),
-                          const VerticalDivider(width: 1),
-                          Expanded(child: _buildGraphCol('远程目标 (Target)', _target!)),
-                          if (_result != null) ...[
-                             const VerticalDivider(width: 1),
-                             Expanded(child: _buildGraphCol('预览结果 (Result)', _result!)),
-                          ]
-                        ],
-                      ),
+                        Padding(
+                          padding: const EdgeInsets.all(16.0),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              OutlinedButton(
+                                onPressed: _cancelLoading ? null : _onCancel,
+                                child: const Text('取消'),
+                              ),
+                              const SizedBox(width: 16),
+                              ElevatedButton(
+                                onPressed: _cancelLoading ? null : () => Navigator.pop(context, true),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: _hasConflicts ? Colors.orange : Colors.blue,
+                                ),
+                                child: Text(_hasConflicts ? '存在冲突 (仍要尝试)' : '确认操作'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
-                    Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          OutlinedButton(
-                            onPressed: () => Navigator.pop(context, false),
-                            child: const Text('取消'),
-                          ),
-                          const SizedBox(width: 16),
-                          ElevatedButton(
-                            onPressed: () => Navigator.pop(context, true),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: _hasConflicts ? Colors.orange : Colors.blue,
-                            ),
-                            child: Text(_hasConflicts ? '存在冲突 (仍要尝试)' : '确认操作'),
-                          ),
-                        ],
-                      ),
+          if (_cancelLoading)
+            Container(
+              color: Colors.black54,
+              child: const Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(color: Colors.white),
+                    SizedBox(height: 16),
+                    Text(
+                      '正在恢复状态...',
+                      style: TextStyle(color: Colors.white, fontSize: 16),
                     ),
                   ],
                 ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 
