@@ -290,7 +290,10 @@ Future<List<Branch>> getRemoteBranches(String repoPath, String? remoteName) asyn
     if (l.trim().isEmpty) continue;
     final parts = l.split('|');
     if (parts.length >= 2) {
-      result.add(Branch(name: parts[0], head: parts[1]));
+      final name = parts[0];
+      if (name.endsWith('/HEAD')) continue;
+      if (remoteName != null && name == remoteName) continue;
+      result.add(Branch(name: name, head: parts[1]));
     }
   }
   return result;
