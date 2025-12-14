@@ -952,6 +952,31 @@ Future<void> main(List<String> args) async {
     }
   });
 
+  router.post('/pull/preview', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoName = (data['repoName'] as String?)?.trim() ?? '';
+    final username = (data['username'] as String?)?.trim() ?? '';
+    final token = (data['token'] as String?)?.trim() ?? '';
+    final type = (data['type'] as String?)?.trim() ?? ''; // rebase, branch, force
+
+    if (repoName.isEmpty || username.isEmpty || token.isEmpty || type.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoName, username, token, type required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      final result = await previewPull(repoName, username, token, type);
+      return _cors(Response.ok(jsonEncode(result.toJson()), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
   router.post('/pull', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;

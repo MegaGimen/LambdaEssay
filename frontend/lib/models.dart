@@ -49,11 +49,13 @@ class GraphData {
   final List<Branch> branches;
   final Map<String, List<String>> chains;
   final String? currentBranch;
+  final List<List<String>> customEdges;
   GraphData({
     required this.commits,
     required this.branches,
     required this.chains,
     this.currentBranch,
+    this.customEdges = const [],
   });
   factory GraphData.fromJson(Map<String, dynamic> j) => GraphData(
         commits: ((j['commits'] as List).map(
@@ -66,6 +68,10 @@ class GraphData {
           (k, v) => MapEntry(k, (v as List).cast<String>()),
         ),
         currentBranch: j['currentBranch'],
+        customEdges: (j['customEdges'] as List?)
+                ?.map((e) => (e as List).cast<String>())
+                .toList() ??
+            [],
       );
 }
 
