@@ -272,6 +272,25 @@ class GraphPainter extends CustomPainter {
       }
     }
 
+    // Custom Edges
+    for (final edge in data.customEdges) {
+      if (edge.length < 2) continue;
+      final child = edge[0];
+      final parent = edge[1];
+      final rowC = rowOf[child];
+      final laneC = laneOf[child];
+      final rowP = rowOf[parent];
+      final laneP = laneOf[parent];
+      
+      if (rowC == null || laneC == null || rowP == null || laneP == null) continue;
+      
+      final paint = Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.0
+          ..color = const Color(0xFF000000);
+      _drawEdge(canvas, rowC, laneC, rowP, laneP, paint);
+    }
+
     final textPainter = TextPainter(textDirection: TextDirection.ltr);
     // Draw text for ALL commits
     for (final c in allCommits) {

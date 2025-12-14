@@ -8,6 +8,7 @@ import 'visualize.dart';
 import 'models.dart';
 import 'graph_view.dart';
 import 'backup.dart';
+import 'pull_preview.dart';
 
 void main() {
   runApp(const GitGraphApp());
@@ -598,17 +599,44 @@ class _GraphPageState extends State<GraphPage> {
             child: const Text('取消'),
           ),
           OutlinedButton(
-            onPressed: () => Navigator.pop(ctx, 'fork'),
+            onPressed: () async {
+              if (currentProjectName == null || _username == null || _token == null) return;
+              final ok = await Navigator.push(context, MaterialPageRoute(builder: (_) => PullPreviewPage(
+                repoName: currentProjectName!,
+                username: _username!,
+                token: _token!,
+                type: 'fork',
+              )));
+              if (ok == true && ctx.mounted) Navigator.pop(ctx, 'fork');
+            },
             child: const Text('分叉 (Branch Off)'),
           ),
           ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, 'rebase'),
+            onPressed: () async {
+              if (currentProjectName == null || _username == null || _token == null) return;
+              final ok = await Navigator.push(context, MaterialPageRoute(builder: (_) => PullPreviewPage(
+                repoName: currentProjectName!,
+                username: _username!,
+                token: _token!,
+                type: 'rebase',
+              )));
+              if (ok == true && ctx.mounted) Navigator.pop(ctx, 'rebase');
+            },
             child: const Text('在远程提交后附着 (Rebase)'),
           ),
           if (!isPush)
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-              onPressed: () => Navigator.pop(ctx, 'force'),
+              onPressed: () async {
+                 if (currentProjectName == null || _username == null || _token == null) return;
+                 final ok = await Navigator.push(context, MaterialPageRoute(builder: (_) => PullPreviewPage(
+                    repoName: currentProjectName!,
+                    username: _username!,
+                    token: _token!,
+                    type: 'force',
+                )));
+                if (ok == true && ctx.mounted) Navigator.pop(ctx, 'force');
+              },
               child: const Text('强制覆盖 (Force Overwrite)'),
             ),
         ],

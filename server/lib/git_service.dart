@@ -6,6 +6,33 @@ import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'models.dart';
 
+class PullPreviewResult {
+  final GraphResponse current;
+  final GraphResponse target;
+  final GraphResponse? result;
+  final Map<String, int> rowMapping;
+  final bool hasConflicts;
+  final List<String> conflictingFiles;
+
+  PullPreviewResult({
+    required this.current,
+    required this.target,
+    this.result,
+    required this.rowMapping,
+    this.hasConflicts = false,
+    this.conflictingFiles = const [],
+  });
+
+  Map<String, dynamic> toJson() => {
+        'current': current.toJson(),
+        'target': target.toJson(),
+        'result': result?.toJson(),
+        'rowMapping': rowMapping,
+        'hasConflicts': hasConflicts,
+        'conflictingFiles': conflictingFiles,
+      };
+}
+
 class Mutex {
   Future<void> _last = Future.value();
 
@@ -1448,6 +1475,147 @@ Future<void> rebasePull(String repoName, String username, String token) async {
     throw Exception('Rebase failed (likely conflicts): $e');
   }
   clearCache();
+}
+
+Future<PullPreviewResult> previewPull(
+    String repoName, String username, String token, String type) async {
+  final projDir = _projectDir(repoName);
+  return _withRepoLock(projDir, () async {
+    final remoteName = repoName.toLowerCase();
+    // 1. Fetch Remote
+    final owner = await _resolveRepoOwner(repoName, token);
+    final remoteUrl =
+        'http://$username:$token@47.242.109.145:3000/$owner/$repoName.git';
+
+    // Ensure remote exists locally
+    await addRemote(projDir, remoteName, remoteUrl);
+    
+    try {
+      await _runGit(['fetch', remoteName], projDir);
+    } catch (e) {
+      print('Fetch failed during preview: $e');
+      // Continue anyway? If fetch fails, we might not have latest, but maybe we have something.
+    }
+
+    // Clear cache to ensure fresh graphs
+    clearCache();
+
+    // 2. Get Current Graph
+    final currentGraph = await getGraph(projDir);
+    
+    // 3. Get Target Graph (We can simulate this by ensuring FETCH_HEAD is visible? 
+    // actually getGraph shows all branches including remote tracking branches if we fetched)
+    // But we want to explicitly identify the target.
+    // The target is refs/remotes/remoteName/current_branch usually.
+    // Or just FETCH_HEAD.
+    // Let's just use the same graph for Target but we might highlight differently in frontend?
+    // Actually, the frontend expects a GraphResponse. 
+    // If we want "Target Preview", we essentially want the graph as it looks like on the remote.
+    // But since it's a distributed system, the "Remote" graph is just a subset (or superset) of our graph 
+    // where 'master' points to 'origin/master'.
+    // So currentGraph actually contains the target commits if we fetched.
+    // So 'targetGraph' is effectively the same dataset as 'currentGraph' but the "current head" concept is different.
+    // But let's stick to returning the full graph.
+    final targetGraph = currentGraph; 
+
+    GraphResponse? resultGraph;
+    bool hasConflicts = false;
+    List<String> conflictingFiles = [];
+
+    if (type == 'rebase') {
+      final currentBranch = await getCurrentBranch(projDir);
+      if (currentBranch == null) throw Exception('Detached HEAD');
+
+      final tempBranch = 'preview_${type}_${DateTime.now().millisecondsSinceEpoch}';
+      
+      try {
+        // Create temp branch
+        await _runGit(['checkout', '-b', tempBranch], projDir);
+
+        // Rebase
+        try {
+          await _runGit(['pull', '--rebase', remoteName, currentBranch], projDir);
+        } catch (e) {
+          // Check for conflicts
+            final status = await _runGit(['status', '--porcelain'], projDir);
+            if (status.any((l) => l.startsWith('UU') || l.startsWith('AA'))) {
+              hasConflicts = true;
+              conflictingFiles = status
+                  .where((l) => l.startsWith('UU') || l.startsWith('AA'))
+                  .map((l) => l.substring(3).trim())
+                  .toList();
+            }
+        }
+
+        // Get Result Graph
+        clearCache(); // Must clear to see new commits/branch
+        resultGraph = await getGraph(projDir);
+
+      } finally {
+        // Cleanup
+        try {
+            await _runGit(['rebase', '--abort'], projDir);
+        } catch (_) {}
+        
+        await _runGit(['checkout', currentBranch], projDir);
+        await _runGit(['branch', '-D', tempBranch], projDir);
+        clearCache();
+      }
+    } else if (type == 'branch' || type == 'fork') {
+      // Fork result is identical to current graph (just different branch name)
+      // So we can reuse currentGraph as result
+      resultGraph = currentGraph;
+    }
+    // force: resultGraph remains null
+
+    // Compute Unified Mapping
+    final graphs = [currentGraph];
+    if (resultGraph != null) graphs.add(resultGraph);
+    
+    // We don't really need to add targetGraph to mapping calculation if it's identical to currentGraph commits-wise.
+    // But if we fetched new commits, currentGraph (before temp branch) might not have them?
+    // Wait, getGraph calls 'git log --branches --remotes'.
+    // If we fetched, 'refs/remotes/...' is updated.
+    // So currentGraph ALREADY contains the remote commits.
+    // So 'targetGraph' is just a pointer change (focus on remote branch).
+    // The commits are the same.
+    // But 'resultGraph' (rebase) creates NEW commits (rewritten).
+    // So we need to map currentGraph and resultGraph.
+
+    final mapping = _computeUnifiedMapping(graphs);
+
+    return PullPreviewResult(
+      current: currentGraph,
+      target: targetGraph, // effectively same commits, but we pass it for symmetry
+      result: resultGraph,
+      rowMapping: mapping,
+      hasConflicts: hasConflicts,
+      conflictingFiles: conflictingFiles,
+    );
+  });
+}
+
+Map<String, int> _computeUnifiedMapping(List<GraphResponse> graphs) {
+  final allCommits = <CommitNode>{};
+  final seen = <String>{};
+
+  for (final g in graphs) {
+    for (final c in g.commits) {
+      if (!seen.contains(c.id)) {
+        seen.add(c.id);
+        allCommits.add(c);
+      }
+    }
+  }
+
+  final sorted = allCommits.toList()
+    ..sort((x, y) => y.date.compareTo(x.date));
+
+  final mapping = <String, int>{};
+  for (var i = 0; i < sorted.length; i++) {
+    mapping[sorted[i].id] = i;
+  }
+  return mapping;
 }
 
 Future<void> forkLocal(String repoName, String newBranchName) async {
