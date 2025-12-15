@@ -1768,7 +1768,8 @@ Future<PullPreviewResult> previewPull(
        clearCache();
        // Only include local branches in the result view (hide remote branches)
        // For FORK/BRANCH, we need to show the remote branch to visualize the divergence/merge target
-       resultGraph = await _getGraphUnlocked(projDir, includeLocal: true, remoteNames: [remoteName]);
+       // User requested to hide remote branches in result view to avoid confusion
+       resultGraph = await _getGraphUnlocked(projDir, includeLocal: true, remoteNames: []);
     }
 
     // Fix for Rebase Preview:
