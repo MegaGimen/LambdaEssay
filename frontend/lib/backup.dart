@@ -78,7 +78,7 @@ class _BackupPageState extends State<BackupPage> {
       final resp = await http.post(
         Uri.parse(url),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'repoName': repo, 'force': false}),
+        body: jsonEncode({'repoName': repo, 'force': true}),
       );
       if (resp.statusCode != 200) {
         throw Exception('加载备份失败: ${resp.body}');
