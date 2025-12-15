@@ -1658,6 +1658,12 @@ Future<void> cancelPull(String repoName) async {
       }
       _previewRestorePoints.remove(projDir);
     }
+    
+    // 3. Cleanup temp branches
+    try {
+      await _runGit(['branch', '-D', 'PreviewFork'], projDir);
+    } catch (_) {}
+
     clearCache();
   });
 }
@@ -1776,7 +1782,8 @@ Future<PullPreviewResult> previewPull(
        }
        clearCache();
        // Only include local branches in the result view (hide remote branches)
-       resultGraph = await _getGraphUnlocked(projDir, includeLocal: true, remoteNames: []);
+       // For FORK/BRANCH, we need to show the remote branch to visualize the divergence/merge target
+       resultGraph = await _getGraphUnlocked(projDir, includeLocal: true, remoteNames: [remoteName]);
     }
 
     // Fix for Rebase Preview:
@@ -1816,21 +1823,43 @@ Future<PullPreviewResult> previewPull(
 
 Future<void> forkLocal(String repoName, String newBranchName) async {
   final repoPath = _projectDir(repoName);
-  // forkAndReset logic inline or separate? Inline for simplicity.
-  // checkout -b newBranch
-  // fetch remote
-  // reset current (which was master) to remote/master?
-  // User wants to move local changes to new branch.
+  return _withRepoLock(repoPath, () async {
+    final currentBranch = await getCurrentBranch(repoPath);
+    final remoteName = repoName.toLowerCase();
+    
+    // Check if we are currently on the temporary 'PreviewFork' branch (from a confirmed preview)
+    bool onPreviewFork = (currentBranch == 'PreviewFork');
 
-  // 1. Create branch (keeps local changes)
-  await _runGit(['checkout', '-b', newBranchName], repoPath);
+    if (onPreviewFork) {
+      // If we are on PreviewFork, it means the user confirmed the preview.
+      // We just need to rename it to the desired new branch name.
+      // This preserves the merge state (including conflicts) and history.
+      await _runGit(['branch', '-m', newBranchName], repoPath);
+    } else {
+      // Clean start (e.g. direct fork without preview, or preview was cancelled/reset)
+      
+      // 1. Cleanup any stale PreviewFork branch
+      try {
+        await _runGit(['branch', '-D', 'PreviewFork'], repoPath);
+      } catch (_) {}
 
-  // The old branch is still there, but we are now on new branch.
-  // That's usually enough for "Fork Local".
-  // If we want to reset the old branch, we need to checkout it, reset, then checkout new.
-  // But we are now safe on new branch.
+      // 2. Create new branch from current HEAD
+      await _runGit(['checkout', '-b', newBranchName], repoPath);
 
-  clearCache();
+      // 3. Perform the Merge (Pull) logic to match the "Fork/Pull" intent
+      // We assume we are pulling the remote counterpart of the branch we started from
+      if (currentBranch != null) {
+        try {
+           await _runGit(['merge', '$remoteName/$currentBranch'], repoPath);
+           await _forceRegenerateRepoDocx(repoPath);
+        } catch (e) {
+           // Ignore merge failure (conflicts), let user resolve on the new branch
+           // The state is left dirty, which is correct for conflict resolution
+        }
+      }
+    }
+    clearCache();
+  });
 }
 
 Future<void> prepareMerge(String repoName, String targetBranch) async {
