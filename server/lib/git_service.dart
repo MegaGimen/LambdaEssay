@@ -1450,12 +1450,13 @@ Future<Map<String, dynamic>> pullFromRemote(
     final remoteUrl =
         'http://$username:$token@47.242.109.145:3000/$owner/$repoName.git';
 
-    Map<String, dynamic>? savedTracking;
+    // Map<String, dynamic>? savedTracking;
+    // Map<String, dynamic>? savedTracking;
     bool isFresh = !dir.existsSync() || !gitDir.existsSync();
 
     if (!isFresh && force) {
       try {
-        savedTracking = await _readTracking(repoName);
+        // savedTracking = await _readTracking(repoName);
       } catch (_) {}
       try {
         if (dir.existsSync()) {
@@ -1496,8 +1497,7 @@ Future<Map<String, dynamic>> pullFromRemote(
           }
         } catch (e) {}
       }
-
-      savedTracking = await _readTracking(repoName);
+      // savedTracking = await _readTracking(repoName);
 
       try {
         await addRemote(projDir, remoteName, remoteUrl);
@@ -1741,10 +1741,24 @@ Future<PullPreviewResult> previewPull(
 
       // Get Result Graph (in-place)
       clearCache();
-      resultGraph = await _getGraphUnlocked(projDir, includeLocal: true, remoteNames: [remoteName]);
+      // Only include local branches in the result view (hide remote branches)
+      resultGraph = await _getGraphUnlocked(projDir, includeLocal: true, remoteNames: []);
 
     } else if (type == 'branch' || type == 'fork') {
        if (currentBranch == null) throw Exception('Detached HEAD');
+
+       if (type == 'fork') {
+         // Create a temporary branch named "PreviewFork"
+         try {
+           await _runGit(['checkout', '-b', 'PreviewFork'], projDir);
+         } catch(e) {
+           // Maybe it already exists? Try to reset it?
+           try {
+             await _runGit(['checkout', 'PreviewFork'], projDir);
+             await _runGit(['reset', '--hard', 'HEAD'], projDir);
+           } catch(_) {}
+         }
+       }
        
        // Merge
        try {
@@ -1761,7 +1775,8 @@ Future<PullPreviewResult> previewPull(
           }
        }
        clearCache();
-       resultGraph = await _getGraphUnlocked(projDir, includeLocal: true, remoteNames: [remoteName]);
+       // Only include local branches in the result view (hide remote branches)
+       resultGraph = await _getGraphUnlocked(projDir, includeLocal: true, remoteNames: []);
     }
 
     // Fix for Rebase Preview:
@@ -1777,45 +1792,27 @@ Future<PullPreviewResult> previewPull(
       }
     }
 
-    // Compute Unified Mapping
-    final graphs = [currentGraph];
-    if (resultGraph != null) graphs.add(resultGraph);
+    // Compute Unified Mapping - DISABLED (User requested independent layout)
+    // final graphs = [currentGraph];
+    // if (resultGraph != null) graphs.add(resultGraph);
     
-    final mapping = _computeUnifiedMapping(graphs);
+    // final mapping = _computeUnifiedMapping(graphs);
 
     return PullPreviewResult(
       current: currentGraph,
       target: finalTargetGraph,
       result: resultGraph,
-      rowMapping: mapping,
+      rowMapping: {}, // mapping,
       hasConflicts: hasConflicts,
       conflictingFiles: conflictingFiles,
     );
   });
 }
 
-Map<String, int> _computeUnifiedMapping(List<GraphResponse> graphs) {
-  final allCommits = <CommitNode>{};
-  final seen = <String>{};
+  // Map<String, int> _computeUnifiedMapping(List<GraphResponse> graphs) {
+  // ...
+  // }
 
-  for (final g in graphs) {
-    for (final c in g.commits) {
-      if (!seen.contains(c.id)) {
-        seen.add(c.id);
-        allCommits.add(c);
-      }
-    }
-  }
-
-  final sorted = allCommits.toList()
-    ..sort((x, y) => y.date.compareTo(x.date));
-
-  final mapping = <String, int>{};
-  for (var i = 0; i < sorted.length; i++) {
-    mapping[sorted[i].id] = i;
-  }
-  return mapping;
-}
 
 Future<void> forkLocal(String repoName, String newBranchName) async {
   final repoPath = _projectDir(repoName);
@@ -1846,6 +1843,7 @@ Future<void> prepareMerge(String repoName, String targetBranch) async {
 
     final savedTracking = jsonDecode(await trackingFile.readAsString());
     final docxPath = savedTracking['docxPath'] as String?;
+
 
     if (docxPath == null) {
       throw Exception('Tracking configuration invalid');
@@ -2018,58 +2016,6 @@ Future<List<String>> findIdenticalCommit(String name) async {
   return identicals;
 }
 
-Future<void> _ensureWebhook(String repoName, String owner, String token) async {
-  final giteaUrl = 'http://47.242.109.145:3000/';
-  final targetUrl = 'http://http://47.242.109.145:4829/webhook';
-  final headers = {
-    'Authorization': 'token $token',
-    'Content-Type': 'application/json',
-  };
-
-  try {
-    // 1. List existing hooks
-    final listResp = await http.get(
-      Uri.parse('$giteaUrl/api/v1/repos/$owner/$repoName/hooks'),
-      headers: headers,
-    );
-
-    if (listResp.statusCode == 200) {
-      final List<dynamic> hooks = jsonDecode(listResp.body);
-      for (final hook in hooks) {
-        final config = hook['config'];
-        if (config != null && config['url'] == targetUrl) {
-          print('Webhook already exists for $repoName');
-          return;
-        }
-      }
-    } else {
-      print('Failed to list webhooks: ${listResp.statusCode} ${listResp.body}');
-    }
-
-    // 2. Create hook
-    print('Creating webhook for $repoName...');
-    final createResp = await http.post(
-      Uri.parse('$giteaUrl/api/v1/repos/$owner/$repoName/hooks'),
-      headers: headers,
-      body: jsonEncode({
-        'type': 'gitea',
-        'config': {
-          'content_type': 'json',
-          'url': targetUrl,
-          'http_method': 'post',
-        },
-        'events': ['push'],
-        'active': true,
-      }),
-    );
-
-    if (createResp.statusCode == 201) {
-      print('Webhook created successfully for $repoName');
-    } else {
-      print(
-          'Failed to create webhook: ${createResp.statusCode} ${createResp.body}');
-    }
-  } catch (e) {
-    print('Error setting up webhook: $e');
-  }
-}
+// Future<void> _ensureWebhook(String repoName, String owner, String token) async {
+// ...
+// }
