@@ -609,7 +609,7 @@ class _GraphPageState extends State<GraphPage> {
               )));
               if (ok == true && ctx.mounted) Navigator.pop(ctx, 'fork');
             },
-            child: const Text('分叉 (Branch Off)'),
+            child: const Text('分叉 (Fork)'),
           ),
           ElevatedButton(
             onPressed: () async {
