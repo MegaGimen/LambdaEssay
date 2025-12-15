@@ -1651,7 +1651,13 @@ Future<void> cancelPull(String repoName) async {
     final originalHead = _previewRestorePoints[projDir];
     if (originalHead != null) {
       try {
-        await _runGit(['reset', '--hard', originalHead], projDir);
+        // If we are on PreviewFork, we must detach or switch to restore
+        final currentB = await getCurrentBranch(projDir);
+        if (currentB == 'PreviewFork') {
+            await _runGit(['checkout', originalHead], projDir);
+        } else {
+            await _runGit(['reset', '--hard', originalHead], projDir);
+        }
         await _forceRegenerateRepoDocx(projDir);
       } catch (e) {
         print('Error restoring HEAD: $e');
@@ -1661,6 +1667,14 @@ Future<void> cancelPull(String repoName) async {
     
     // 3. Cleanup temp branches
     try {
+      // Detach if still on PreviewFork (safety)
+      final currentB = await getCurrentBranch(projDir);
+      if (currentB == 'PreviewFork') {
+           // We shouldn't be here if restore worked, but just in case
+           // checkout master or detach?
+           // Try to find a branch to fallback
+           await _runGit(['checkout', 'master'], projDir); 
+      }
       await _runGit(['branch', '-D', 'PreviewFork'], projDir);
     } catch (_) {}
 
@@ -1686,7 +1700,12 @@ Future<PullPreviewResult> previewPull(
        // Hard reset to original HEAD
        if (originalHead != null) {
          try {
-           await _runGit(['reset', '--hard', originalHead], projDir);
+           final currentB = await getCurrentBranch(projDir);
+           if (currentB == 'PreviewFork') {
+               await _runGit(['checkout', originalHead], projDir);
+           } else {
+               await _runGit(['reset', '--hard', originalHead], projDir);
+           }
            await _forceRegenerateRepoDocx(projDir);
          } catch (e) {
            print('Error restoring HEAD during cleanup: $e');
@@ -1712,6 +1731,14 @@ Future<PullPreviewResult> previewPull(
 
     // Cleanup stale PreviewFork before starting
     try {
+      // Detach HEAD to ensure we are not on PreviewFork before deleting
+      if (currentHead != null) {
+         // Check if we are on PreviewFork?
+         final currentB = await getCurrentBranch(projDir);
+         if (currentB == 'PreviewFork') {
+             await _runGit(['checkout', currentHead], projDir);
+         }
+      }
       await _runGit(['branch', '-D', 'PreviewFork'], projDir);
     } catch (_) {}
     
@@ -1719,6 +1746,7 @@ Future<PullPreviewResult> previewPull(
       await _runGit(['fetch', remoteName], projDir);
     } catch (e) {
       print('Fetch failed during preview: $e');
+      throw Exception('Failed to fetch from remote: $e');
     }
 
     // Clear cache to ensure fresh graphs
@@ -1788,8 +1816,13 @@ Future<PullPreviewResult> previewPull(
        try {
          // Force create/update PreviewFork to point to remote branch
          await _runGit(['branch', '-f', 'PreviewFork', '$remoteName/$currentBranch'], projDir);
+         
+         // Switch to PreviewFork to mimic execution state (and ensure Result view focuses on it)
+         await _runGit(['checkout', 'PreviewFork'], projDir);
+         await _forceRegenerateRepoDocx(projDir);
+         
        } catch (e) {
-         throw Exception('Failed to create PreviewFork branch: $e');
+         throw Exception('Failed to create/checkout PreviewFork branch: $e');
        }
        
        clearCache();
