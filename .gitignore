@@ -65,4 +65,9 @@ frontend/lib/diffscripts/Heidegger.spec
 
 fucklist.md
 
+server/lib/mammoth/node_modules
+server/bin/doc2html.exe
+
+server/wordplugin
+
 server/lib/diff/testrepo
