@@ -1674,6 +1674,28 @@ Future<PullPreviewResult> previewPull(
   return _withRepoLock(projDir, () async {
     final remoteName = repoName.toLowerCase();
     
+    // Check for and clean up any previous unfinished preview state
+    if (_previewRestorePoints.containsKey(projDir)) {
+       final originalHead = _previewRestorePoints[projDir];
+       print('Detected unfinished preview state for $repoName. Restoring to $originalHead');
+       
+       // Try aborting ongoing operations first
+       try { await _runGit(['rebase', '--abort'], projDir); } catch (_) {}
+       try { await _runGit(['merge', '--abort'], projDir); } catch (_) {}
+       
+       // Hard reset to original HEAD
+       if (originalHead != null) {
+         try {
+           await _runGit(['reset', '--hard', originalHead], projDir);
+           await _forceRegenerateRepoDocx(projDir);
+         } catch (e) {
+           print('Error restoring HEAD during cleanup: $e');
+         }
+       }
+       // Remove the old restore point as we've consumed it
+       _previewRestorePoints.remove(projDir);
+    }
+
     // Save current HEAD for restoration
     final currentHead = await getHead(projDir);
     if (currentHead != null) {
@@ -1687,6 +1709,11 @@ Future<PullPreviewResult> previewPull(
 
     // Ensure remote exists locally
     await addRemote(projDir, remoteName, remoteUrl);
+
+    // Cleanup stale PreviewFork before starting
+    try {
+      await _runGit(['branch', '-D', 'PreviewFork'], projDir);
+    } catch (_) {}
     
     try {
       await _runGit(['fetch', remoteName], projDir);
