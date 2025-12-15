@@ -8,6 +8,7 @@ import 'visualize.dart';
 import 'models.dart';
 import 'graph_view.dart';
 import 'backup.dart';
+import 'pull_preview.dart';
 
 void main() {
   runApp(const GitGraphApp());
@@ -23,6 +24,89 @@ class GitGraphApp extends StatelessWidget {
       home: const GraphPage(),
     );
   }
+}
+
+class CommitNode {
+  final String id;
+  final List<String> parents;
+  final List<String> refs;
+  final String author;
+  final String date;
+  final String subject;
+  CommitNode({
+    required this.id,
+    required this.parents,
+    required this.refs,
+    required this.author,
+    required this.date,
+    required this.subject,
+  });
+  factory CommitNode.fromJson(Map<String, dynamic> j) => CommitNode(
+        id: j['id'],
+        parents: (j['parents'] as List).cast<String>(),
+        refs: (j['refs'] as List).cast<String>(),
+        author: j['author'],
+        date: j['date'],
+        subject: j['subject'],
+      );
+}
+
+class Branch {
+  final String name;
+  final String head;
+  Branch({required this.name, required this.head});
+  factory Branch.fromJson(Map<String, dynamic> j) =>
+      Branch(name: j['name'], head: j['head']);
+}
+
+class EdgeInfo {
+  final String child;
+  final String parent;
+  final List<String> branches;
+  final bool isMerge;
+  EdgeInfo({
+    required this.child,
+    required this.parent,
+    required this.branches,
+    this.isMerge = false,
+  });
+}
+
+class GraphData {
+  final List<CommitNode> commits;
+  final List<Branch> branches;
+  final Map<String, List<String>> chains;
+  final String? currentBranch;
+  final List<List<String>> customEdges;
+  GraphData({
+    required this.commits,
+    required this.branches,
+    required this.chains,
+    this.currentBranch,
+    this.customEdges = const [],
+  });
+  factory GraphData.fromJson(Map<String, dynamic> j) => GraphData(
+        commits: ((j['commits'] as List).map(
+          (e) => CommitNode.fromJson(e as Map<String, dynamic>),
+        )).toList(),
+        branches: ((j['branches'] as List).map(
+          (e) => Branch.fromJson(e as Map<String, dynamic>),
+        )).toList(),
+        chains: (j['chains'] as Map<String, dynamic>).map(
+          (k, v) => MapEntry(k, (v as List).cast<String>()),
+        ),
+        currentBranch: j['currentBranch'],
+        customEdges: (j['customEdges'] as List?)
+                ?.map((e) => (e as List).cast<String>())
+                .toList() ??
+            [],
+      );
+}
+
+class WorkingState {
+  final bool changed;
+  final String? baseId;
+  WorkingState({required this.changed, this.baseId});
 }
 
 class GraphPage extends StatefulWidget {
@@ -93,11 +177,11 @@ class _GraphPageState extends State<GraphPage> {
             setState(() {
               _token = newToken;
             });
-            print("AuthKey refreshed automatically: $_token");
+            // print("AuthKey refreshed automatically: $_token");
           }
         }
       } catch (e) {
-        print("Failed to refresh tokens: $e");
+        // print("Failed to refresh tokens: $e");
         // If refresh fails (e.g. password changed or network error),
         // maybe we should not logout automatically to let user work offline if needed,
         // but usually auth error means we should logout.
@@ -130,7 +214,7 @@ class _GraphPageState extends State<GraphPage> {
           }
         }
       } catch (e) {
-        print("ensureToken failed: $e");
+        // print("ensureToken failed: $e");
       }
     }
     return false;
@@ -214,8 +298,8 @@ class _GraphPageState extends State<GraphPage> {
       // { "success": true, "userid": "...", "username": "...", "tokens": [], ... }
 
       final tokens = resp['tokens'] as List?;
-      print("doLogin");
-      print(tokens);
+      // print("doLogin");
+      // print(tokens);
       String? token;
 
       if (tokens != null && tokens.isNotEmpty) {
@@ -267,8 +351,8 @@ class _GraphPageState extends State<GraphPage> {
 
       // { "tokens": [ { "remark": "...", "sha1": "..." } ], "source": "..." }
       final tokens = resp['tokens'] as List;
-      print("_createGiteaUserAndSetToken");
-      print(tokens);
+      // print("_createGiteaUserAndSetToken");
+      // print(tokens);
       if (tokens.isEmpty) throw Exception('无法获取Token');
 
       final t = tokens[0];
@@ -515,13 +599,62 @@ class _GraphPageState extends State<GraphPage> {
             child: const Text('取消'),
           ),
           OutlinedButton(
-            onPressed: () => Navigator.pop(ctx, 'fork'),
-            child: const Text('分叉 (Branch Off)'),
+            onPressed: () async {
+              if (currentProjectName == null || _username == null || _token == null) return;
+              final ok = await Navigator.push(context, MaterialPageRoute(builder: (_) => PullPreviewPage(
+                repoName: currentProjectName!,
+                username: _username!,
+                token: _token!,
+                type: 'fork',
+              )));
+              if (ok == true && ctx.mounted) Navigator.pop(ctx, 'fork');
+            },
+            child: const Text('分叉 (Fork)'),
           ),
           ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, 'rebase'),
+            onPressed: () async {
+              if (currentProjectName == null || _username == null || _token == null) return;
+              final ok = await Navigator.push(context, MaterialPageRoute(builder: (_) => PullPreviewPage(
+                repoName: currentProjectName!,
+                username: _username!,
+                token: _token!,
+                type: 'rebase',
+              )));
+              if (ok == true && ctx.mounted) Navigator.pop(ctx, 'rebase');
+            },
             child: const Text('在远程提交后附着 (Rebase)'),
           ),
+          if (!isPush)
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              onPressed: () async {
+                 if (currentProjectName == null || _username == null || _token == null) return;
+                 final ok = await Navigator.push(context, MaterialPageRoute(builder: (_) => PullPreviewPage(
+                    repoName: currentProjectName!,
+                    username: _username!,
+                    token: _token!,
+                    type: 'force',
+                )));
+                if (ok == true && ctx.mounted) Navigator.pop(ctx, 'force');
+              },
+              child: const Text('强制覆盖 (Force Overwrite)'),
+            ),
+            const SizedBox(height: 16),
+            TextButton.icon(
+              icon: const Icon(Icons.compare_arrows),
+              label: const Text('预览冲突差异 (Preview Differences)'),
+              onPressed: () async {
+                if (currentProjectName == null || _username == null || _token == null) return;
+                // Use 'force' preview type which shows side-by-side comparison
+                // This is effectively what "preview conflict" means (mine vs theirs)
+                await Navigator.push(context, MaterialPageRoute(builder: (_) => PullPreviewPage(
+                  repoName: currentProjectName!,
+                  username: _username!,
+                  token: _token!,
+                  type: 'force', 
+                )));
+              },
+            ),
         ],
       ),
     );
@@ -530,6 +663,37 @@ class _GraphPageState extends State<GraphPage> {
       await _doRebasePull(isPush: isPush);
     } else if (choice == 'fork') {
       await _doForkLocal(isPush: isPush);
+    } else if (choice == 'force') {
+      await _doForcePull();
+    }
+  }
+
+  Future<void> _doForcePull() async {
+    setState(() => loading = true);
+    try {
+      final resp = await _postJson('http://localhost:8080/pull', {
+        'repoName': currentProjectName,
+        'username': _username,
+        'token': _token,
+        'force': true,
+      });
+
+      final isFresh = resp['isFresh'] == true;
+      if (currentProjectName != null) {
+        await _checkAndSetupTracking(currentProjectName!, isFresh);
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('强制拉取成功')),
+        );
+      }
+      await _load();
+      await _onUpdateRepo();
+    } catch (e) {
+      setState(() => error = '强制拉取失败: $e');
+    } finally {
+      setState(() => loading = false);
     }
   }
 
@@ -628,6 +792,65 @@ class _GraphPageState extends State<GraphPage> {
     }
   }
 
+  Future<void> _checkAndSetupTracking(String repoName, bool isFresh) async {
+    setState(() {
+      if (isFresh) {
+        currentProjectName = repoName;
+      }
+    });
+
+    if (isFresh) {
+      final docxCtrl = TextEditingController();
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('设置追踪文档'),
+          content: SizedBox(
+            width: 400,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('这是一个新的克隆（或已被重置），请重新设置要追踪的Word文档(.docx)或解包文件夹'),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: docxCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'docx文件路径或解包文件夹路径 c:\\path\\to\\...',
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('确定'),
+            ),
+          ],
+        ),
+      );
+      if (ok == true) {
+        final docx = docxCtrl.text.trim();
+        if (docx.isNotEmpty) {
+          try {
+            await _postJson('http://localhost:8080/track/update', {
+              'name': repoName,
+              'newDocxPath': docx,
+            });
+            setState(() {
+              docxPathCtrl.text = docx;
+            });
+          } catch (e) {
+            if (mounted) {
+              ScaffoldMessenger.of(context)
+                  .showSnackBar(SnackBar(content: Text('设置文档失败: $e')));
+            }
+          }
+        }
+      }
+    }
+  }
+
   Future<void> _onPull() async {
     if (!await _ensureToken()) {
       setState(() => error = '请先登录');
@@ -640,7 +863,10 @@ class _GraphPageState extends State<GraphPage> {
       final resp = await http.post(
         Uri.parse('http://localhost:8080/remote/list'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'token': _token}),
+        body: jsonEncode({
+          'token': _token,
+          'repoPath': pathCtrl.text.trim(),
+        }),
       );
       if (resp.statusCode != 200) {
         throw Exception(resp.body);
@@ -754,69 +980,14 @@ class _GraphPageState extends State<GraphPage> {
             );
           }
         } else {
-          setState(() => error = '拉取失败: $message');
+          setState(() => error = '拉取失败，位于onPull: $message');
         }
         return;
       }
 
       final isFresh = resp['isFresh'] == true;
 
-      setState(() {
-        // If fresh clone, user needs to set up tracking document
-        if (isFresh) {
-          currentProjectName = repoName;
-        }
-      });
-
-      if (isFresh) {
-        // Ask for docx path
-        final docxCtrl = TextEditingController();
-        final ok = await showDialog<bool>(
-          context: context,
-          builder: (_) => AlertDialog(
-            title: const Text('设置追踪文档'),
-            content: SizedBox(
-              width: 400,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('这是一个新的克隆，请选择要追踪的Word文档(.docx)'),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: docxCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'docx文件路径 c:\\path\\to\\file.docx',
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              ElevatedButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('确定'),
-              ),
-            ],
-          ),
-        );
-        if (ok == true) {
-          final docx = docxCtrl.text.trim();
-          if (docx.isNotEmpty) {
-            try {
-              await _postJson('http://localhost:8080/track/update', {
-                'name': repoName,
-                'newDocxPath': docx,
-              });
-              setState(() {
-                docxPathCtrl.text = docx;
-              });
-            } catch (e) {
-              ScaffoldMessenger.of(context)
-                  .showSnackBar(SnackBar(content: Text('设置文档失败: $e')));
-            }
-          }
-        }
-      }
+      await _checkAndSetupTracking(repoName, isFresh);
 
       // Reload again to update graph if needed (e.g. fresh clone or new commits)
       await _load();
@@ -826,7 +997,7 @@ class _GraphPageState extends State<GraphPage> {
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('拉取成功')));
     } catch (e) {
-      setState(() => error = '拉取失败: $e');
+      setState(() => error = '拉取失败，什么玩意: $e');
     } finally {
       setState(() => loading = false);
     }
@@ -1045,7 +1216,7 @@ class _GraphPageState extends State<GraphPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
+        builder: (context, innerSetState) => AlertDialog(
           title: const Text('打开追踪项目'),
           content: SizedBox(
             width: 360,
@@ -1061,7 +1232,7 @@ class _GraphPageState extends State<GraphPage> {
                             ))
                         .toList(),
                     onChanged: (v) {
-                      setState(() => selected = v);
+                      innerSetState(() => selected = v);
                     },
                   ),
           ),
@@ -1071,8 +1242,13 @@ class _GraphPageState extends State<GraphPage> {
               child: const Text('取消'),
             ),
             ElevatedButton(
-              onPressed:
-                  selected == null ? null : () => Navigator.pop(context, true),
+              onPressed: selected == null
+                  ? null
+                  : () {
+                      // 立即设置loading，防止UI延迟
+                      setState(() => loading = true);
+                      Navigator.pop(context, true);
+                    },
               child: const Text('打开'),
             ),
           ],
@@ -1081,6 +1257,10 @@ class _GraphPageState extends State<GraphPage> {
     );
     if (ok != true || selected == null) return;
     final name = selected!;
+    
+    // 立即显示加载遮罩
+    setState(() => loading = true);
+    
     try {
       final resp = await _postJson('http://localhost:8080/track/open', {
         'name': name,
@@ -1106,6 +1286,8 @@ class _GraphPageState extends State<GraphPage> {
       await _onUpdateRepoAction(forcePull: true);
     } catch (e) {
       setState(() => error = e.toString());
+    } finally {
+      setState(() => loading = false);
     }
   }
 
@@ -1539,7 +1721,9 @@ class _GraphPageState extends State<GraphPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return Stack(
+      children: [
+        Scaffold(
       appBar: AppBar(title: const Text('Git Graph 可视化')),
       body: Column(
         children: [
@@ -1738,10 +1922,20 @@ class _GraphPageState extends State<GraphPage> {
                     onMerge: _performMerge,
                     onFindIdentical: _findIdentical,
                     identicalCommitIds: identicalCommitIds,
+                    onLoading: (v) => setState(() => loading = v),
                   ),
           ),
         ],
       ),
+    ),
+    if (loading)
+      const Opacity(
+        opacity: 0.3,
+        child: ModalBarrier(dismissible: false, color: Colors.black),
+      ),
+    if (loading)
+      const Center(child: CircularProgressIndicator()),
+    ],
     );
   }
 }
@@ -1756,6 +1950,7 @@ class _GraphView extends StatefulWidget {
   final Future<void> Function(String)? onMerge;
   final Future<void> Function()? onFindIdentical;
   final List<String>? identicalCommitIds;
+  final Function(bool)? onLoading;
   const _GraphView({
     required this.data,
     this.working,
@@ -1766,6 +1961,7 @@ class _GraphView extends StatefulWidget {
     this.onMerge,
     this.onFindIdentical,
     this.identicalCommitIds,
+    this.onLoading,
   });
   @override
   State<_GraphView> createState() => _GraphViewState();
@@ -1819,15 +2015,12 @@ class _GraphViewState extends State<_GraphView> {
   Future<void> _onCompare() async {
     if (_selectedNodes.length != 2) return;
     if (_comparing) return;
+    
+    // Notify parent to lock UI
+    widget.onLoading?.call(true);
     setState(() => _comparing = true);
+    
     try {
-      // Show loading dialog
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (ctx) => const Center(child: CircularProgressIndicator()),
-      );
-
       final nodes = _selectedNodes.toList();
       final commits = widget.data.commits;
       int idx1 = commits.indexWhere((c) => c.id == nodes[0]);
@@ -1856,14 +2049,15 @@ class _GraphViewState extends State<_GraphView> {
         }),
       );
 
-      // Pop loading dialog
-      if (mounted) Navigator.pop(context);
-
       if (resp.statusCode != 200) {
         throw Exception(resp.body);
       }
       final pdfBytes = resp.bodyBytes;
       if (!mounted) return;
+      
+      // Unlock UI before navigation
+      widget.onLoading?.call(false);
+      
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -1875,9 +2069,7 @@ class _GraphViewState extends State<_GraphView> {
         ),
       );
     } catch (e) {
-      // Ensure loading dialog is closed if error occurs
-      if (mounted && _comparing) Navigator.pop(context);
-
+      widget.onLoading?.call(false);
       if (mounted) {
         ScaffoldMessenger.of(
           context,
@@ -1885,74 +2077,106 @@ class _GraphViewState extends State<_GraphView> {
       }
     } finally {
       if (mounted) setState(() => _comparing = false);
+      // Ensure unlocked in case we didn't unlock before
+      widget.onLoading?.call(false);
     }
   }
 
   Future<void> _onCommit() async {
     final authorCtrl = TextEditingController();
     final msgCtrl = TextEditingController();
+    
+    // Dialog state
+    bool isPreviewing = false;
+
     final ok = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('提交更改'),
-        content: SizedBox(
-          width: 400,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: authorCtrl,
-                decoration: const InputDecoration(labelText: '作者姓名'),
+      builder: (_) => StatefulBuilder(
+        builder: (context, setState) {
+          return AlertDialog(
+            title: const Text('提交更改'),
+            content: SizedBox(
+              width: 400,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: authorCtrl,
+                    decoration: const InputDecoration(labelText: '作者姓名'),
+                    enabled: !isPreviewing,
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: msgCtrl,
+                    decoration: const InputDecoration(
+                      labelText: '备注信息 (Commit Message)',
+                    ),
+                    maxLines: 3,
+                    enabled: !isPreviewing,
+                  ),
+                ],
               ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: msgCtrl,
-                decoration: const InputDecoration(
-                  labelText: '备注信息 (Commit Message)',
-                ),
-                maxLines: 3,
+            ),
+            actions: [
+              TextButton(
+                onPressed: isPreviewing
+                    ? null
+                    : () async {
+                        setState(() => isPreviewing = true);
+                        widget.onLoading?.call(true);
+                        try {
+                          final resp = await http.post(
+                            Uri.parse('http://localhost:8080/compare_working'),
+                            headers: {'Content-Type': 'application/json'},
+                            body: jsonEncode({'repoPath': widget.repoPath}),
+                          );
+                          if (resp.statusCode != 200) {
+                            throw Exception(resp.body);
+                          }
+                          if (!mounted) return;
+
+                          // Push and wait for return to keep buttons disabled
+                          await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => VisualizeDocxPage(
+                                initialBytes: resp.bodyBytes,
+                                title: 'Working Copy Diff',
+                                onBack: () => Navigator.pop(context),
+                              ),
+                            ),
+                          );
+                        } catch (e) {
+                          ScaffoldMessenger.of(
+                            context,
+                          ).showSnackBar(SnackBar(content: Text('预览失败: $e')));
+                        } finally {
+                          if (context.mounted) {
+                            setState(() => isPreviewing = false);
+                          }
+                          widget.onLoading?.call(false);
+                        }
+                      },
+                child: isPreviewing
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Text('预览差异'),
+              ),
+              TextButton(
+                onPressed:
+                    isPreviewing ? null : () => Navigator.pop(context, false),
+                child: const Text('取消'),
+              ),
+              ElevatedButton(
+                onPressed:
+                    isPreviewing ? null : () => Navigator.pop(context, true),
+                child: const Text('提交'),
               ),
             ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () async {
-              try {
-                final resp = await http.post(
-                  Uri.parse('http://localhost:8080/compare_working'),
-                  headers: {'Content-Type': 'application/json'},
-                  body: jsonEncode({'repoPath': widget.repoPath}),
-                );
-                if (resp.statusCode != 200) throw Exception(resp.body);
-                if (!mounted) return;
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => VisualizeDocxPage(
-                      initialBytes: resp.bodyBytes,
-                      title: 'Working Copy Diff',
-                      onBack: () => Navigator.pop(context),
-                    ),
-                  ),
-                );
-              } catch (e) {
-                ScaffoldMessenger.of(
-                  context,
-                ).showSnackBar(SnackBar(content: Text('预览失败: $e')));
-              }
-            },
-            child: const Text('预览差异'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('提交'),
-          ),
-        ],
+          );
+        },
       ),
     );
     if (ok != true) return;
@@ -1964,6 +2188,8 @@ class _GraphViewState extends State<_GraphView> {
       ).showSnackBar(const SnackBar(content: Text('请填写完整信息')));
       return;
     }
+    
+    widget.onLoading?.call(true);
     try {
       final resp = await http.post(
         Uri.parse('http://localhost:8080/commit'),
@@ -1990,6 +2216,8 @@ class _GraphViewState extends State<_GraphView> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('提交失败: $e')));
+    } finally {
+      widget.onLoading?.call(false);
     }
   }
 
@@ -2024,6 +2252,8 @@ class _GraphViewState extends State<_GraphView> {
     if (ok != true) return;
     final name = nameCtrl.text.trim();
     if (name.isEmpty) return;
+    
+    widget.onLoading?.call(true);
     try {
       final resp = await http.post(
         Uri.parse('http://localhost:8080/branch/create'),
@@ -2040,10 +2270,13 @@ class _GraphViewState extends State<_GraphView> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('创建失败: $e')));
+    } finally {
+      widget.onLoading?.call(false);
     }
   }
 
   Future<void> _doSwitchBranch(String name) async {
+    widget.onLoading?.call(true);
     try {
       final resp = await http.post(
         Uri.parse('http://localhost:8080/branch/switch'),
@@ -2073,6 +2306,8 @@ class _GraphViewState extends State<_GraphView> {
           context,
         ).showSnackBar(SnackBar(content: Text('切换失败: $e')));
       }
+    } finally {
+      widget.onLoading?.call(false);
     }
   }
 
@@ -2191,15 +2426,11 @@ class _GraphViewState extends State<_GraphView> {
 
   Future<void> _previewVersion(CommitNode node) async {
     if (_comparing) return;
+    
+    widget.onLoading?.call(true);
     setState(() => _comparing = true);
+    
     try {
-      // Show loading dialog
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (ctx) => const Center(child: CircularProgressIndicator()),
-      );
-
       final resp = await http.post(
         Uri.parse('http://localhost:8080/preview'),
         headers: {'Content-Type': 'application/json'},
@@ -2209,14 +2440,14 @@ class _GraphViewState extends State<_GraphView> {
         }),
       );
 
-      // Pop loading dialog
-      if (mounted) Navigator.pop(context);
-
       if (resp.statusCode != 200) {
         throw Exception('预览失败: ${resp.body}');
       }
       final bytes = resp.bodyBytes;
       if (!mounted) return;
+      
+      widget.onLoading?.call(false);
+      
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -2227,14 +2458,14 @@ class _GraphViewState extends State<_GraphView> {
         ),
       );
     } catch (e) {
-      // Ensure loading dialog is closed if error occurs
-      if (mounted && _comparing) Navigator.pop(context);
+      widget.onLoading?.call(false);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error: $e')),
       );
     } finally {
       if (mounted) setState(() => _comparing = false);
+      widget.onLoading?.call(false);
     }
   }
 
@@ -2259,6 +2490,8 @@ class _GraphViewState extends State<_GraphView> {
       ),
     );
     if (ok != true) return;
+
+    widget.onLoading?.call(true);
 
     if (!mounted) return;
     ScaffoldMessenger.of(context)
@@ -2291,6 +2524,8 @@ class _GraphViewState extends State<_GraphView> {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Error: $e')));
+    } finally {
+      widget.onLoading?.call(false);
     }
   }
 
@@ -2333,6 +2568,8 @@ class _GraphViewState extends State<_GraphView> {
     );
     if (ok != true) return;
 
+    widget.onLoading?.call(true);
+
     if (!mounted) return;
     ScaffoldMessenger.of(context)
         .showSnackBar(const SnackBar(content: Text('正在重置分支...')));
@@ -2364,6 +2601,8 @@ class _GraphViewState extends State<_GraphView> {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Error: $e')));
+    } finally {
+      widget.onLoading?.call(false);
     }
   }
 
@@ -3115,12 +3354,23 @@ class _GraphViewState extends State<_GraphView> {
     final laneOf = <String, int>{};
     final byId = {for (final c in data.commits) c.id: c};
 
-    // 1. 对分支进行排序 (master 优先)
+    // 1. 对分支进行排序 (master 优先，然后按 Head 提交的新旧排序)
     final orderedBranches = List<Branch>.from(data.branches);
+    final commitIndex = <String, int>{};
+    for (var i = 0; i < data.commits.length; i++) {
+      commitIndex[data.commits[i].id] = i;
+    }
+
     orderedBranches.sort((a, b) {
       int pa = a.name == 'master' ? 0 : 1;
       int pb = b.name == 'master' ? 0 : 1;
       if (pa != pb) return pa - pb;
+
+      // Sort by head commit index (smaller index = newer = higher priority)
+      final idxA = commitIndex[a.head] ?? 999999;
+      final idxB = commitIndex[b.head] ?? 999999;
+      if (idxA != idxB) return idxA - idxB;
+
       return a.name.compareTo(b.name);
     });
 
@@ -3249,129 +3499,36 @@ class _GraphViewState extends State<_GraphView> {
     }
     if (bestInfo != null && best <= 8.0) return bestInfo;
 
-    // 2. Check explicit merge edges (Second Parents) which are not in _pairBranches
-    // These are drawn in GraphPainter.paint()
-    for (final c in commits) {
-      if (c.parents.length < 2) continue;
-      final rowC = rowOf[c.id];
-      final laneC = laneOf[c.id];
-      if (rowC == null || laneC == null) continue;
+    // 2. & 3. Explicit merge edges check and First Parent fix check removed
+
+
+    if (bestInfo != null && best <= 8.0) return bestInfo;
+
+    // 4. Check custom edges
+    for (final edge in data.customEdges) {
+      if (edge.length < 2) continue;
+      final child = edge[0];
+      final parent = edge[1];
+      final rowC = rowOf[child];
+      final laneC = laneOf[child];
+      final rowP = rowOf[parent];
+      final laneP = laneOf[parent];
+      if (rowC == null || laneC == null || rowP == null || laneP == null) continue;
+
       final x = laneC * laneWidth + laneWidth / 2;
       final y = rowC * rowHeight + rowHeight / 2;
+      final px = laneP * laneWidth + laneWidth / 2;
+      final py = rowP * rowHeight + rowHeight / 2;
 
-      for (int i = 1; i < c.parents.length; i++) {
-        final pId = c.parents[i];
-        final rowP = rowOf[pId];
-        final laneP = laneOf[pId];
-        if (rowP == null || laneP == null) continue;
-        final px = laneP * laneWidth + laneWidth / 2;
-        final py = rowP * rowHeight + rowHeight / 2;
-
-        // Merge edges are always diagonal straight lines in paint()
-        final d = _distPointToSegment(sceneP, Offset(x, y), Offset(px, py));
-        if (d < best) {
-          best = d;
-          // Try to find which branch this merge comes from
-          // Use the parent node's branches if available, or just the child's
-          final pNode = byId[pId];
-          List<String> branches = [];
-          // Naive branch finding: find any branch pointing here?
-          // Or just use empty list which will show "Unknown" or similar?
-          // Let's try to find branches that contain pId in their chain
-          // This is expensive, maybe just list "Merge Source"
-          // Better: use the branches from the child node context?
-          // Or reconstruct from chains?
-          // For now, let's just provide the child's branch or empty.
-          // Actually, the UI shows branches in a list.
-          // Let's try to find branches that head at pId
-          if (pNode != null) {
-            for (final b in data.branches) {
-              if (b.head == pId) branches.add(b.name);
-            }
-          }
-
-          // 构造 "Merge X to Y" 的信息，用于 tooltip 显示
-          // 这里我们使用特殊的格式，让 UI 层（_showEdgeInfo）去解析和显示
-          // 我们使用 'MergeEdge' 作为特殊标记，UI 层检测到这个标记时，会显示“合并边”。
-          if (branches.isEmpty) {
-            branches.add('MergeEdge');
-          }
-
-          bestInfo = EdgeInfo(
-            child: c.id,
-            parent: pId,
-            branches: branches,
-            isMerge: true,
-          );
-        }
-      }
-    }
-
-    // 3. Check First Parents if they were missing in _pairBranches (auto-filled in paint)
-    // This handles the "ghost edge" case where an edge exists logically but wasn't in chains
-    for (final c in commits) {
-      if (c.parents.isEmpty) continue;
-
-      final rowC = rowOf[c.id];
-      final laneC = laneOf[c.id];
-      if (rowC == null || laneC == null) continue;
-
-      final p0Id = c.parents[0];
-      final key0 = '${c.id}|$p0Id';
-
-      // Only check if NOT already handled by _pairBranches
-      if (_pairBranches?.containsKey(key0) == true) continue;
-
-      final rowP = rowOf[p0Id];
-      final laneP = laneOf[p0Id];
-      if (rowP != null && laneP != null) {
-        final x = laneC * laneWidth + laneWidth / 2;
-        final y = rowC * rowHeight + rowHeight / 2;
-        final px = laneP * laneWidth + laneWidth / 2;
-        final py = rowP * rowHeight + rowHeight / 2;
-
-        double d = double.infinity;
-        if (laneC == laneP) {
-          d = _distPointToSegment(sceneP, Offset(x, y), Offset(px, py));
-        } else {
-          // L-Shape for split: (px, py) -> (x, py) -> (x, y)
-          final d1 = _distPointToSegment(sceneP, Offset(px, py), Offset(x, py));
-          final d2 = _distPointToSegment(sceneP, Offset(x, py), Offset(x, y));
-          d = d1 < d2 ? d1 : d2;
-        }
-
-        if (d < best) {
-          best = d;
-          final pNode = byId[p0Id];
-          List<String> branches = [];
-          if (pNode != null) {
-            for (final b in data.branches) {
-              if (b.head == p0Id) branches.add(b.name);
-            }
-          }
-
-          if (branches.isEmpty) {
-            branches.add('MergeEdge');
-          } else {
-            // 如果 branches 不为空（说明 Merge 来源是一个分支的 Head），
-            // 用户反馈说 tag 显示为 "socialism"（B 分支），但依旧不是 "合并边"。
-            // 用户的要求是：只要是斜边（Merge Edge），tag 就必须显示为“合并边”。
-            // 无论它是否是某个分支的 Head。
-            // 因此，我们强制清空 branches，并添加 'MergeEdge' 标记。
-            branches.clear();
-            branches.add('MergeEdge');
-          }
-
-          // If we found a ghost edge that is closer, use it
-          // 同样，如果这是补画的 First Parent 边，且没有分支指向 parent，
-          // 它的 branches 为空。
-          bestInfo = EdgeInfo(
-            child: c.id,
-            parent: p0Id,
-            branches: branches,
-            isMerge: false,
-          );
-        }
+      final d = _distPointToSegment(sceneP, Offset(x, y), Offset(px, py));
+      if (d < best) {
+        best = d;
+        bestInfo = EdgeInfo(
+          child: child,
+          parent: parent,
+          branches: ['MergeEdge'], // Force custom edge to show as MergeEdge
+          isMerge: true,
+        );
       }
     }
 
@@ -3394,5 +3551,467 @@ class _GraphViewState extends State<_GraphView> {
     final dx = p.dx - cx;
     final dy = p.dy - cy;
     return math.sqrt(dx * dx + dy * dy);
+  }
+}
+
+class GraphPainter extends CustomPainter {
+  final GraphData data;
+  final Map<String, Color> branchColors;
+  final String? hoverPairKey;
+  final double laneWidth;
+  final double rowHeight;
+  final WorkingState? working;
+  final Set<String> selectedNodes;
+  final List<String>? identicalCommitIds;
+  static const double nodeRadius = 6;
+  GraphPainter(
+    this.data,
+    this.branchColors,
+    this.hoverPairKey,
+    this.laneWidth,
+    this.rowHeight, {
+    this.working,
+    required this.selectedNodes,
+    this.identicalCommitIds,
+  });
+  static const List<Color> lanePalette = [
+    Color(0xFF1976D2),
+    Color(0xFF2E7D32),
+    Color(0xFF8E24AA),
+    Color(0xFFD81B60),
+    Color(0xFF00838F),
+    Color(0xFF5D4037),
+    Color(0xFF3949AB),
+    Color(0xFFF9A825),
+    Color(0xFF6D4C41),
+    Color(0xFF1E88E5),
+  ];
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final commits = data.commits;
+    final laneOf = _laneOfByBranches({for (final c in commits) c.id: c});
+    final rowOf = <String, int>{};
+    final paintNode = Paint()..color = const Color(0xFF1976D2);
+    final paintBorder = Paint()
+      ..color = const Color(0xFF1976D2)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.5;
+    final paintEdge = Paint()
+      ..strokeWidth = 2
+      ..style = PaintingStyle.stroke;
+    final byId = {for (final c in commits) c.id: c};
+    final colorMemo = _computeBranchColors(byId);
+    // 构造来自分支链的父->子关系，以及对每个边对的出现次数
+    final children = <String, List<String>>{}; // parent -> [child]
+    final pairCount = <String, int>{};
+    for (final entry in data.chains.entries) {
+      final ids = entry.value;
+      for (var i = 0; i + 1 < ids.length; i++) {
+        final child = ids[i];
+        final parent = ids[i + 1];
+        (children[parent] ??= <String>[]).add(child);
+        final key = '$child|$parent';
+        pairCount[key] = (pairCount[key] ?? 0) + 1;
+      }
+    }
+
+    for (var i = 0; i < commits.length; i++) {
+      final c = commits[i];
+      rowOf[c.id] = i;
+    }
+
+    // 绘制节点
+    String? currentHeadId;
+    if (data.currentBranch != null) {
+      for (final b in data.branches) {
+        if (b.name == data.currentBranch) {
+          currentHeadId = b.head;
+          break;
+        }
+      }
+    }
+
+    for (final c in commits) {
+      final row = rowOf[c.id]!;
+      final lane = laneOf[c.id]!;
+      final x = lane * laneWidth + laneWidth / 2;
+      final y = row * rowHeight + rowHeight / 2;
+      final childIds = children[c.id] ?? const <String>[];
+      final childColors =
+          childIds.map((id) => _colorOfCommit(id, colorMemo)).toSet();
+      final isSplit = childIds.length >= 2 && childColors.length >= 2;
+      final r = isSplit ? nodeRadius * 1.6 : nodeRadius;
+
+      if (c.id == currentHeadId) {
+        final paintCurHead = Paint()
+          ..color = Colors.green
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 3.0;
+        canvas.drawCircle(Offset(x, y), r + 5, paintCurHead);
+      }
+
+      if (identicalCommitIds != null && identicalCommitIds!.contains(c.id)) {
+        final paintIdent = Paint()
+          ..color = Colors.purple
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 4.0;
+        canvas.drawCircle(Offset(x, y), r + 8, paintIdent);
+      }
+
+      canvas.drawCircle(Offset(x, y), r, paintNode);
+      if (isSplit) {
+        canvas.drawCircle(Offset(x, y), r, paintBorder);
+      }
+      if (selectedNodes.contains(c.id)) {
+        final paintSel = Paint()
+          ..color = Colors.redAccent
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 3.0;
+        canvas.drawCircle(Offset(x, y), r + 4, paintSel);
+      }
+    }
+
+    // 绘制来自分支链的边，避免父列表造成的重边
+    final pairDrawn = <String, int>{};
+    for (final entry in data.chains.entries) {
+      final bname = entry.key;
+      final bcolor = branchColors[bname] ?? const Color(0xFF9E9E9E);
+      final ids = entry.value;
+      for (var i = 0; i + 1 < ids.length; i++) {
+        final child = ids[i];
+        final parent = ids[i + 1];
+        if (!rowOf.containsKey(child) || !rowOf.containsKey(parent)) continue;
+
+        // 过滤掉错误的连线：确保 parent 确实是 child 的父节点
+        final childNodeCheck = byId[child];
+        if (childNodeCheck != null &&
+            !childNodeCheck.parents.contains(parent)) {
+          continue;
+        }
+
+        final rowC = rowOf[child]!;
+        final laneC = laneOf[child]!;
+        final x = laneC * laneWidth + laneWidth / 2;
+        final y = rowC * rowHeight + rowHeight / 2;
+        final rowP = rowOf[parent]!;
+        final laneP = laneOf[parent]!;
+        final px = laneP * laneWidth + laneWidth / 2;
+        final py = rowP * rowHeight + rowHeight / 2;
+        final key = '$child|$parent';
+        final total = pairCount[key] ?? 1;
+        final done = pairDrawn[key] ?? 0;
+        pairDrawn[key] = done + 1;
+        // Simple straight lines with slight spread for parallel edges
+        final spread = (done - (total - 1) / 2.0) * 4.0;
+
+        final path = Path();
+        final sx = x + spread;
+        final sy = y;
+        final ex = px + spread;
+        final ey = py;
+
+        final childNode = byId[child];
+        bool isMergeEdge = false;
+        if (childNode != null && childNode.parents.length > 1) {
+          if (childNode.parents[0] != parent) {
+            isMergeEdge = true;
+          }
+        }
+
+        if (laneC == laneP) {
+          path.moveTo(sx, sy);
+          path.lineTo(ex, ey);
+        } else {
+          if (isMergeEdge) {
+            // 这里是 Chains 里的 Merge 边（斜线）。
+            // 用户要求：强制不显示蓝色的线（Git 定义的），而是统一由下方的黑色特判逻辑来绘制。
+            // 因此，如果判定为 Merge 边，这里直接跳过绘制。
+            continue;
+          } else {
+            // L-Shape (Split)
+            // Parent (ex, ey) -> Horizontal -> Vertical -> Child (sx, sy)
+            path.moveTo(ex, ey);
+            path.lineTo(sx, ey);
+            path.lineTo(sx, sy);
+          }
+        }
+
+        paintEdge.color = bcolor;
+        bool isCurrent = data.currentBranch == bname;
+        bool isHover = hoverPairKey != null && hoverPairKey == key;
+
+        paintEdge.strokeWidth = isCurrent ? 4.0 : (isHover ? 3.0 : 2.0);
+
+
+        canvas.drawPath(path, paintEdge);
+      }
+    }
+
+    // 补全 First Parent 连线逻辑已移除
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    // 补全 First Parent 连线 (防止 Chains 数据缺失导致的断链)
+    // 仅补画 First Parent，不处理其他父节点，也不添加额外的高亮效果
+    for (final c in commits) {
+      if (c.parents.isEmpty) continue;
+      
+      final rowC = rowOf[c.id];
+      final laneC = laneOf[c.id];
+      if (rowC == null || laneC == null) continue;
+
+      final x = laneC * laneWidth + laneWidth / 2;
+      final y = rowC * rowHeight + rowHeight / 2;
+
+      // 仅检查 First Parent
+      final p0Id = c.parents[0];
+      final key0 = '${c.id}|$p0Id';
+      
+      // 如果 Chains 遍历中没有画过这条线，则补画
+      if (!pairDrawn.containsKey(key0)) {
+        final rowP = rowOf[p0Id];
+        final laneP = laneOf[p0Id];
+        if (rowP != null && laneP != null) {
+          final px = laneP * laneWidth + laneWidth / 2;
+          final py = rowP * rowHeight + rowHeight / 2;
+
+
+          final paintMain = Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2.0
+            ..color = _colorOfCommit(c.id, colorMemo);
+
+          final path = Path();
+          if (laneC == laneP) {
+            path.moveTo(x, y);
+            path.lineTo(px, py);
+          } else {
+            // L-Shape
+            path.moveTo(px, py);
+            path.lineTo(x, py);
+            path.lineTo(x, y);
+          }
+          canvas.drawPath(path, paintMain);
+        }
+      }
+    }
+
+    // Draw custom edges
+    final paintCustom = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.0
+      ..color = const Color(0xFF000000);
+
+    for (final edge in data.customEdges) {
+      if (edge.length < 2) continue;
+      final child = edge[0];
+      final parent = edge[1];
+      
+      final rowC = rowOf[child];
+      final laneC = laneOf[child];
+      final rowP = rowOf[parent];
+      final laneP = laneOf[parent];
+      
+      if (rowC == null || laneC == null || rowP == null || laneP == null) continue;
+      
+      final x = laneC * laneWidth + laneWidth / 2;
+      final y = rowC * rowHeight + rowHeight / 2;
+      final px = laneP * laneWidth + laneWidth / 2;
+      final py = rowP * rowHeight + rowHeight / 2;
+      
+      final path = Path();
+      path.moveTo(x, y);
+      path.lineTo(px, py);
+      canvas.drawPath(path, paintCustom);
+    }
+
+    final textPainter = TextPainter(textDirection: TextDirection.ltr);
+    for (final c in commits) {
+      final row = rowOf[c.id]!;
+      final lane = laneOf[c.id]!;
+      final x = lane * laneWidth + laneWidth / 2 + 10;
+      final y = row * rowHeight + rowHeight / 2;
+      String msg = c.subject;
+      if (msg.length > 10) {
+        msg = '${msg.substring(0, 10)}...';
+      }
+
+      textPainter.text = TextSpan(
+        style: const TextStyle(color: Colors.black, fontSize: 12),
+        children: [
+          TextSpan(text: '提交id：${c.id.substring(0, 7)}'),
+          if (c.refs.isNotEmpty)
+            TextSpan(
+                text: ' [${c.refs.first}]',
+                style: const TextStyle(fontWeight: FontWeight.bold)),
+          const TextSpan(text: '\n'),
+          TextSpan(text: '提交信息：$msg'),
+        ],
+      );
+      textPainter.layout();
+      textPainter.paint(canvas, Offset(x, y - textPainter.height / 2));
+    }
+
+    // 边框分区与当前状态
+    int maxLane = -1;
+    for (final v in laneOf.values) {
+      if (v > maxLane) maxLane = v;
+    }
+    if (maxLane < 0) maxLane = 0;
+    final graphWidth = (maxLane + 1) * laneWidth;
+    final graphHeight = commits.length * rowHeight;
+    final borderPaint = Paint()
+      ..color = const Color(0xFF000000)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    canvas.drawRect(Rect.fromLTWH(0, 0, graphWidth, graphHeight), borderPaint);
+
+    if (working?.changed == true) {
+      final overlayMargin = 40.0;
+      final overlayWidth = 240.0;
+      final overlayX = graphWidth + overlayMargin;
+
+      // Fix for empty project: ensure staging area has height
+      double overlayHeight = graphHeight;
+      if (commits.isEmpty) {
+        overlayHeight = rowHeight;
+      }
+
+      canvas.drawRect(
+        Rect.fromLTWH(overlayX, 0, overlayWidth, overlayHeight),
+        borderPaint,
+      );
+      final baseId = working?.baseId;
+      int row = 0;
+      if (baseId != null && rowOf.containsKey(baseId)) {
+        row = rowOf[baseId]!;
+      }
+      final cx = overlayX + overlayWidth / 2;
+      final cy = row * rowHeight + rowHeight / 2;
+      final paintCur = Paint()..color = const Color(0xFFD81B60);
+      canvas.drawCircle(Offset(cx, cy), nodeRadius * 1.6, paintCur);
+      final labelSpan = TextSpan(
+        text: '当前状态',
+        style: const TextStyle(color: Colors.black, fontSize: 12),
+      );
+      textPainter.text = labelSpan;
+      textPainter.layout();
+      textPainter.paint(canvas, Offset(cx + 10, cy - 8));
+    }
+  }
+
+  Color _colorOfCommit(String id, Map<String, Color> memo) {
+    return memo[id] ?? const Color(0xFF9E9E9E);
+  }
+
+  Map<String, Color> _computeBranchColors(Map<String, CommitNode> byId) {
+    final memo = <String, Color>{};
+    // Branch priority: master first, then others by name
+    final ordered = List<Branch>.from(data.branches);
+    ordered.sort((a, b) {
+      int pa = a.name == 'master' ? 0 : 1;
+      int pb = b.name == 'master' ? 0 : 1;
+      if (pa != pb) return pa - pb;
+      return a.name.compareTo(b.name);
+    });
+    int idx = 0;
+    for (final b in ordered) {
+      final color =
+          branchColors[b.name] ?? lanePalette[idx % lanePalette.length];
+      idx++;
+      var cur = byId[b.head];
+      // 仅为该分支独有的路径上色。如果遇到已经被更高优先级分支染色的节点，停止。
+      while (cur != null && memo[cur.id] == null) {
+        memo[cur.id] = color;
+        if (cur.parents.isEmpty) break;
+        // 仅沿 First Parent 染色，保持分支主干颜色一致
+        final next = byId[cur.parents.first];
+        cur = next;
+      }
+    }
+    return memo;
+  }
+
+  Map<String, int> _laneOfByBranches(Map<String, CommitNode> byId) {
+    final laneOf = <String, int>{};
+
+    // 1. 对分支进行排序 (master 优先)
+    final orderedBranches = List<Branch>.from(data.branches);
+    orderedBranches.sort((a, b) {
+      int pa = a.name == 'master' ? 0 : 1;
+      int pb = b.name == 'master' ? 0 : 1;
+      if (pa != pb) return pa - pb;
+      return a.name.compareTo(b.name);
+    });
+
+    int nextFreeLane = 0;
+
+    // 2. 按优先级为每个分支分配 Lane
+    for (final b in orderedBranches) {
+      var curId = b.head;
+      // 如果该分支的 Head 已经被分配了 Lane（说明它合并到了更高优先级的链上，或者就是同一个点），
+      // 则不需要为这个分支分配新的独立 Lane。
+      if (laneOf.containsKey(curId)) continue;
+
+      final currentBranchLane = nextFreeLane++;
+
+      // 沿 First Parent 回溯
+      while (true) {
+        if (laneOf.containsKey(curId)) {
+          // 遇到已经有 Lane 的节点，停止传播
+          break;
+        }
+        laneOf[curId] = currentBranchLane;
+
+        final node = byId[curId];
+        if (node == null || node.parents.isEmpty) break;
+
+        // 继续追溯 First Parent
+        curId = node.parents.first;
+      }
+    }
+
+    // 3. 查漏补缺：处理未被分支直接覆盖的节点（如 Merge 的 Second Parent 历史）
+    // 按照时间倒序（data.commits 应该已经是排好序的）
+    for (final c in data.commits) {
+      if (!laneOf.containsKey(c.id)) {
+        laneOf[c.id] = nextFreeLane++;
+      }
+
+      final currentLane = laneOf[c.id]!;
+
+      // 检查父节点
+      for (int i = 0; i < c.parents.length; i++) {
+        final pId = c.parents[i];
+        if (laneOf.containsKey(pId)) continue;
+
+        if (i == 0) {
+          // First Parent 继承
+          laneOf[pId] = currentLane;
+        } else {
+          // Second Parent 分配新 Lane
+          laneOf[pId] = nextFreeLane++;
+        }
+      }
+    }
+
+    return laneOf;
+  }
+
+  @override
+  bool shouldRepaint(covariant GraphPainter oldDelegate) {
+    return oldDelegate.data != data;
   }
 }

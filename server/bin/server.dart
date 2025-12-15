@@ -78,8 +78,7 @@ Future<void> main(List<String> args) async {
     if (File(heideggerPath).existsSync()) {
       await _killPort(5000);
       print('Starting Heidegger service from $heideggerPath...');
-      final process =
-          await Process.start(heideggerPath, [], mode: ProcessStartMode.normal);
+      await Process.start(heideggerPath, [], mode: ProcessStartMode.normal);
     } else {
       print('Heidegger.exe not found at $heideggerPath');
     }
@@ -662,6 +661,7 @@ Future<void> main(List<String> args) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
     final token = data['token'] as String?;
+    final repoPath = data['repoPath'] as String?;
 
     if (token == null || token.isEmpty) {
       return _cors(Response(400,
@@ -693,9 +693,24 @@ Future<void> main(List<String> args) async {
         final member = jsonDecode(respMember.body) as List;
 
         final allRepos = [...owned, ...member];
-        // Deduplicate by name just in case
-        final repoNames =
-            allRepos.map((r) => r['name'] as String).toSet().toList();
+
+        final uniqueRepos = <String, Map<String, dynamic>>{};
+        for (final r in allRepos) {
+          final name = (r['name'] as String).toLowerCase();
+          uniqueRepos[name] = r;
+        }
+
+        final repoNames = uniqueRepos.keys.toList();
+
+        if (repoPath != null && repoPath.isNotEmpty) {
+          for (final r in uniqueRepos.values) {
+            final name = (r['name'] as String).toLowerCase();
+            final cloneUrl = r['clone_url'] as String?;
+            if (cloneUrl != null) {
+              await addRemote(repoPath, name, cloneUrl);
+            }
+          }
+        }
 
         return _cors(Response.ok(jsonEncode(repoNames), headers: {
           'Content-Type': 'application/json; charset=utf-8',
@@ -937,12 +952,60 @@ Future<void> main(List<String> args) async {
     }
   });
 
+  router.post('/pull/cancel', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoName = (data['repoName'] as String?)?.trim() ?? '';
+    
+    if (repoName.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoName required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      await cancelPull(repoName);
+      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/pull/preview', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoName = (data['repoName'] as String?)?.trim() ?? '';
+    final username = (data['username'] as String?)?.trim() ?? '';
+    final token = (data['token'] as String?)?.trim() ?? '';
+    final type = (data['type'] as String?)?.trim() ?? ''; // rebase, branch, force
+
+    if (repoName.isEmpty || username.isEmpty || token.isEmpty || type.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoName, username, token, type required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      final result = await previewPull(repoName, username, token, type);
+      return _cors(Response.ok(jsonEncode(result.toJson()), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
   router.post('/pull', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
     final repoName = (data['repoName'] as String?)?.trim() ?? '';
     final username = (data['username'] as String?)?.trim() ?? '';
     final token = (data['token'] as String?)?.trim() ?? '';
+    final force = data['force'] == true;
 
     if (repoName.isEmpty || username.isEmpty || token.isEmpty) {
       return _cors(Response(400,
@@ -950,7 +1013,9 @@ Future<void> main(List<String> args) async {
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
-      final result = await pullFromRemote(repoName, username, token);
+      final result =
+          await pullFromRemote(repoName, username, token, force: force);
+      print("pullResult=${result}");
       return _cors(Response.ok(jsonEncode(result),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     } catch (e) {
@@ -1006,6 +1071,36 @@ Future<void> main(List<String> args) async {
     }
   });
 
+  router.post('/edge/add', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoPath = _sanitizePath(data['repoPath'] as String?);
+    final child = data['child'] as String?;
+    final parent = data['parent'] as String?;
+
+    if (repoPath.isEmpty || child == null || parent == null) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoPath, child, parent required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      final f = File(p.join(repoPath, 'edges'));
+      final lines = f.existsSync() ? await f.readAsLines() : <String>[];
+      if (lines.isEmpty) {
+        // Init with dummy commit id
+        lines.add('0000000000000000000000000000000000000000');
+      }
+      lines.add('$child $parent');
+      await f.writeAsString(lines.join('\n'));
+      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
   router.post('/backup/commits', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
@@ -1029,51 +1124,6 @@ Future<void> main(List<String> args) async {
     }
   });
 
-  router.post('/backup/graph', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoName = (data['repoName'] as String?)?.trim() ?? '';
-    final commitId = data['commitId'] as String?;
-
-    if (repoName.isEmpty || commitId == null) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'repoName, commitId required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      final graph = await getBackupChildGraph(repoName, commitId);
-      return _cors(Response.ok(jsonEncode(graph), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-
-  router.post('/backup/preview', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoName = (data['repoName'] as String?)?.trim() ?? '';
-    final commitId = data['commitId'] as String?;
-
-    if (repoName.isEmpty || commitId == null) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'repoName, commitId required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      final pdf = await previewBackupChildDoc(repoName, commitId);
-      return _cors(Response.ok(pdf, headers: {
-        'Content-Type': 'application/pdf',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
 
   final handler =
       const Pipeline().addMiddleware(logRequests()).addHandler(router);

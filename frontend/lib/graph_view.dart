@@ -272,6 +272,25 @@ class GraphPainter extends CustomPainter {
       }
     }
 
+    // Custom Edges
+    for (final edge in data.customEdges) {
+      if (edge.length < 2) continue;
+      final child = edge[0];
+      final parent = edge[1];
+      final rowC = rowOf[child];
+      final laneC = laneOf[child];
+      final rowP = rowOf[parent];
+      final laneP = laneOf[parent];
+      
+      if (rowC == null || laneC == null || rowP == null || laneP == null) continue;
+      
+      final paint = Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.0
+          ..color = const Color(0xFF000000);
+      _drawEdge(canvas, rowC, laneC, rowP, laneP, paint);
+    }
+
     final textPainter = TextPainter(textDirection: TextDirection.ltr);
     // Draw text for ALL commits
     for (final c in allCommits) {
@@ -519,6 +538,7 @@ class SimpleGraphView extends StatefulWidget {
   final Map<String, Color>? customNodeColors;
   final List<CommitNode> ghostNodes;
   final bool showCurrentHead;
+  final bool showLegend;
 
   const SimpleGraphView({
     super.key,
@@ -530,6 +550,7 @@ class SimpleGraphView extends StatefulWidget {
     this.customNodeColors,
     this.ghostNodes = const [],
     this.showCurrentHead = true,
+    this.showLegend = false,
   });
 
   @override
@@ -564,7 +585,7 @@ class _SimpleGraphViewState extends State<SimpleGraphView> {
     _canvasSize ??= _computeCanvasSize(widget.data);
     _branchColors ??= _assignBranchColors(widget.data.branches);
 
-    return Listener(
+    final content = Listener(
       onPointerSignal: (event) {
         if (event is PointerScrollEvent) {
           final double scaleChange = event.scrollDelta.dy < 0 ? 1.1 : 0.9;
@@ -611,6 +632,66 @@ class _SimpleGraphViewState extends State<SimpleGraphView> {
         ),
       ),
     );
+
+    if (widget.showLegend && _branchColors != null && _branchColors!.isNotEmpty) {
+      return Stack(
+        children: [
+          content,
+          Positioned(
+            top: 10,
+            right: 10,
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              constraints: const BoxConstraints(maxWidth: 200, maxHeight: 300),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.9),
+                border: Border.all(color: Colors.grey.shade300),
+                borderRadius: BorderRadius.circular(4),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 4,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: _branchColors!.entries.map((e) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 12, 
+                          height: 12, 
+                          decoration: BoxDecoration(
+                            color: e.value,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            e.key, 
+                            style: const TextStyle(fontSize: 12),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  )).toList(),
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    return content;
   }
 
   Size _computeCanvasSize(GraphData data) {
