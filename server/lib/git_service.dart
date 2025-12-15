@@ -1753,33 +1753,18 @@ Future<PullPreviewResult> previewPull(
     } else if (type == 'branch' || type == 'fork') {
        if (currentBranch == null) throw Exception('Detached HEAD');
 
-       if (type == 'fork') {
-         // Create a temporary branch named "PreviewFork"
-         try {
-           await _runGit(['checkout', '-b', 'PreviewFork'], projDir);
-         } catch(e) {
-           // Maybe it already exists? Try to reset it?
-           try {
-             await _runGit(['checkout', 'PreviewFork'], projDir);
-             await _runGit(['reset', '--hard', 'HEAD'], projDir);
-           } catch(_) {}
-         }
+       // FORK/BRANCH Preview Logic:
+       // 1. Keep current branch (local) as is (no merge, no checkout).
+       // 2. Create 'PreviewFork' pointing to the Remote Branch.
+       // Result: Two diverging branches. Local keeps local changes. PreviewFork has remote changes.
+       
+       try {
+         // Force create/update PreviewFork to point to remote branch
+         await _runGit(['branch', '-f', 'PreviewFork', '$remoteName/$currentBranch'], projDir);
+       } catch (e) {
+         throw Exception('Failed to create PreviewFork branch: $e');
        }
        
-       // Merge
-       try {
-         await _runGit(['merge', '$remoteName/$currentBranch'], projDir);
-         await _forceRegenerateRepoDocx(projDir);
-       } catch (e) {
-          final status = await _runGit(['status', '--porcelain'], projDir);
-          if (status.any((l) => l.startsWith('UU') || l.startsWith('AA'))) {
-             hasConflicts = true;
-             conflictingFiles = status
-                .where((l) => l.startsWith('UU') || l.startsWith('AA'))
-                .map((l) => l.substring(3).trim())
-                .toList();
-          }
-       }
        clearCache();
        // Only include local branches in the result view (hide remote branches)
        // For FORK/BRANCH, we need to show the remote branch to visualize the divergence/merge target
@@ -1827,37 +1812,24 @@ Future<void> forkLocal(String repoName, String newBranchName) async {
     final currentBranch = await getCurrentBranch(repoPath);
     final remoteName = repoName.toLowerCase();
     
-    // Check if we are currently on the temporary 'PreviewFork' branch (from a confirmed preview)
-    bool onPreviewFork = (currentBranch == 'PreviewFork');
+    // FORK/BRANCH Execution Logic:
+    // 1. Cleanup any stale PreviewFork branch
+    try {
+      await _runGit(['branch', '-D', 'PreviewFork'], repoPath);
+    } catch (_) {}
 
-    if (onPreviewFork) {
-      // If we are on PreviewFork, it means the user confirmed the preview.
-      // We just need to rename it to the desired new branch name.
-      // This preserves the merge state (including conflicts) and history.
-      await _runGit(['branch', '-m', newBranchName], repoPath);
+    // 2. Create and checkout new branch from remote
+    // This creates 'newBranchName' pointing to 'remote/currentBranch' and switches to it.
+    // The original local branch is left untouched.
+    if (currentBranch != null) {
+        await _runGit(['checkout', '-b', newBranchName, '$remoteName/$currentBranch'], repoPath);
+        // Force regenerate docx to match the new branch content (which is remote content)
+        await _forceRegenerateRepoDocx(repoPath);
     } else {
-      // Clean start (e.g. direct fork without preview, or preview was cancelled/reset)
-      
-      // 1. Cleanup any stale PreviewFork branch
-      try {
-        await _runGit(['branch', '-D', 'PreviewFork'], repoPath);
-      } catch (_) {}
-
-      // 2. Create new branch from current HEAD
-      await _runGit(['checkout', '-b', newBranchName], repoPath);
-
-      // 3. Perform the Merge (Pull) logic to match the "Fork/Pull" intent
-      // We assume we are pulling the remote counterpart of the branch we started from
-      if (currentBranch != null) {
-        try {
-           await _runGit(['merge', '$remoteName/$currentBranch'], repoPath);
-           await _forceRegenerateRepoDocx(repoPath);
-        } catch (e) {
-           // Ignore merge failure (conflicts), let user resolve on the new branch
-           // The state is left dirty, which is correct for conflict resolution
-        }
-      }
+        // Fallback if no current branch (unlikely in this flow)
+        await _runGit(['checkout', '-b', newBranchName], repoPath);
     }
+    
     clearCache();
   });
 }
