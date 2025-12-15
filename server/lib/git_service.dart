@@ -58,6 +58,7 @@ Future<T> _withRepoLock<T>(String repoPath, Future<T> Function() block) async {
 }
 
 final Map<String, GraphResponse> _graphCache = <String, GraphResponse>{};
+final Map<String, PullPreviewResult> _previewCache = {};
 final Map<String, String> _previewRestorePoints = {};
 
 const String kContentDirName = 'doc_content';
@@ -65,6 +66,7 @@ const String kRepoDocxName = 'content.docx';
 
 void clearCache() {
   _graphCache.clear();
+  _previewCache.clear();
 }
 
 // --- Helpers for Docx/Folder operations ---
@@ -1761,6 +1763,9 @@ Future<PullPreviewResult> previewPull(
     }
 
     // 1. Fetch Remote
+    final cacheKey = '$repoName|$type';
+    final cachedResult = _previewCache[cacheKey];
+
     final owner = await _resolveRepoOwner(repoName, token);
     final remoteUrl =
         'http://$username:$token@47.242.109.145:3000/$owner/$repoName.git';
@@ -1781,27 +1786,30 @@ Future<PullPreviewResult> previewPull(
       await _runGit(['branch', '-D', 'PreviewFork'], projDir);
     } catch (_) {}
     
-    try {
-      await _runGit(['fetch', remoteName], projDir);
-    } catch (e) {
-      print('Fetch failed during preview: $e');
-      throw Exception('Failed to fetch from remote: $e');
+    if (cachedResult == null) {
+      try {
+        await _runGit(['fetch', remoteName], projDir);
+      } catch (e) {
+        print('Fetch failed during preview: $e');
+        throw Exception('Failed to fetch from remote: $e');
+      }
+      // Clear cache to ensure fresh graphs
+      _graphCache.clear();
+    } else {
+      print('Preview cache hit for $cacheKey');
     }
 
-    // Clear cache to ensure fresh graphs
-    clearCache();
-
     // 2. Get Current Graph
-    final currentGraph = await _getGraphUnlocked(projDir, includeLocal: true);
+    final currentGraph = cachedResult?.current ?? await _getGraphUnlocked(projDir, includeLocal: true);
     
     // 3. Get Target Graph
     String? targetBranchName;
-    final currentBranch2 = await getCurrentBranch(projDir);
+    final currentBranch2 = currentBranch ?? await getCurrentBranch(projDir);
     if (currentBranch2 != null) {
        targetBranchName = '$remoteName/$currentBranch2';
     }
 
-    final targetGraph = await _getGraphUnlocked(projDir, 
+    final targetGraph = cachedResult?.target ?? await _getGraphUnlocked(projDir, 
       includeLocal: false, 
       remoteNames: [remoteName]
     );
@@ -1815,8 +1823,8 @@ Future<PullPreviewResult> previewPull(
     );
 
     GraphResponse? resultGraph;
-    bool hasConflicts = false;
-    List<String> conflictingFiles = [];
+    bool hasConflicts = cachedResult?.hasConflicts ?? false;
+    List<String> conflictingFiles = cachedResult?.conflictingFiles ?? [];
 
     if (type == 'rebase') {
       if (currentBranch2 == null) throw Exception('Detached HEAD');
@@ -1827,6 +1835,10 @@ Future<PullPreviewResult> previewPull(
         // This ensures the preview matches the actual "Confirm" behavior which forcibly retains local changes.
         await _runGit(['rebase', '-X', 'theirs', '$remoteName/$currentBranch2'], projDir);
         await _forceRegenerateRepoDocx(projDir);
+        if (cachedResult == null) {
+           hasConflicts = false;
+           conflictingFiles = [];
+        }
       } catch (e) {
         // Check for conflicts
           final status = await _runGit(['status', '--porcelain'], projDir);
@@ -1840,9 +1852,13 @@ Future<PullPreviewResult> previewPull(
       }
 
       // Get Result Graph (in-place)
-      clearCache();
-      // Only include local branches in the result view (hide remote branches)
-      resultGraph = await _getGraphUnlocked(projDir, includeLocal: true, remoteNames: []);
+      if (cachedResult == null) {
+          _graphCache.clear();
+          // Only include local branches in the result view (hide remote branches)
+          resultGraph = await _getGraphUnlocked(projDir, includeLocal: true, remoteNames: []);
+      } else {
+          resultGraph = cachedResult.result;
+      }
 
     } else if (type == 'branch' || type == 'fork') {
        if (currentBranch2 == null) throw Exception('Detached HEAD');
@@ -1864,11 +1880,15 @@ Future<PullPreviewResult> previewPull(
          throw Exception('Failed to create/checkout PreviewFork branch: $e');
        }
        
-       clearCache();
-       // Only include local branches in the result view (hide remote branches)
-       // For FORK/BRANCH, we need to show the remote branch to visualize the divergence/merge target
-       // User requested to hide remote branches in result view to avoid confusion
-       resultGraph = await _getGraphUnlocked(projDir, includeLocal: true, remoteNames: []);
+       if (cachedResult == null) {
+           _graphCache.clear();
+           // Only include local branches in the result view (hide remote branches)
+           // For FORK/BRANCH, we need to show the remote branch to visualize the divergence/merge target
+           // User requested to hide remote branches in result view to avoid confusion
+           resultGraph = await _getGraphUnlocked(projDir, includeLocal: true, remoteNames: []);
+       } else {
+           resultGraph = cachedResult.result;
+       }
     }
 
     // Fix for Rebase Preview:
@@ -1876,7 +1896,7 @@ Future<PullPreviewResult> previewPull(
     // Showing 'master' at the old position in the "Result" view is confusing because the user expects
     // to see the result of the move. Since we can't show the moved state (it doesn't exist yet),
     // we hide the old 'master' label so the graph focuses on the pending state (HEAD).
-    if (type == 'rebase' && currentBranch2 != null && resultGraph != null) {
+    if (cachedResult == null && type == 'rebase' && currentBranch2 != null && resultGraph != null) {
       for (final c in resultGraph.commits) {
         c.refs.remove(currentBranch2);
         // Also remove fully qualified if present (though _parseRefs usually cleans it)
@@ -1890,7 +1910,7 @@ Future<PullPreviewResult> previewPull(
     
     // final mapping = _computeUnifiedMapping(graphs);
 
-    return PullPreviewResult(
+    final result = PullPreviewResult(
       current: currentGraph,
       target: finalTargetGraph,
       result: resultGraph,
@@ -1898,6 +1918,12 @@ Future<PullPreviewResult> previewPull(
       hasConflicts: hasConflicts,
       conflictingFiles: conflictingFiles,
     );
+    
+    if (cachedResult == null) {
+       _previewCache[cacheKey] = result;
+    }
+
+    return result;
   });
 }
 
