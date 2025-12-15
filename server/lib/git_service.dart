@@ -1723,7 +1723,9 @@ Future<PullPreviewResult> previewPull(
 
       // Direct rebase on current branch
       try {
-        await _runGit(['rebase', '$remoteName/$currentBranch'], projDir);
+        // Reuse the logic from rebasePull: use -X theirs to favor local changes (theirs in rebase context)
+        // This ensures the preview matches the actual "Confirm" behavior which forcibly retains local changes.
+        await _runGit(['rebase', '-X', 'theirs', '$remoteName/$currentBranch'], projDir);
         await _forceRegenerateRepoDocx(projDir);
       } catch (e) {
         // Check for conflicts
@@ -1760,6 +1762,19 @@ Future<PullPreviewResult> previewPull(
        }
        clearCache();
        resultGraph = await _getGraphUnlocked(projDir, includeLocal: true, remoteNames: [remoteName]);
+    }
+
+    // Fix for Rebase Preview:
+    // In a failed rebase (conflicts), 'master' is still at the old commit, while HEAD is at upstream.
+    // Showing 'master' at the old position in the "Result" view is confusing because the user expects
+    // to see the result of the move. Since we can't show the moved state (it doesn't exist yet),
+    // we hide the old 'master' label so the graph focuses on the pending state (HEAD).
+    if (type == 'rebase' && currentBranch != null && resultGraph != null) {
+      for (final c in resultGraph.commits) {
+        c.refs.remove(currentBranch);
+        // Also remove fully qualified if present (though _parseRefs usually cleans it)
+        c.refs.remove('refs/heads/$currentBranch');
+      }
     }
 
     // Compute Unified Mapping
