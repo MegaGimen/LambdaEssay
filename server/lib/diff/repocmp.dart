@@ -2,7 +2,8 @@ import '../models.dart';
 import '../git_service.dart';
 import '../backup_service.dart';
 import 'dart:io';
-import 'dart:convert';
+// import 'dart:convert';
+// import 'package:path/path.dart' as p;
 
 /// 比较两个Git仓库的差异，包括分支历史
 Future<Map<String, dynamic>> compareGitRepos({
