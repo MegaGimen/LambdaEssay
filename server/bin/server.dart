@@ -195,22 +195,6 @@ Future<void> main(List<String> args) async {
     }
   });
 
-  router.post('/backup/commits', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoName = data['repoName'] as String?;
-    final force = data['force'] as bool? ?? false;
-    if (repoName == null || repoName.isEmpty) {
-      return _cors(Response(400, body: 'Repo name required'));
-    }
-    try {
-      final commits = await listBackupCommits(repoName, force: force);
-      return _cors(Response.ok(jsonEncode({'commits': commits})));
-    } catch (e) {
-      return _cors(Response(500, body: e.toString()));
-    }
-  });
-
   router.post('/backup/graph', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
