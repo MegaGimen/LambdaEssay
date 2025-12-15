@@ -1651,13 +1651,27 @@ Future<void> cancelPull(String repoName) async {
     final originalHead = _previewRestorePoints[projDir];
     if (originalHead != null) {
       try {
-        // If we are on PreviewFork, we must detach or switch to restore
-        final currentB = await getCurrentBranch(projDir);
-        if (currentB == 'PreviewFork') {
-            await _runGit(['checkout', originalHead], projDir);
-        } else {
-            await _runGit(['reset', '--hard', originalHead], projDir);
+        String? targetBranch;
+        String? targetHash;
+        
+        try {
+          final saved = jsonDecode(originalHead);
+          targetBranch = saved['branch'];
+          targetHash = saved['hash'];
+        } catch (_) {
+          // Fallback for old format (just hash)
+          targetHash = originalHead;
         }
+
+        if (targetBranch != null) {
+           await _runGit(['checkout', '-f', targetBranch], projDir);
+           if (targetHash != null) {
+               await _runGit(['reset', '--hard', targetHash], projDir);
+           }
+        } else if (targetHash != null) {
+           await _runGit(['checkout', '-f', targetHash], projDir);
+        }
+
         await _forceRegenerateRepoDocx(projDir);
       } catch (e) {
         print('Error restoring HEAD: $e');
@@ -1697,15 +1711,30 @@ Future<PullPreviewResult> previewPull(
        try { await _runGit(['rebase', '--abort'], projDir); } catch (_) {}
        try { await _runGit(['merge', '--abort'], projDir); } catch (_) {}
        
-       // Hard reset to original HEAD
+       // Restore to original HEAD
        if (originalHead != null) {
          try {
-           final currentB = await getCurrentBranch(projDir);
-           if (currentB == 'PreviewFork') {
-               await _runGit(['checkout', originalHead], projDir);
-           } else {
-               await _runGit(['reset', '--hard', originalHead], projDir);
+           String? targetBranch;
+           String? targetHash;
+           
+           try {
+             final saved = jsonDecode(originalHead);
+             targetBranch = saved['branch'];
+             targetHash = saved['hash'];
+           } catch (_) {
+             // Fallback for old format (just hash)
+             targetHash = originalHead;
            }
+
+           if (targetBranch != null) {
+              await _runGit(['checkout', '-f', targetBranch], projDir);
+              if (targetHash != null) {
+                  await _runGit(['reset', '--hard', targetHash], projDir);
+              }
+           } else if (targetHash != null) {
+              await _runGit(['checkout', '-f', targetHash], projDir);
+           }
+
            await _forceRegenerateRepoDocx(projDir);
          } catch (e) {
            print('Error restoring HEAD during cleanup: $e');
@@ -1716,9 +1745,19 @@ Future<PullPreviewResult> previewPull(
     }
 
     // Save current HEAD for restoration
-    final currentHead = await getHead(projDir);
-    if (currentHead != null) {
-      _previewRestorePoints[projDir] = currentHead;
+    // We prefer saving the branch name if attached
+    String? saveState;
+    final currentBranch = await getCurrentBranch(projDir);
+    final currentHash = await getHead(projDir);
+    
+    if (currentBranch != null) {
+       saveState = jsonEncode({'branch': currentBranch, 'hash': currentHash});
+    } else if (currentHash != null) {
+       saveState = jsonEncode({'hash': currentHash});
+    }
+
+    if (saveState != null) {
+      _previewRestorePoints[projDir] = saveState;
     }
 
     // 1. Fetch Remote
@@ -1732,11 +1771,11 @@ Future<PullPreviewResult> previewPull(
     // Cleanup stale PreviewFork before starting
     try {
       // Detach HEAD to ensure we are not on PreviewFork before deleting
-      if (currentHead != null) {
+      if (currentHash != null) {
          // Check if we are on PreviewFork?
          final currentB = await getCurrentBranch(projDir);
          if (currentB == 'PreviewFork') {
-             await _runGit(['checkout', currentHead], projDir);
+             await _runGit(['checkout', currentHash], projDir);
          }
       }
       await _runGit(['branch', '-D', 'PreviewFork'], projDir);
@@ -1757,9 +1796,9 @@ Future<PullPreviewResult> previewPull(
     
     // 3. Get Target Graph
     String? targetBranchName;
-    final currentBranch = await getCurrentBranch(projDir);
-    if (currentBranch != null) {
-       targetBranchName = '$remoteName/$currentBranch';
+    final currentBranch2 = await getCurrentBranch(projDir);
+    if (currentBranch2 != null) {
+       targetBranchName = '$remoteName/$currentBranch2';
     }
 
     final targetGraph = await _getGraphUnlocked(projDir, 
@@ -1780,13 +1819,13 @@ Future<PullPreviewResult> previewPull(
     List<String> conflictingFiles = [];
 
     if (type == 'rebase') {
-      if (currentBranch == null) throw Exception('Detached HEAD');
+      if (currentBranch2 == null) throw Exception('Detached HEAD');
 
       // Direct rebase on current branch
       try {
         // Reuse the logic from rebasePull: use -X theirs to favor local changes (theirs in rebase context)
         // This ensures the preview matches the actual "Confirm" behavior which forcibly retains local changes.
-        await _runGit(['rebase', '-X', 'theirs', '$remoteName/$currentBranch'], projDir);
+        await _runGit(['rebase', '-X', 'theirs', '$remoteName/$currentBranch2'], projDir);
         await _forceRegenerateRepoDocx(projDir);
       } catch (e) {
         // Check for conflicts
@@ -1806,7 +1845,7 @@ Future<PullPreviewResult> previewPull(
       resultGraph = await _getGraphUnlocked(projDir, includeLocal: true, remoteNames: []);
 
     } else if (type == 'branch' || type == 'fork') {
-       if (currentBranch == null) throw Exception('Detached HEAD');
+       if (currentBranch2 == null) throw Exception('Detached HEAD');
 
        // FORK/BRANCH Preview Logic:
        // 1. Keep current branch (local) as is (no merge, no checkout).
@@ -1815,7 +1854,7 @@ Future<PullPreviewResult> previewPull(
        
        try {
          // Force create/update PreviewFork to point to remote branch
-         await _runGit(['branch', '-f', 'PreviewFork', '$remoteName/$currentBranch'], projDir);
+         await _runGit(['branch', '-f', 'PreviewFork', '$remoteName/$currentBranch2'], projDir);
          
          // Switch to PreviewFork to mimic execution state (and ensure Result view focuses on it)
          await _runGit(['checkout', 'PreviewFork'], projDir);
@@ -1837,11 +1876,11 @@ Future<PullPreviewResult> previewPull(
     // Showing 'master' at the old position in the "Result" view is confusing because the user expects
     // to see the result of the move. Since we can't show the moved state (it doesn't exist yet),
     // we hide the old 'master' label so the graph focuses on the pending state (HEAD).
-    if (type == 'rebase' && currentBranch != null && resultGraph != null) {
+    if (type == 'rebase' && currentBranch2 != null && resultGraph != null) {
       for (final c in resultGraph.commits) {
-        c.refs.remove(currentBranch);
+        c.refs.remove(currentBranch2);
         // Also remove fully qualified if present (though _parseRefs usually cleans it)
-        c.refs.remove('refs/heads/$currentBranch');
+        c.refs.remove('refs/heads/$currentBranch2');
       }
     }
 
