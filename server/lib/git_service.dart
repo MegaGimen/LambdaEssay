@@ -2008,7 +2008,7 @@ Future<List<String>> findIdenticalCommit(String name) async {
 
 Future<void> _ensureWebhook(String repoName, String owner, String token) async {
   final giteaUrl = 'http://47.242.109.145:3000/';
-  final targetUrl = 'http://http://47.242.109.145:4829/webhook';
+  final targetUrl = 'http://47.242.109.145:4829/webhook';
   final headers = {
     'Authorization': 'token $token',
     'Content-Type': 'application/json',
