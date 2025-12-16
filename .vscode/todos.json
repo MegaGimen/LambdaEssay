@@ -1,5 +1,17 @@
 [
   {
+    "id": 1765865316437,
+    "text": "让他可以预览远程的状态",
+    "completed": false,
+    "createdAt": "2025-12-16T06:08:36.437Z"
+  },
+  {
+    "id": 1765860380621,
+    "text": "backup莫名其妙只显示一条历史记录",
+    "completed": true,
+    "createdAt": "2025-12-16T04:46:20.621Z"
+  },
+  {
     "id": 1765859410219,
     "text": "增加backup中的读取backup仓库时的验证功能，防止未经授权的访问",
     "completed": false,

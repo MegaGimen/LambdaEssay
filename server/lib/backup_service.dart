@@ -86,7 +86,8 @@ Future<void> _precacheSnapshots(String repoName, String repoPath) async {
     final snapshotDirs = entities.whereType<Directory>().where((d) {
       return p.basename(d.path).contains('_son-');
     }).toList();
-
+    print(
+        "On executing _precacheSnapshots with param snapshotDirs=$snapshotDirs");
     if (snapshotDirs.isNotEmpty) {
       print('Found ${snapshotDirs.length} snapshots.');
       final checkoutRoot = Directory(p.join(_checkoutBaseDir, repoName));
@@ -227,9 +228,11 @@ await targetoutputFile.writeAsString(targetDirstdoutOutput);
 
 Future<List<Map<String, dynamic>>> _getCommitsFromDir(
     String repoPath, String repoName) async {
+  print("Execute _getCommitsFromDir with param repoPath=$repoPath");
   // Check for cached snapshots first (Snapshot Mode)
   final cachedRepoDir = Directory(p.join(_checkoutBaseDir, repoName));
   if (await cachedRepoDir.exists()) {
+    print("cachedRepoDir.exists");
     final subs = cachedRepoDir.listSync().whereType<Directory>().toList();
     if (subs.isNotEmpty) {
       // We are in snapshot mode
@@ -298,13 +301,16 @@ Future<String> _findEffectiveRepoPath(String repoName) async {
   final repoDir = _getBackupDir(repoName);
   print("repodir=$repoDir");
   if (await Directory(p.join(repoDir, '.git')).exists()) {
+    print(1);
     return repoDir;
   }
 
   // Check if we have already cached snapshots in _checkoutBaseDir
   final checkoutDir = Directory(p.join(_checkoutBaseDir, repoName));
   if (await checkoutDir.exists() && checkoutDir.listSync().isNotEmpty) {
-    return repoDir; // Return this even if empty, as we have cached data
+    print(2);
+    print(checkoutDir);
+    return p.join(repoDir,repoName); // Who the fuck writes this piece of shit
   }
 
   // Check if we have snapshot folders (pre-exploded)
@@ -312,6 +318,7 @@ Future<String> _findEffectiveRepoPath(String repoName) async {
   if (await dir.exists()) {
     final subs = dir.listSync().whereType<Directory>();
     if (subs.any((d) => p.basename(d.path).contains('_son-'))) {
+      print(3);
       return repoDir;
     }
   }
