@@ -573,19 +573,6 @@ class _CompareResultPageState extends State<CompareResultPage> {
       appBar: AppBar(title: Text(widget.title)),
       body: Column(
         children: [
-          if (widget.summary.isNotEmpty)
-            Container(
-              height: 150,
-              width: double.infinity,
-              padding: const EdgeInsets.all(8.0),
-              color: Colors.grey[200],
-              child: SingleChildScrollView(
-                child: Text(
-                  widget.summary,
-                  style: const TextStyle(fontFamily: 'monospace'),
-                ),
-              ),
-            ),
           Expanded(
             child: SingleChildScrollView(
               scrollDirection: Axis.vertical,
