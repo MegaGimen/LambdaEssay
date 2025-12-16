@@ -484,17 +484,56 @@ class GraphPainter extends CustomPainter {
       return a.name.compareTo(b.name);
     });
 
+    // Build children map for forward lane extension
+    final children = <String, List<String>>{};
+    for (final c in byId.values) {
+      for (final pId in c.parents) {
+        (children[pId] ??= []).add(c.id);
+      }
+    }
+
     int nextFreeLane = 0;
     for (final b in orderedBranches) {
       var curId = b.head;
       if (laneOf.containsKey(curId)) continue;
       final currentBranchLane = nextFreeLane++;
+
+      // Backward trace
+      var tempId = curId;
       while (true) {
-        if (laneOf.containsKey(curId)) break;
-        laneOf[curId] = currentBranchLane;
-        final node = byId[curId];
+        if (laneOf.containsKey(tempId)) break;
+        laneOf[tempId] = currentBranchLane;
+        final node = byId[tempId];
         if (node == null || node.parents.isEmpty) break;
-        curId = node.parents.first;
+        tempId = node.parents.first;
+      }
+
+      // Forward trace (Extend lane to children/ghosts)
+      var tipId = curId;
+      while (true) {
+        final kids = children[tipId];
+        if (kids == null || kids.isEmpty) break;
+
+        // Sort by date desc
+        kids.sort((a, b) {
+          final da = byId[a]?.date ?? '';
+          final db = byId[b]?.date ?? '';
+          return db.compareTo(da);
+        });
+
+        String? nextTip;
+        for (final k in kids) {
+          if (!laneOf.containsKey(k)) {
+            laneOf[k] = currentBranchLane;
+            nextTip = k;
+            break; // Extend only one path
+          }
+        }
+        if (nextTip != null) {
+          tipId = nextTip;
+        } else {
+          break;
+        }
       }
     }
 
