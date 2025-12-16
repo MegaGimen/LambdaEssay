@@ -302,8 +302,10 @@ class _BackupPageState extends State<BackupPage> {
   Widget build(BuildContext context) {
     final repo = widget.projectName;
     final commits = _filtered();
-    return Scaffold(
-      appBar: AppBar(
+    return Stack(
+      children: [
+        Scaffold(
+          appBar: AppBar(
         title: Text('历史备份预览: $repo'),
         actions: [
           IconButton(
@@ -523,6 +525,15 @@ class _BackupPageState extends State<BackupPage> {
           ),
         ],
       ),
+    ),
+        if (_loading)
+          const Opacity(
+            opacity: 0.5,
+            child: ModalBarrier(dismissible: false, color: Colors.black),
+          ),
+        if (_loading)
+          const Center(child: CircularProgressIndicator()),
+      ],
     );
   }
 }
@@ -576,11 +587,13 @@ class _CompareResultPageState extends State<CompareResultPage> {
               ),
             ),
           Expanded(
-            child: Center(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.vertical,
               child: SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Column(
                       children: [
