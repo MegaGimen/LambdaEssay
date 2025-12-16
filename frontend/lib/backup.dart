@@ -287,6 +287,8 @@ class _BackupPageState extends State<BackupPage> {
             ghostsA: ghostsA,
             ghostsB: ghostsB,
             title: '对比: ${cA.substring(0, 7)} vs ${cB.substring(0, 7)}',
+            commitA: cA,
+            commitB: cB,
           ),
         ),
       );
@@ -547,6 +549,8 @@ class CompareResultPage extends StatefulWidget {
   final Map<String, Color> customNodeColors;
   final List<CommitNode> ghostsA;
   final List<CommitNode> ghostsB;
+  final String commitA;
+  final String commitB;
 
   const CompareResultPage({
     super.key,
@@ -558,6 +562,8 @@ class CompareResultPage extends StatefulWidget {
     this.customNodeColors = const {},
     this.ghostsA = const [],
     this.ghostsB = const [],
+    required this.commitA,
+    required this.commitB,
   });
 
   @override
@@ -584,7 +590,7 @@ class _CompareResultPageState extends State<CompareResultPage> {
                   children: [
                     Column(
                       children: [
-                        const Text("Commit A"),
+                        Text("Commit: ${widget.commitA.substring(0, 7)}"),
                         Container(
                           width: 600,
                           height: 800,
@@ -606,7 +612,7 @@ class _CompareResultPageState extends State<CompareResultPage> {
                     const SizedBox(width: 20),
                     Column(
                       children: [
-                        const Text("Commit B"),
+                        Text("Commit: ${widget.commitB.substring(0, 7)}"),
                         Container(
                           width: 600,
                           height: 800,
