@@ -1,5 +1,11 @@
 [
   {
+    "id": 1765859410219,
+    "text": "增加backup中的读取backup仓库时的验证功能，防止未经授权的访问",
+    "completed": false,
+    "createdAt": "2025-12-16T04:30:10.219Z"
+  },
+  {
     "id": 1765800321218,
     "text": "增加backup中的zip的智能文件下载",
     "completed": false,
@@ -8,7 +14,7 @@
   {
     "id": 1765615043522,
     "text": "拐弯边的捕获只捕获了一部分",
-    "completed": false,
+    "completed": true,
     "createdAt": "2025-12-13T08:37:23.522Z"
   },
   {
