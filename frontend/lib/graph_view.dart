@@ -18,6 +18,9 @@ class GraphPainter extends CustomPainter {
 
   static const double nodeRadius = 6;
 
+  final Map<String, int>? preCalculatedLaneOf;
+  final Map<String, int>? preCalculatedRowOf;
+
   GraphPainter(
     this.data,
     this.branchColors,
@@ -31,6 +34,8 @@ class GraphPainter extends CustomPainter {
     this.customNodeColors,
     this.ghostNodes = const [],
     this.showCurrentHead = true,
+    this.preCalculatedLaneOf,
+    this.preCalculatedRowOf,
   });
 
   static const List<Color> lanePalette = [
@@ -46,16 +51,92 @@ class GraphPainter extends CustomPainter {
     Color(0xFF1E88E5),
   ];
 
+  static Map<String, int> calculateLaneOf(List<CommitNode> allCommits, List<Branch> branches) {
+    // Create a map for fast lookup
+    final byId = {for (final c in allCommits) c.id: c};
+    
+    final laneOf = <String, int>{};
+    final orderedBranches = List<Branch>.from(branches);
+    orderedBranches.sort((a, b) {
+      int pa = a.name == 'master' ? 0 : 1;
+      int pb = b.name == 'master' ? 0 : 1;
+      if (pa != pb) return pa - pb;
+      return a.name.compareTo(b.name);
+    });
+
+    int nextFreeLane = 0;
+    for (final b in orderedBranches) {
+      var curId = b.head;
+      if (laneOf.containsKey(curId)) continue;
+      final currentBranchLane = nextFreeLane++;
+      while (true) {
+        if (laneOf.containsKey(curId)) break;
+        laneOf[curId] = currentBranchLane;
+        final node = byId[curId];
+        if (node == null || node.parents.isEmpty) break;
+        curId = node.parents.first;
+      }
+    }
+
+    // Use byId.values (all commits)
+    final commitsToCheck = byId.values.toList();
+    // Sort by date desc to ensure consistent processing
+    commitsToCheck.sort((a, b) {
+      final d = b.date.compareTo(a.date);
+      if (d != 0) return d;
+      return b.id.compareTo(a.id); // Stabilize sort
+    });
+
+    for (final c in commitsToCheck) {
+      if (!laneOf.containsKey(c.id)) {
+        laneOf[c.id] = nextFreeLane++;
+      }
+      final currentLane = laneOf[c.id]!;
+      for (int i = 0; i < c.parents.length; i++) {
+        final pId = c.parents[i];
+        if (laneOf.containsKey(pId)) continue;
+        if (i == 0) {
+          laneOf[pId] = currentLane;
+        } else {
+          laneOf[pId] = nextFreeLane++;
+        }
+      }
+    }
+    return laneOf;
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
     // Merge real and ghost commits for layout calculation
     final allCommits = [...data.commits, ...ghostNodes];
-    // Create a map for fast lookup
-    final allCommitsById = {for (final c in allCommits) c.id: c};
     final ghostIds = ghostNodes.map((c) => c.id).toSet();
 
-    final laneOf = _laneOfByBranches(allCommitsById, data.branches);
-    final rowOf = <String, int>{};
+    final laneOf = preCalculatedLaneOf ?? calculateLaneOf(allCommits, data.branches);
+    
+    // Prepare rowOf
+    final Map<String, int> rowOf;
+    if (preCalculatedRowOf != null) {
+      rowOf = preCalculatedRowOf!;
+    } else {
+      rowOf = <String, int>{};
+      // Assign rows using mapping or index (using allCommits order would be ideal if sorted)
+      // But we rely on customRowMapping for alignment.
+      for (var i = 0; i < allCommits.length; i++) {
+        final c = allCommits[i];
+        if (customRowMapping != null && customRowMapping!.containsKey(c.id)) {
+          rowOf[c.id] = customRowMapping![c.id]!;
+        } else {
+          // Fallback: if not in mapping, what row?
+          // If it's a ghost node without mapping, it will collide.
+          // We assume all nodes (real + ghost) should be in mapping if we are doing comparison.
+          // If fallback needed, maybe use index in allCommits?
+          // But allCommits isn't sorted by unified logic here.
+          // Let's assume customRowMapping covers everything relevant.
+          rowOf[c.id] = i; 
+        }
+      }
+    }
+
     final paintBorder = Paint()
       ..color = const Color(0xFF1976D2)
       ..style = PaintingStyle.stroke
@@ -82,22 +163,8 @@ class GraphPainter extends CustomPainter {
       }
     }
 
-    // Assign rows using mapping or index (using allCommits order would be ideal if sorted)
-    // But we rely on customRowMapping for alignment.
-    for (var i = 0; i < allCommits.length; i++) {
-      final c = allCommits[i];
-      if (customRowMapping != null && customRowMapping!.containsKey(c.id)) {
-        rowOf[c.id] = customRowMapping![c.id]!;
-      } else {
-        // Fallback: if not in mapping, what row?
-        // If it's a ghost node without mapping, it will collide.
-        // We assume all nodes (real + ghost) should be in mapping if we are doing comparison.
-        // If fallback needed, maybe use index in allCommits?
-        // But allCommits isn't sorted by unified logic here.
-        // Let's assume customRowMapping covers everything relevant.
-        rowOf[c.id] = i; 
-      }
-    }
+    // Assign rows logic moved up to prepare rowOf block
+
 
     String? currentHeadId;
     if (showCurrentHead && data.currentBranch != null) {
@@ -474,58 +541,17 @@ class GraphPainter extends CustomPainter {
     return memo;
   }
 
-  Map<String, int> _laneOfByBranches(Map<String, CommitNode> byId, List<Branch> branches) {
-    final laneOf = <String, int>{};
-    final orderedBranches = List<Branch>.from(branches);
-    orderedBranches.sort((a, b) {
-      int pa = a.name == 'master' ? 0 : 1;
-      int pb = b.name == 'master' ? 0 : 1;
-      if (pa != pb) return pa - pb;
-      return a.name.compareTo(b.name);
-    });
-
-    int nextFreeLane = 0;
-    for (final b in orderedBranches) {
-      var curId = b.head;
-      if (laneOf.containsKey(curId)) continue;
-      final currentBranchLane = nextFreeLane++;
-      while (true) {
-        if (laneOf.containsKey(curId)) break;
-        laneOf[curId] = currentBranchLane;
-        final node = byId[curId];
-        if (node == null || node.parents.isEmpty) break;
-        curId = node.parents.first;
-      }
-    }
-
-    // Use byId.values (all commits) instead of data.commits
-    final allCommits = byId.values.toList();
-    // Sort by date desc to ensure consistent processing? 
-    // GraphData commits are sorted. Ghosts might not be.
-    // It's better to sort them roughly.
-    allCommits.sort((a, b) => b.date.compareTo(a.date));
-
-    for (final c in allCommits) {
-      if (!laneOf.containsKey(c.id)) {
-        laneOf[c.id] = nextFreeLane++;
-      }
-      final currentLane = laneOf[c.id]!;
-      for (int i = 0; i < c.parents.length; i++) {
-        final pId = c.parents[i];
-        if (laneOf.containsKey(pId)) continue;
-        if (i == 0) {
-          laneOf[pId] = currentLane;
-        } else {
-          laneOf[pId] = nextFreeLane++;
-        }
-      }
-    }
-    return laneOf;
-  }
-
   @override
   bool shouldRepaint(covariant GraphPainter oldDelegate) {
-    return oldDelegate.data != data;
+    return oldDelegate.data != data ||
+        oldDelegate.ghostNodes != ghostNodes ||
+        oldDelegate.preCalculatedLaneOf != preCalculatedLaneOf ||
+        oldDelegate.preCalculatedRowOf != preCalculatedRowOf ||
+        oldDelegate.customRowMapping != customRowMapping ||
+        oldDelegate.customNodeColors != customNodeColors ||
+        oldDelegate.selectedNodes != selectedNodes ||
+        oldDelegate.identicalCommitIds != identicalCommitIds ||
+        oldDelegate.working != working;
   }
 }
 
@@ -564,11 +590,58 @@ class _SimpleGraphViewState extends State<SimpleGraphView> {
   Size? _canvasSize;
   Map<String, Color>? _branchColors;
   final Set<String> _selectedNodes = {};
+  
+  Map<String, int>? _cachedLaneOf;
+  Map<String, int>? _cachedRowOf;
 
   @override
   void initState() {
     super.initState();
     _tc = widget.transformationController ?? TransformationController();
+  }
+
+  void _updateLayout() {
+    final allCommits = [...widget.data.commits, ...widget.ghostNodes];
+    
+    // Create effective branches to include ghost nodes in the layout logic.
+    // If a ghost node extends a branch head, we temporarily move the branch head to the ghost node
+    // so that the layout algorithm assigns it the same lane.
+    final effectiveBranches = List<Branch>.from(widget.data.branches);
+    final branchHeads = {for (var b in effectiveBranches) b.head: b};
+    
+    // Sort ghost nodes by date/relationship if needed, but usually they are few.
+    // We assume ghostNodes are ordered such that parents come before children if chained,
+    // or we can iterate multiple times. For now, simple single pass.
+    for (final g in widget.ghostNodes) {
+      if (g.parents.isNotEmpty) {
+        final pId = g.parents.first;
+        if (branchHeads.containsKey(pId)) {
+          final b = branchHeads[pId]!;
+          effectiveBranches.remove(b);
+          final newB = Branch(name: b.name, head: g.id);
+          effectiveBranches.add(newB);
+          // Update map so subsequent ghost nodes can chain onto this one
+          branchHeads.remove(pId);
+          branchHeads[g.id] = newB;
+        }
+      }
+    }
+
+    // Reuse the static method from GraphPainter with effective branches
+    _cachedLaneOf = GraphPainter.calculateLaneOf(allCommits, effectiveBranches);
+    
+    _cachedRowOf = {};
+    for (var i = 0; i < allCommits.length; i++) {
+       final c = allCommits[i];
+       if (widget.customRowMapping != null && widget.customRowMapping!.containsKey(c.id)) {
+         _cachedRowOf![c.id] = widget.customRowMapping![c.id]!;
+       } else {
+         _cachedRowOf![c.id] = i;
+       }
+    }
+    
+    // Force repaint after layout update
+    if (mounted) setState(() {});
   }
 
   @override
@@ -578,10 +651,21 @@ class _SimpleGraphViewState extends State<SimpleGraphView> {
         widget.transformationController != oldWidget.transformationController) {
       _tc = widget.transformationController!;
     }
+    // Ideally update layout here if data changed
+    if (widget.data != oldWidget.data || 
+        widget.ghostNodes != oldWidget.ghostNodes || 
+        widget.customRowMapping != oldWidget.customRowMapping) {
+       _updateLayout();
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    // Ensure layout is updated at least once or if null
+    if (_cachedLaneOf == null || _cachedRowOf == null) {
+      _updateLayout();
+    }
+
     _canvasSize ??= _computeCanvasSize(widget.data);
     _branchColors ??= _assignBranchColors(widget.data.branches);
 
@@ -625,6 +709,8 @@ class _SimpleGraphViewState extends State<SimpleGraphView> {
                 customNodeColors: widget.customNodeColors,
                 ghostNodes: widget.ghostNodes,
                 showCurrentHead: widget.showCurrentHead,
+                preCalculatedLaneOf: _cachedLaneOf,
+                preCalculatedRowOf: _cachedRowOf,
               ),
               size: _canvasSize!,
             ),
@@ -718,18 +804,51 @@ class _SimpleGraphViewState extends State<SimpleGraphView> {
   }
 
   CommitNode? _hitTest(Offset localPos, GraphData data) {
-    // Simple hit test for nodes
-    // Need to duplicate layout logic?
-    // Yes, layout logic is in Painter. This is why main.dart had it in State.
-    // For now, let's skip precise hit testing for readOnly view if it's too complex to duplicate.
-    // Or we can rely on row estimation: y / rowHeight.
-    final row = ((localPos.dy - _rowHeight / 2) / _rowHeight).round();
-    if (row >= 0 && row < data.commits.length) {
-      // Ideally check X too, but row is good enough for simple list
-      // GraphPainter uses: for (var i = 0; i < commits.length; i++) rowOf[c.id] = i;
-      // So yes, row index maps to commits index.
-      return data.commits[row];
+    if (_cachedRowOf == null || _cachedLaneOf == null) return null;
+    
+    final allCommits = [...data.commits, ...widget.ghostNodes];
+    
+    // 1. Check exact node hits (circular area)
+    for (final c in allCommits) {
+      if (!_cachedRowOf!.containsKey(c.id) || !_cachedLaneOf!.containsKey(c.id)) continue;
+      
+      final row = _cachedRowOf![c.id]!;
+      final lane = _cachedLaneOf![c.id]!;
+      
+      final x = lane * _laneWidth + _laneWidth / 2;
+      final y = row * _rowHeight + _rowHeight / 2;
+      
+      final dx = localPos.dx - x;
+      final dy = localPos.dy - y;
+      
+      // Radius is 6, let's give a hit radius of 20
+      if (dx * dx + dy * dy < 400) { 
+        return c;
+      }
     }
-    return null;
+
+    // 2. Fallback: Check row hits with X-axis proximity
+    final row = ((localPos.dy - _rowHeight / 2) / _rowHeight).round();
+    
+    CommitNode? bestMatch;
+    double minDx = double.infinity;
+
+    for (final c in allCommits) {
+       if (_cachedRowOf![c.id] == row) {
+          if (!_cachedLaneOf!.containsKey(c.id)) continue;
+          
+          final lane = _cachedLaneOf![c.id]!;
+          final x = lane * _laneWidth + _laneWidth / 2;
+          final dist = (localPos.dx - x).abs();
+          
+          // Only consider if within half a lane width to avoid cross-lane false positives
+          if (dist < _laneWidth / 2 && dist < minDx) {
+            minDx = dist;
+            bestMatch = c;
+          }
+       }
+    }
+    
+    return bestMatch;
   }
 }
