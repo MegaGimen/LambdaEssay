@@ -1,5 +1,11 @@
 [
   {
+    "id": 1765800321218,
+    "text": "增加backup中的zip的智能文件下载",
+    "completed": false,
+    "createdAt": "2025-12-15T12:05:21.218Z"
+  },
+  {
     "id": 1765615043522,
     "text": "拐弯边的捕获只捕获了一部分",
     "completed": false,
@@ -8,7 +14,7 @@
   {
     "id": 1765615039484,
     "text": "让pull和push做选择时可以预览",
-    "completed": false,
+    "completed": true,
     "createdAt": "2025-12-13T08:37:19.484Z"
   },
   {
@@ -140,7 +146,7 @@
   {
     "id": 1765336262162,
     "text": "点击分支时，如果有多重分支，那么可能识别不到当前所在的另一个分支",
-    "completed": false,
+    "completed": true,
     "createdAt": "2025-12-10T03:11:02.162Z"
   }
 ]
