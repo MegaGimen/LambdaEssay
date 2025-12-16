@@ -3,15 +3,18 @@ import 'dart:convert';
 import 'package:path/path.dart' as p;
 import 'package:http/http.dart' as http;
 import 'models.dart';
+
 String _baseDir() {
   final app = Platform.environment['APPDATA'];
-  if (app != null && app.isNotEmpty) return p.join(app, 'gitdocx_history_cache');
+  if (app != null && app.isNotEmpty)
+    return p.join(app, 'gitdocx_history_cache');
   final home = Platform.environment['HOME'] ?? '';
   if (home.isNotEmpty) return p.join(home, '.gitdocx_history_cachex');
   return p.join(Directory.systemTemp.path, 'gitdocx_history_cache');
 }
+
 final String _backupBaseUrl = 'http://47.242.109.145:4829';
-final String _tempDirName = p.join(_baseDir(),'temp_backups');
+final String _tempDirName = p.join(_baseDir(), 'temp_backups');
 
 // New checkout base directory
 final String _checkoutBaseDir =
@@ -26,9 +29,15 @@ Future<List<Map<String, dynamic>>> listBackupCommits(String repoName,
     {bool force = false}) async {
   final dirPath = _getBackupDir(repoName);
   final dir = Directory(dirPath);
+  print("Force?$force");
 
   if (force && await dir.exists()) {
+    print("Delete Original Dir!");
     await dir.delete(recursive: true);
+  }
+  if (force && await File('$dirPath.zip').exists()) {
+    print("Delete Zip file!");
+    await File('$dirPath.zip').delete();
   }
 
   if (!await dir.exists()) {
@@ -95,7 +104,7 @@ Future<void> _precacheSnapshots(String repoName, String repoPath) async {
         if (await targetDir.exists()) {
           await targetDir.delete(recursive: true);
         }
-        
+
         try {
           await d.rename(targetDir.path);
         } catch (e) {
@@ -105,8 +114,9 @@ Future<void> _precacheSnapshots(String repoName, String repoPath) async {
           ]);
           await d.delete(recursive: true);
         }
-        
-        await Process.run('git', ['init', '--bare', '.'], workingDirectory: targetDir.path);
+
+        await Process.run('git', ['init', '--bare', '.'],
+            workingDirectory: targetDir.path);
       }
       return;
     }
@@ -215,7 +225,8 @@ await targetoutputFile.writeAsString(targetDirstdoutOutput);
   */
 }
 
-Future<List<Map<String, dynamic>>> _getCommitsFromDir(String repoPath, String repoName) async {
+Future<List<Map<String, dynamic>>> _getCommitsFromDir(
+    String repoPath, String repoName) async {
   // Check for cached snapshots first (Snapshot Mode)
   final cachedRepoDir = Directory(p.join(_checkoutBaseDir, repoName));
   if (await cachedRepoDir.exists()) {
@@ -224,15 +235,15 @@ Future<List<Map<String, dynamic>>> _getCommitsFromDir(String repoPath, String re
       // We are in snapshot mode
       final commits = <Map<String, dynamic>>[];
       for (final d in subs) {
-          final id = p.basename(d.path);
-          commits.add({
-            'id': id,
-            'parents': [],
-            'refs': [],
-            'author': 'Snapshot',
-            'date': DateTime.now().toIso8601String(), 
-            'subject': 'Snapshot $id',
-          });
+        final id = p.basename(d.path);
+        commits.add({
+          'id': id,
+          'parents': [],
+          'refs': [],
+          'author': 'Snapshot',
+          'date': DateTime.now().toIso8601String(),
+          'subject': 'Snapshot $id',
+        });
       }
       return commits;
     }
@@ -349,8 +360,8 @@ Future<String> getSnapshotPath(String repoName, String commitId) async {
   final snapshotPath = p.join(_checkoutBaseDir, repoName, commitId);
   final snapshotDir = Directory(snapshotPath);
   if (!await snapshotDir.exists()) {
-     // Try to ensure it exists? Or just throw
-     throw Exception('Snapshot not found for $commitId');
+    // Try to ensure it exists? Or just throw
+    throw Exception('Snapshot not found for $commitId');
   }
   return snapshotPath;
 }

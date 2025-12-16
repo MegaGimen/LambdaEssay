@@ -75,6 +75,7 @@ class _BackupPageState extends State<BackupPage> {
     });
     try {
       final url = '$backupBase/backup/commits';
+      print("[backup]: calling /backup/commits with param force=true");
       final resp = await http.post(
         Uri.parse(url),
         headers: {'Content-Type': 'application/json'},
@@ -154,17 +155,18 @@ class _BackupPageState extends State<BackupPage> {
     final details = j['details'] as Map<String, dynamic>? ?? {};
 
     final colors = _computeNodeColors(details);
-    
+
     // Compute ghosts
     final commitsA = gA.commits.map((c) => c.id).toSet();
     final commitsB = gB.commits.map((c) => c.id).toSet();
-    
+
     final ghostsA = gB.commits.where((c) => !commitsA.contains(c.id)).toList();
     final ghostsB = gA.commits.where((c) => !commitsB.contains(c.id)).toList();
 
     if (!mounted) return;
     setState(() {
-      _comparisons[sha] = ComparisonData(gA, gB, mapping, summary, colors, ghostsA, ghostsB);
+      _comparisons[sha] =
+          ComparisonData(gA, gB, mapping, summary, colors, ghostsA, ghostsB);
     });
   }
 
@@ -183,7 +185,8 @@ class _BackupPageState extends State<BackupPage> {
           final commits = ours['commits'] as List?;
           if (commits != null) {
             for (final id in commits) {
-              colors[id.toString()] = Colors.green.shade300; // Unique to A (Backup)
+              colors[id.toString()] =
+                  Colors.green.shade300; // Unique to A (Backup)
             }
           }
         }
@@ -193,7 +196,8 @@ class _BackupPageState extends State<BackupPage> {
           final commits = theirs['commits'] as List?;
           if (commits != null) {
             for (final id in commits) {
-              colors[id.toString()] = Colors.blue.shade300; // Unique to B (Local)
+              colors[id.toString()] =
+                  Colors.blue.shade300; // Unique to B (Local)
             }
           }
         }
@@ -262,11 +266,13 @@ class _BackupPageState extends State<BackupPage> {
       final summary = j['summary'] as String? ?? '';
       final details = j['details'] as Map<String, dynamic>? ?? {};
       final colors = _computeNodeColors(details);
-      
+
       final commitsA = gA.commits.map((c) => c.id).toSet();
       final commitsB = gB.commits.map((c) => c.id).toSet();
-      final ghostsA = gB.commits.where((c) => !commitsA.contains(c.id)).toList();
-      final ghostsB = gA.commits.where((c) => !commitsB.contains(c.id)).toList();
+      final ghostsA =
+          gB.commits.where((c) => !commitsA.contains(c.id)).toList();
+      final ghostsB =
+          gA.commits.where((c) => !commitsB.contains(c.id)).toList();
 
       if (!mounted) return;
       Navigator.push(
@@ -354,7 +360,8 @@ class _BackupPageState extends State<BackupPage> {
                   const SizedBox(width: 8),
                   ElevatedButton(
                     onPressed: _compareTwoCommits,
-                    style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.orange),
                     child: const Text('开始比较'),
                   ),
                 ],
@@ -397,7 +404,8 @@ class _BackupPageState extends State<BackupPage> {
                                       onChanged: (v) {
                                         setState(() {
                                           if (v == true) {
-                                            if (_selectedCommits.length >= 2) return;
+                                            if (_selectedCommits.length >= 2)
+                                              return;
                                             _selectedCommits.add(sha);
                                           } else {
                                             _selectedCommits.remove(sha);
@@ -424,71 +432,87 @@ class _BackupPageState extends State<BackupPage> {
                                   children: [
                                     Center(
                                       child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      // Backup Graph
-                                      Column(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
                                         children: [
-                                          const Text("备份版本"),
-                                          Container(
-                                            width: 500,
-                                            height: 500,
-                                            decoration: BoxDecoration(
-                                              border: Border.all(color: Colors.black),
-                                            ),
-                                            child: MouseRegion(
-                                              onEnter: (_) => setState(() => _graphHovering = true),
-                                              onExit: (_) => setState(() => _graphHovering = false),
-                                              child: SimpleGraphView(
-                                                data: comparison.graphA,
-                                                readOnly: true,
-                                                onPreviewCommit: null,
-                                                transformationController: _sharedTc,
-                                                customRowMapping: comparison.mapping,
-                                                customNodeColors: comparison.colors,
-                                                ghostNodes: comparison.ghostsA,
-                                                showCurrentHead: false,
+                                          // Backup Graph
+                                          Column(
+                                            children: [
+                                              const Text("备份版本"),
+                                              Container(
+                                                width: 500,
+                                                height: 500,
+                                                decoration: BoxDecoration(
+                                                  border: Border.all(
+                                                      color: Colors.black),
+                                                ),
+                                                child: MouseRegion(
+                                                  onEnter: (_) => setState(() =>
+                                                      _graphHovering = true),
+                                                  onExit: (_) => setState(() =>
+                                                      _graphHovering = false),
+                                                  child: SimpleGraphView(
+                                                    data: comparison.graphA,
+                                                    readOnly: true,
+                                                    onPreviewCommit: null,
+                                                    transformationController:
+                                                        _sharedTc,
+                                                    customRowMapping:
+                                                        comparison.mapping,
+                                                    customNodeColors:
+                                                        comparison.colors,
+                                                    ghostNodes:
+                                                        comparison.ghostsA,
+                                                    showCurrentHead: false,
+                                                  ),
+                                                ),
                                               ),
-                                            ),
+                                            ],
+                                          ),
+                                          const SizedBox(width: 20),
+                                          // Local Graph
+                                          Column(
+                                            children: [
+                                              const Text("当前本地状态"),
+                                              Container(
+                                                width: 500,
+                                                height: 500,
+                                                decoration: BoxDecoration(
+                                                  border: Border.all(
+                                                      color: Colors.black),
+                                                ),
+                                                child: MouseRegion(
+                                                  onEnter: (_) => setState(() =>
+                                                      _graphHovering = true),
+                                                  onExit: (_) => setState(() =>
+                                                      _graphHovering = false),
+                                                  child: SimpleGraphView(
+                                                    data: comparison.graphB,
+                                                    readOnly: true,
+                                                    transformationController:
+                                                        _sharedTc,
+                                                    customRowMapping:
+                                                        comparison.mapping,
+                                                    customNodeColors:
+                                                        comparison.colors,
+                                                    ghostNodes:
+                                                        comparison.ghostsB,
+                                                    showCurrentHead: false,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
                                           ),
                                         ],
                                       ),
-                                      const SizedBox(width: 20),
-                                      // Local Graph
-                                      Column(
-                                        children: [
-                                          const Text("当前本地状态"),
-                                          Container(
-                                            width: 500,
-                                            height: 500,
-                                            decoration: BoxDecoration(
-                                              border: Border.all(color: Colors.black),
-                                            ),
-                                            child: MouseRegion(
-                                              onEnter: (_) => setState(() => _graphHovering = true),
-                                              onExit: (_) => setState(() => _graphHovering = false),
-                                              child: SimpleGraphView(
-                                                data: comparison.graphB,
-                                                readOnly: true,
-                                                transformationController: _sharedTc,
-                                                customRowMapping: comparison.mapping,
-                                                customNodeColors: comparison.colors,
-                                                ghostNodes: comparison.ghostsB,
-                                                showCurrentHead: false,
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            )
+                                    ),
+                                  ],
+                                )
                               else
                                 const SizedBox(
                                   height: 100,
-                                  child: Center(child: CircularProgressIndicator()),
+                                  child: Center(
+                                      child: CircularProgressIndicator()),
                                 ),
                             ],
                           ),
@@ -558,54 +582,54 @@ class _CompareResultPageState extends State<CompareResultPage> {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-              Column(
-                children: [
-                  const Text("Commit A"),
-                  Container(
-                    width: 600,
-                    height: 800,
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.black),
+                    Column(
+                      children: [
+                        const Text("Commit A"),
+                        Container(
+                          width: 600,
+                          height: 800,
+                          decoration: BoxDecoration(
+                            border: Border.all(color: Colors.black),
+                          ),
+                          child: SimpleGraphView(
+                            data: widget.graphA,
+                            readOnly: true,
+                            transformationController: _tc,
+                            customRowMapping: widget.rowMapping,
+                            customNodeColors: widget.customNodeColors,
+                            ghostNodes: widget.ghostsA,
+                            showCurrentHead: false,
+                          ),
+                        ),
+                      ],
                     ),
-                    child: SimpleGraphView(
-                      data: widget.graphA,
-                      readOnly: true,
-                      transformationController: _tc,
-                      customRowMapping: widget.rowMapping,
-                      customNodeColors: widget.customNodeColors,
-                      ghostNodes: widget.ghostsA,
-                      showCurrentHead: false,
+                    const SizedBox(width: 20),
+                    Column(
+                      children: [
+                        const Text("Commit B"),
+                        Container(
+                          width: 600,
+                          height: 800,
+                          decoration: BoxDecoration(
+                            border: Border.all(color: Colors.black),
+                          ),
+                          child: SimpleGraphView(
+                            data: widget.graphB,
+                            readOnly: true,
+                            transformationController: _tc,
+                            customRowMapping: widget.rowMapping,
+                            customNodeColors: widget.customNodeColors,
+                            ghostNodes: widget.ghostsB,
+                            showCurrentHead: false,
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-              const SizedBox(width: 20),
-              Column(
-                children: [
-                  const Text("Commit B"),
-                  Container(
-                    width: 600,
-                    height: 800,
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.black),
-                    ),
-                    child: SimpleGraphView(
-                      data: widget.graphB,
-                      readOnly: true,
-                      transformationController: _tc,
-                      customRowMapping: widget.rowMapping,
-                      customNodeColors: widget.customNodeColors,
-                      ghostNodes: widget.ghostsB,
-                      showCurrentHead: false,
-                    ),
-                  ),
-                ],
-              ),
-            ],
             ),
           ),
-        ),
-      ),
         ],
       ),
     );
@@ -620,5 +644,6 @@ class ComparisonData {
   final Map<String, Color> colors;
   final List<CommitNode> ghostsA;
   final List<CommitNode> ghostsB;
-  ComparisonData(this.graphA, this.graphB, this.mapping, this.summary, this.colors, this.ghostsA, this.ghostsB);
+  ComparisonData(this.graphA, this.graphB, this.mapping, this.summary,
+      this.colors, this.ghostsA, this.ghostsB);
 }
