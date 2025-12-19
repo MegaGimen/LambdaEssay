@@ -1092,8 +1092,8 @@ Future<void> main(List<String> args) async {
   router.post('/backup/commits', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
+    final token = (data['token'] as String?)?.trim() ?? '';
     final repoName = (data['repoName'] as String?)?.trim() ?? '';
-    final force = true;// This needs to be configured in the future
 
     if (repoName.isEmpty) {
       return _cors(Response(400,
@@ -1101,8 +1101,7 @@ Future<void> main(List<String> args) async {
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
-      print('calling BackupCommits with force=$force');
-      final commits = await listBackupCommits(repoName, force: force);
+      final commits = await listBackupCommits(repoName,token);
       return _cors(Response.ok(jsonEncode({'commits': commits}), headers: {
         'Content-Type': 'application/json; charset=utf-8',
       }));

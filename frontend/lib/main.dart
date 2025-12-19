@@ -1917,6 +1917,7 @@ class _GraphPageState extends State<GraphPage> {
                         : working,
                     repoPath: pathCtrl.text.trim(),
                     projectName: currentProjectName,
+                    token: _token,
                     onRefresh: _load,
                     onUpdate: _onUpdateRepoAction,
                     onMerge: _performMerge,
@@ -1945,6 +1946,7 @@ class _GraphView extends StatefulWidget {
   final WorkingState? working;
   final String repoPath;
   final String? projectName;
+  final String? token;
   final VoidCallback? onRefresh;
   final Future<void> Function({bool forcePull})? onUpdate;
   final Future<void> Function(String)? onMerge;
@@ -1956,6 +1958,7 @@ class _GraphView extends StatefulWidget {
     this.working,
     required this.repoPath,
     this.projectName,
+    this.token,
     this.onRefresh,
     this.onUpdate,
     this.onMerge,
@@ -2941,6 +2944,7 @@ class _GraphViewState extends State<_GraphView> {
                                 builder: (_) => BackupPage(
                                       projectName: widget.projectName!,
                                       repoPath: widget.repoPath,
+                                      token: widget.token ?? 'No token there bro.',
                                     )),
                           );
                         },
