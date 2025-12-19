@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:process/process.dart';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:shelf/shelf.dart';
@@ -63,7 +64,7 @@ Future<void> _killPort(int port) async {
     print('Failed to clean up port $port: $e');
   }
 }
-
+final ProcessManager _processManager = const LocalProcessManager();
 Future<void> main(List<String> args) async {
   final setGlobal = await Process.run(
       'git', ['config', '--global', 'core.autocrlf', 'false']);
@@ -79,7 +80,16 @@ Future<void> main(List<String> args) async {
     if (File(heideggerPath).existsSync()) {
       await _killPort(5000);
       print('Starting Heidegger service from $heideggerPath...');
-      await Process.start(heideggerPath, [], mode: ProcessStartMode.normal);
+      // 使用 PowerShell 启动 Heidegger.exe，完全隐藏窗口
+      Process process = await _processManager.start(
+        [
+          'powershell',
+          '-WindowStyle', 'Hidden',
+          '-Command', 'Start-Process -FilePath "$heideggerPath" -WindowStyle Hidden'
+        ],
+        mode: ProcessStartMode.normal,
+        runInShell: false
+      );
     } else {
       print('Heidegger.exe not found at $heideggerPath');
     }
