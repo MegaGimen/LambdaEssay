@@ -69,3 +69,6 @@ server/lib/mammoth/node_modules
 server/bin/doc2html.exe
 
 server/wordplugin/node_modules
+server/wordplugin
+
+server/lib/diff/testrepo

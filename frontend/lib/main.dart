@@ -5,7 +5,10 @@ import 'package:flutter/gestures.dart';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'models.dart';
 import 'visualize.dart';
+import 'backup.dart';
+import 'pull_preview.dart';
 
 void main() {
   runApp(const GitGraphApp());
@@ -21,89 +24,6 @@ class GitGraphApp extends StatelessWidget {
       home: const GraphPage(),
     );
   }
-}
-
-class CommitNode {
-  final String id;
-  final List<String> parents;
-  final List<String> refs;
-  final String author;
-  final String date;
-  final String subject;
-  CommitNode({
-    required this.id,
-    required this.parents,
-    required this.refs,
-    required this.author,
-    required this.date,
-    required this.subject,
-  });
-  factory CommitNode.fromJson(Map<String, dynamic> j) => CommitNode(
-        id: j['id'],
-        parents: (j['parents'] as List).cast<String>(),
-        refs: (j['refs'] as List).cast<String>(),
-        author: j['author'],
-        date: j['date'],
-        subject: j['subject'],
-      );
-}
-
-class Branch {
-  final String name;
-  final String head;
-  Branch({required this.name, required this.head});
-  factory Branch.fromJson(Map<String, dynamic> j) =>
-      Branch(name: j['name'], head: j['head']);
-}
-
-class EdgeInfo {
-  final String child;
-  final String parent;
-  final List<String> branches;
-  final bool isMerge;
-  EdgeInfo({
-    required this.child,
-    required this.parent,
-    required this.branches,
-    this.isMerge = false,
-  });
-}
-
-class GraphData {
-  final List<CommitNode> commits;
-  final List<Branch> branches;
-  final Map<String, List<String>> chains;
-  final String? currentBranch;
-  final List<List<String>> customEdges;
-  GraphData({
-    required this.commits,
-    required this.branches,
-    required this.chains,
-    this.currentBranch,
-    this.customEdges = const [],
-  });
-  factory GraphData.fromJson(Map<String, dynamic> j) => GraphData(
-        commits: ((j['commits'] as List).map(
-          (e) => CommitNode.fromJson(e as Map<String, dynamic>),
-        )).toList(),
-        branches: ((j['branches'] as List).map(
-          (e) => Branch.fromJson(e as Map<String, dynamic>),
-        )).toList(),
-        chains: (j['chains'] as Map<String, dynamic>).map(
-          (k, v) => MapEntry(k, (v as List).cast<String>()),
-        ),
-        currentBranch: j['currentBranch'],
-        customEdges: (j['customEdges'] as List?)
-                ?.map((e) => (e as List).cast<String>())
-                .toList() ??
-            [],
-      );
-}
-
-class WorkingState {
-  final bool changed;
-  final String? baseId;
-  WorkingState({required this.changed, this.baseId});
 }
 
 class GraphPage extends StatefulWidget {
@@ -642,18 +562,61 @@ class _GraphPageState extends State<GraphPage> {
             child: const Text('取消'),
           ),
           OutlinedButton(
-            onPressed: () => Navigator.pop(ctx, 'fork'),
-            child: const Text('分叉 (Branch Off)'),
+            onPressed: () async {
+              if (currentProjectName == null || _username == null || _token == null) return;
+              final ok = await Navigator.push(context, MaterialPageRoute(builder: (_) => PullPreviewPage(
+                repoName: currentProjectName!,
+                username: _username!,
+                token: _token!,
+                type: 'fork',
+              )));
+              if (ok == true && ctx.mounted) Navigator.pop(ctx, 'fork');
+            },
+            child: const Text('分叉 (Fork)'),
           ),
           ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, 'rebase'),
+            onPressed: () async {
+              if (currentProjectName == null || _username == null || _token == null) return;
+              final ok = await Navigator.push(context, MaterialPageRoute(builder: (_) => PullPreviewPage(
+                repoName: currentProjectName!,
+                username: _username!,
+                token: _token!,
+                type: 'rebase',
+              )));
+              if (ok == true && ctx.mounted) Navigator.pop(ctx, 'rebase');
+            },
             child: const Text('在远程提交后附着 (Rebase)'),
           ),
           if (!isPush)
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-              onPressed: () => Navigator.pop(ctx, 'force'),
+              onPressed: () async {
+                 if (currentProjectName == null || _username == null || _token == null) return;
+                 final ok = await Navigator.push(context, MaterialPageRoute(builder: (_) => PullPreviewPage(
+                    repoName: currentProjectName!,
+                    username: _username!,
+                    token: _token!,
+                    type: 'force',
+                )));
+                if (ok == true && ctx.mounted) Navigator.pop(ctx, 'force');
+              },
               child: const Text('强制覆盖 (Force Overwrite)'),
+            ),
+            const SizedBox(height: 16),
+            TextButton.icon(
+              icon: const Icon(Icons.compare_arrows),
+              label: const Text('预览冲突差异 (Preview Differences)'),
+              onPressed: () async {
+                if (currentProjectName == null || _username == null || _token == null) return;
+                // Use 'force' preview type which shows side-by-side comparison
+                // This is effectively what "preview conflict" means (mine vs theirs)
+                await Navigator.push(context, MaterialPageRoute(builder: (_) => PullPreviewPage(
+                  repoName: currentProjectName!,
+                  username: _username!,
+                  token: _token!,
+                  type: 'force', 
+                )));
+              },
             ),
         ],
       ),
@@ -1001,6 +964,28 @@ class _GraphPageState extends State<GraphPage> {
     } finally {
       setState(() => loading = false);
     }
+  }
+
+  Future<void> _onPreviewRemote() async {
+    if (!await _ensureToken()) {
+      setState(() => error = '请先登录');
+      return;
+    }
+    if (currentProjectName == null) {
+      setState(() => error = '当前没有打开的项目');
+      return;
+    }
+
+    // Directly open preview page with type='remote'
+    // This will fetch remote and local graphs and show them side-by-side
+    // The backend 'previewPull' will skip rebase/fork logic if type is not recognized,
+    // effectively just returning the comparison graphs.
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => PullPreviewPage(
+      repoName: currentProjectName!,
+      username: _username!,
+      token: _token!,
+      type: 'remote', 
+    )));
   }
 
   Future<void> _onUpdateRepo() async {
@@ -1846,6 +1831,11 @@ class _GraphPageState extends State<GraphPage> {
                   child: const Text('拉取'),
                 ),
                 const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: loading ? null : _onPreviewRemote,
+                  child: const Text('预览远程'),
+                ),
+                const SizedBox(width: 8),
                 if (currentProjectName != null)
                   Text(
                     ' 当前项目: $currentProjectName ',
@@ -1917,6 +1907,7 @@ class _GraphPageState extends State<GraphPage> {
                         : working,
                     repoPath: pathCtrl.text.trim(),
                     projectName: currentProjectName,
+                    token: _token,
                     onRefresh: _load,
                     onUpdate: _onUpdateRepoAction,
                     onMerge: _performMerge,
@@ -1945,6 +1936,7 @@ class _GraphView extends StatefulWidget {
   final WorkingState? working;
   final String repoPath;
   final String? projectName;
+  final String? token;
   final VoidCallback? onRefresh;
   final Future<void> Function({bool forcePull})? onUpdate;
   final Future<void> Function(String)? onMerge;
@@ -1956,6 +1948,7 @@ class _GraphView extends StatefulWidget {
     this.working,
     required this.repoPath,
     this.projectName,
+    this.token,
     this.onRefresh,
     this.onUpdate,
     this.onMerge,
@@ -2258,7 +2251,7 @@ class _GraphViewState extends State<_GraphView> {
       final resp = await http.post(
         Uri.parse('http://localhost:8080/branch/create'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'repoPath': widget.repoPath, 'branchName': name}),
+        body: jsonEncode({'repoPath': widget.repoPath, 'branchName': Branch.encodeName(name)}),
       );
       if (resp.statusCode != 200) throw Exception(resp.body);
       if (widget.onUpdate != null) {
@@ -2349,7 +2342,7 @@ class _GraphViewState extends State<_GraphView> {
     if (ok != true) return;
     final name = nameCtrl.text.trim();
     if (name.isEmpty) return;
-    await _doSwitchBranch(name);
+    await _doSwitchBranch(Branch.encodeName(name));
   }
 
   void _showNodeActionDialog(CommitNode node) {
@@ -2800,7 +2793,7 @@ class _GraphViewState extends State<_GraphView> {
                                           Navigator.pop(context);
                                           _doSwitchBranch(b);
                                         },
-                                        child: Text(b),
+                                        child: Text(Branch.decodeName(b)),
                                       ))
                                   .toList(),
                             ),
@@ -2848,7 +2841,7 @@ class _GraphViewState extends State<_GraphView> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    '当前分支: ${widget.data.currentBranch ?? "Unknown"}',
+                    '当前分支: ${Branch.decodeName(widget.data.currentBranch ?? "Unknown")}',
                     style: const TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
@@ -2925,6 +2918,28 @@ class _GraphViewState extends State<_GraphView> {
                         onPressed: _resetView,
                         icon: const Icon(Icons.home),
                         label: const Text('返回主视角'),
+                      ),
+                      const SizedBox(width: 8),
+                      ElevatedButton.icon(
+                        onPressed: () {
+                          if (widget.projectName == null || widget.repoPath.isEmpty) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('请先打开一个项目')),
+                            );
+                            return;
+                          }
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (_) => BackupPage(
+                                      projectName: widget.projectName!,
+                                      repoPath: widget.repoPath,
+                                      token: widget.token ?? 'No token there bro.',
+                                    )),
+                          );
+                        },
+                        icon: const Icon(Icons.history),
+                        label: const Text('历史备份'),
                       ),
                     ],
                   ),
@@ -3006,7 +3021,7 @@ class _GraphViewState extends State<_GraphView> {
                             ),
                             const SizedBox(width: 6),
                             Text(
-                              b.name,
+                              Branch.decodeName(b.name),
                               style: TextStyle(
                                 fontWeight: b.name == widget.data.currentBranch
                                     ? FontWeight.bold
@@ -3335,20 +3350,11 @@ class _GraphViewState extends State<_GraphView> {
 
     // 1. 对分支进行排序 (master 优先，然后按 Head 提交的新旧排序)
     final orderedBranches = List<Branch>.from(data.branches);
-    final commitIndex = <String, int>{};
-    for (var i = 0; i < data.commits.length; i++) {
-      commitIndex[data.commits[i].id] = i;
-    }
 
     orderedBranches.sort((a, b) {
       int pa = a.name == 'master' ? 0 : 1;
       int pb = b.name == 'master' ? 0 : 1;
       if (pa != pb) return pa - pb;
-
-      // Sort by head commit index (smaller index = newer = higher priority)
-      final idxA = commitIndex[a.head] ?? 999999;
-      final idxB = commitIndex[b.head] ?? 999999;
-      if (idxA != idxB) return idxA - idxB;
 
       return a.name.compareTo(b.name);
     });
@@ -3826,14 +3832,13 @@ class GraphPainter extends CustomPainter {
       if (msg.length > 10) {
         msg = '${msg.substring(0, 10)}...';
       }
-
       textPainter.text = TextSpan(
         style: const TextStyle(color: Colors.black, fontSize: 12),
         children: [
           TextSpan(text: '提交id：${c.id.substring(0, 7)}'),
           if (c.refs.isNotEmpty)
             TextSpan(
-                text: ' [${c.refs.first}]',
+                text: ' [${Branch.decodeName(c.refs.first)}]',
                 style: const TextStyle(fontWeight: FontWeight.bold)),
           const TextSpan(text: '\n'),
           TextSpan(text: '提交信息：$msg'),
