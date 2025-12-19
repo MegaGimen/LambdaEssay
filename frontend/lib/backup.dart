@@ -8,10 +8,12 @@ import 'graph_view.dart'; // For SimpleGraphView
 class BackupPage extends StatefulWidget {
   final String projectName;
   final String repoPath;
+  final String token;
   const BackupPage({
     super.key,
     required this.projectName,
     required this.repoPath,
+    required this.token,
   });
   @override
   State<BackupPage> createState() => _BackupPageState();
@@ -75,11 +77,11 @@ class _BackupPageState extends State<BackupPage> {
     });
     try {
       final url = '$backupBase/backup/commits';
-      print("[backup]: calling /backup/commits with param force=true");
+        print("The token here is ${widget.token}");
       final resp = await http.post(
         Uri.parse(url),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'repoName': repo, 'force': true}),
+        body: jsonEncode({'repoName': repo,"token":widget.token}),
       );
       if (resp.statusCode != 200) {
         throw Exception('加载备份失败: ${resp.body}');

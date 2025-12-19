@@ -4,6 +4,35 @@ import 'package:path/path.dart' as p;
 import 'package:http/http.dart' as http;
 import 'models.dart';
 
+import 'package:crypto/crypto.dart';
+
+Future<String> sha1hash(String filePath) async {
+  print(filePath);
+
+  try {
+    final file = File(filePath);
+
+    if (!file.existsSync()) {
+      return "错误：文件 '$filePath' 不存在";
+    }
+
+    final stream = file.openRead();
+    final hash = sha1;
+    final bytes = await stream.fold<List<int>>(
+        <int>[], (previous, element) => previous..addAll(element));
+
+    final digest = hash.convert(bytes);
+    return digest.toString();
+  } on FileSystemException catch (e) {
+    if (e.osError?.errorCode == 13) {
+      return "错误：没有权限读取文件 '$filePath'";
+    }
+    return "错误：${e.message}";
+  } catch (e) {
+    return "错误：$e";
+  }
+}
+
 String _baseDir() {
   final app = Platform.environment['APPDATA'];
   if (app != null && app.isNotEmpty)
@@ -25,49 +54,54 @@ String _getBackupDir(String repoName) {
   return p.join(p.dirname(scriptDir), _tempDirName, repoName);
 }
 
-Future<List<Map<String, dynamic>>> listBackupCommits(String repoName,
-    {bool force = false}) async {
+Future<List<Map<String, dynamic>>> listBackupCommits(
+    String repoName, String AuthToken) async {
   final dirPath = _getBackupDir(repoName);
   final dir = Directory(dirPath);
-  print("Force?$force");
-
-  if (force && await dir.exists()) {
-    print("Delete Original Dir!");
-    await dir.delete(recursive: true);
-  }
-  if (force && await File('$dirPath.zip').exists()) {
-    print("Delete Zip file!");
-    await File('$dirPath.zip').delete();
+  String LocalSha1 = "";
+  if (await File('$dirPath.zip').exists()) {
+    LocalSha1 = await sha1hash('$dirPath.zip');
   }
 
-  if (!await dir.exists()) {
-    // Download
-    print('Downloading backup for $repoName...');
-    final zipUrl = '$_backupBaseUrl/backups/$repoName/download';
-    final resp = await http.get(Uri.parse(zipUrl));
-    if (resp.statusCode != 200) {
-      throw Exception('Failed to download backup: ${resp.statusCode}');
+  final zipUrl =
+      '$_backupBaseUrl/backups/$repoName/download?token=$AuthToken&LocalSha1=$LocalSha1';
+  final resp = await http.get(Uri.parse(zipUrl));
+
+  if (resp.statusCode != 200) {
+    print(resp.body);
+    throw Exception('Failed to download backup: ${resp.statusCode}');
+  }
+
+  try {
+    final jsonData = jsonDecode(resp.body);
+    print("Debug,jsonData=$jsonData,everything cool bro!");
+    if (jsonData["message"] == "success") print("File up to date");
+  } catch (_) {
+    print("New file!");
+    //新的文件
+    if (await dir.exists()) await dir.delete(recursive: true);
+    if (await File('$dirPath.zip').exists())
+      await File('$dirPath.zip').delete();
+    print("Deleted");
+    if (!await dir.exists()) {
+      // Download
+      print('Downloading backup for $repoName...');
+
+      final zipFile = File('$dirPath.zip');
+      await zipFile.parent.create(recursive: true);
+      await zipFile.writeAsBytes(resp.bodyBytes);
+
+      // Unzip using PowerShell
+      print('Unzipping $repoName...');
+      final res = await Process.run('powershell', [
+        '-Command',
+        'Expand-Archive -Path "${zipFile.path}" -DestinationPath "$dirPath" -Force'
+      ]);
+
+      if (res.exitCode != 0) {
+        throw Exception('Failed to unzip: ${res.stderr}');
+      }
     }
-
-    final zipFile = File('$dirPath.zip');
-    await zipFile.parent.create(recursive: true);
-    await zipFile.writeAsBytes(resp.bodyBytes);
-
-    // Unzip using PowerShell
-    print('Unzipping $repoName...');
-    final res = await Process.run('powershell', [
-      '-Command',
-      'Expand-Archive -Path "${zipFile.path}" -DestinationPath "$dirPath" -Force'
-    ]);
-
-    if (res.exitCode != 0) {
-      throw Exception('Failed to unzip: ${res.stderr}');
-    }
-
-    // Cleanup zip
-    //if (await zipFile.exists()) {
-    // await zipFile.delete();
-    //}
   }
 
   // Pre-cache all snapshots logic
@@ -310,7 +344,7 @@ Future<String> _findEffectiveRepoPath(String repoName) async {
   if (await checkoutDir.exists() && checkoutDir.listSync().isNotEmpty) {
     print(2);
     print(checkoutDir);
-    return p.join(repoDir,repoName); // Who the fuck writes this piece of shit
+    return p.join(repoDir, repoName); // Who the fuck writes this piece of shit
   }
 
   // Check if we have snapshot folders (pre-exploded)
