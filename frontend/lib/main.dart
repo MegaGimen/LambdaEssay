@@ -84,10 +84,20 @@ class _GraphPageState extends State<GraphPage> {
         if (!mounted) return;
         try {
           final data = jsonDecode(message);
-          if (data['type'] == 'repo_updated') {
+          if (data['type'] == 'loading_status') {
+             setState(() {
+               loading = data['loading'] == true;
+             });
+          } else if (data['type'] == 'repo_updated') {
              print("Received repo update notification");
              if (currentProjectName != null) {
-                _onUpdateRepoAction();
+                _onUpdateRepoAction().whenComplete(() {
+                   if (mounted) {
+                      setState(() {
+                        loading = false;
+                      });
+                   }
+                });
              }
           }
         } catch (e) {
@@ -1814,11 +1824,6 @@ class _GraphPageState extends State<GraphPage> {
                 ElevatedButton(
                   onPressed: loading ? null : _onOpenTrackProject,
                   child: const Text('打开追踪项目'),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                  onPressed: loading ? null : _onUpdateRepoAction,
-                  child: const Text('更新git仓库'),
                 ),
                 const SizedBox(width: 8),
                 ElevatedButton(
