@@ -5,7 +5,6 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'models.dart';
-
 class PullPreviewResult {
   final GraphResponse current;
   final GraphResponse target;
@@ -214,49 +213,49 @@ Future<void> _gitArchiveToDocx(
 // ------------------------------------------
 
 Future<List<String>> _runGit(List<String> args, String repoPath) async {
-    final fullArgs = [
-      '-c',
-      'i18n.logOutputEncoding=UTF-8',
-      '-c',
-      'core.quotepath=false',
-      '-C',
-      repoPath,
-      ...args,
-    ];
-    try {
-      final res = await Process.run(
-        'git',
-        fullArgs,
-        stdoutEncoding: utf8,
-        stderrEncoding: utf8,
-        environment: {'GIT_TERMINAL_PROMPT': '0'}, // Prevent interactive prompts
-      );
-      if (res.exitCode != 0) {
-        print("git error (exitCode=${res.exitCode}) args=$args");
-        print(res.stderr);
-        print(res.stdout);
-        throw Exception(res.stderr is String ? res.stderr : 'git error');
-      }
-      final out =
-          res.stdout is String ? res.stdout as String : utf8.decode(res.stdout);
-      return LineSplitter.split(out).toList();
-    } on FormatException {
-      print("Git format error!!!");
-      final res = await Process.run(
-        'git',
-        fullArgs,
-        stdoutEncoding: systemEncoding,
-        stderrEncoding: systemEncoding,
-        environment: {'GIT_TERMINAL_PROMPT': '0'},
-      );
-      if (res.exitCode != 0) {
-        print("git error fallback");
-        throw Exception(res.stderr is String ? res.stderr : 'git error');
-      }
-      final out = res.stdout as String;
-      return LineSplitter.split(out).toList();
+  final fullArgs = [
+    '-c',
+    'i18n.logOutputEncoding=UTF-8',
+    '-c',
+    'core.quotepath=false',
+    '-C',
+    repoPath,
+    ...args,
+  ];
+  try {
+    final res = await Process.run(
+      'git',
+      fullArgs,
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8,
+      environment: {'GIT_TERMINAL_PROMPT': '0'}, // Prevent interactive prompts
+    );
+    if (res.exitCode != 0) {
+      print("git error (exitCode=${res.exitCode}) args=$args");
+      print(res.stderr);
+      print(res.stdout);
+      throw Exception(res.stderr is String ? res.stderr : 'git error');
     }
+    final out =
+        res.stdout is String ? res.stdout as String : utf8.decode(res.stdout);
+    return LineSplitter.split(out).toList();
+  } on FormatException {
+    print("Git format error!!!");
+    final res = await Process.run(
+      'git',
+      fullArgs,
+      stdoutEncoding: systemEncoding,
+      stderrEncoding: systemEncoding,
+      environment: {'GIT_TERMINAL_PROMPT': '0'},
+    );
+    if (res.exitCode != 0) {
+      print("git error fallback");
+      throw Exception(res.stderr is String ? res.stderr : 'git error');
+    }
+    final out = res.stdout as String;
+    return LineSplitter.split(out).toList();
   }
+}
 
 Future<List<Branch>> getBranches(String repoPath) async {
   final lines = await _runGit([
@@ -275,7 +274,8 @@ Future<List<Branch>> getBranches(String repoPath) async {
   return result;
 }
 
-Future<List<Branch>> getRemoteBranches(String repoPath, String? remoteName) async {
+Future<List<Branch>> getRemoteBranches(
+    String repoPath, String? remoteName) async {
   final args = [
     'for-each-ref',
     '--format=%(refname:short)|%(objectname)',
@@ -370,105 +370,104 @@ Future<List<List<String>>> _collectAllEdges(
 }
 
 Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
-    return _withRepoLock(repoPath, () async {
-      return _getGraphUnlocked(repoPath, limit: limit);
-    });
+  return _withRepoLock(repoPath, () async {
+    return _getGraphUnlocked(repoPath, limit: limit);
+  });
+}
+
+Future<GraphResponse> _getGraphUnlocked(String repoPath,
+    {int? limit, bool includeLocal = true, List<String>? remoteNames}) async {
+  final key = '${repoPath}|${limit ?? 0}|$includeLocal|$remoteNames';
+  // final cached = _graphCache[key];
+  // if (cached != null) {
+  //   print('Graph cache hit for $key');
+  //   return cached;
+  // }
+  // Disable cache for preview accuracy
+  print('Graph fetching for $key...');
+
+  final branches = <Branch>[];
+  if (includeLocal) {
+    branches.addAll(await getBranches(repoPath));
+  }
+  if (remoteNames != null) {
+    for (final r in remoteNames) {
+      branches.addAll(await getRemoteBranches(repoPath, r));
+    }
   }
 
-  Future<GraphResponse> _getGraphUnlocked(String repoPath,
-      {int? limit,
-      bool includeLocal = true,
-      List<String>? remoteNames}) async {
-    final key = '${repoPath}|${limit ?? 0}|$includeLocal|$remoteNames';
-    // final cached = _graphCache[key];
-    // if (cached != null) {
-    //   print('Graph cache hit for $key');
-    //   return cached;
-    // }
-    // Disable cache for preview accuracy
-    print('Graph fetching for $key...');
-    
-    final branches = <Branch>[];
-    if (includeLocal) {
-      branches.addAll(await getBranches(repoPath));
-    }
-    if (remoteNames != null) {
-       for (final r in remoteNames) {
-          branches.addAll(await getRemoteBranches(repoPath, r));
-       }
-    }
+  final chains = await getBranchChains(repoPath, branches, limit: limit);
+  final current = await getCurrentBranch(repoPath);
 
-    final chains = await getBranchChains(repoPath, branches, limit: limit);
-    final current = await getCurrentBranch(repoPath);
-
-    final logArgs = [
-      'log',
-    ];
-    if (includeLocal) logArgs.add('--branches');
-    if (remoteNames != null) {
-      if (remoteNames.isEmpty) {
-        logArgs.add('--remotes'); // All remotes
-      } else {
-        for (final r in remoteNames) {
-          logArgs.add('--remotes=$r');
-        }
+  final logArgs = [
+    'log',
+  ];
+  if (includeLocal) logArgs.add('--branches');
+  if (remoteNames != null) {
+    if (remoteNames.isEmpty) {
+      logArgs.add('--remotes'); // All remotes
+    } else {
+      for (final r in remoteNames) {
+        logArgs.add('--remotes=$r');
       }
     }
-    
-    logArgs.addAll([
-      '--tags',
-      '--decorate=full',
-      '--date=iso',
-      '--encoding=UTF-8',
-      '--pretty=format:%H|%P|%D|%s|%an|%ad',
-      '--date-order',
-    ]);
+  }
 
-    if (limit != null && limit > 0) {
-      logArgs.add('--max-count=$limit');
-    }
-    final lines = await _runGit(logArgs, repoPath);
-    final commits = <CommitNode>[];
-    for (final l in lines) {
-      if (l.trim().isEmpty) continue;
-      final parts = l.split('|');
-      if (parts.length < 6) continue;
-      final id = parts[0];
-      final rawParents = parts[1].trim().isEmpty
-          ? <String>[]
-          : parts[1].trim().split(RegExp(r'\s+'));
+  logArgs.addAll([
+    '--tags',
+    '--decorate=full',
+    '--date=iso',
+    '--encoding=UTF-8',
+    '--pretty=format:%H|%P|%D|%s|%an|%ad',
+    '--date-order',
+  ]);
 
-      final parents = rawParents;
-      final dec = parts[2];
-      final refs = _parseRefs(dec, includeLocal: includeLocal, remoteNames: remoteNames);
-      final subject = parts[3];
-      final author = parts[4];
-      final date = parts[5];
-      commits.add(
-        CommitNode(
-          id: id,
-          parents: parents,
-          refs: refs,
-          author: author,
-          date: date,
-          subject: subject,
-        ),
-      );
-    }
+  if (limit != null && limit > 0) {
+    logArgs.add('--max-count=$limit');
+  }
+  final lines = await _runGit(logArgs, repoPath);
+  final commits = <CommitNode>[];
+  for (final l in lines) {
+    if (l.trim().isEmpty) continue;
+    final parts = l.split('|');
+    if (parts.length < 6) continue;
+    final id = parts[0];
+    final rawParents = parts[1].trim().isEmpty
+        ? <String>[]
+        : parts[1].trim().split(RegExp(r'\s+'));
 
-    final customEdges = await _collectAllEdges(repoPath, commits);
+    final parents = rawParents;
+    final dec = parts[2];
+    final refs =
+        _parseRefs(dec, includeLocal: includeLocal, remoteNames: remoteNames);
+    final subject = parts[3];
+    final author = parts[4];
+    final date = parts[5];
+    commits.add(
+      CommitNode(
+        id: id,
+        parents: parents,
+        refs: refs,
+        author: author,
+        date: date,
+        subject: subject,
+      ),
+    );
+  }
 
-    final resp = GraphResponse(
-        commits: commits,
-        branches: branches,
-        chains: chains,
-        currentBranch: current,
-        customEdges: customEdges);
-    _graphCache[key] = resp;
-      return resp;
-    }
+  final customEdges = await _collectAllEdges(repoPath, commits);
 
-  Future<void> commitChanges(
+  final resp = GraphResponse(
+      commits: commits,
+      branches: branches,
+      chains: chains,
+      currentBranch: current,
+      customEdges: customEdges);
+  _graphCache[key] = resp;
+  return resp;
+}
+
+Future<void> commitChanges(
     String repoPath, String author, String message) async {
   return _withRepoLock(repoPath, () async {
     // 1. Unzip content.docx -> doc_content
@@ -580,47 +579,48 @@ Future<Uint8List> compareWorking(String repoPath) async {
   });
 }
 
-List<String> _parseRefs(String decoration, {bool includeLocal = true, List<String>? remoteNames}) {
+List<String> _parseRefs(String decoration,
+    {bool includeLocal = true, List<String>? remoteNames}) {
   final s = decoration.trim();
   if (s.isEmpty) return <String>[];
-  
+
   // %D format: "HEAD -> refs/heads/master, refs/remotes/origin/master, tag: v1"
   // It does NOT have wrapping parenthesis like %d
-  
+
   // However, if we were using %d, it would be "(HEAD -> master, origin/master)".
   // We switched to %D.
   // But wait, if I switched to %D, the old parsing logic (expecting parenthesis) might fail if %D doesn't wrap.
   // Git doc says: %D: "ref names without the ' (', ')' wrapping."
   // So I need to remove the parenthesis stripping logic or handle both.
   // Let's handle just the split.
-  
+
   // Split by comma
   final items = s.split(',');
   final refs = <String>{};
-  
+
   for (var i in items) {
     var t = i.trim();
     if (t.isEmpty) continue;
-    
+
     // Handle HEAD -> ...
     if (t.startsWith('HEAD -> ')) {
       t = t.substring(8).trim();
     }
-    
+
     // Handle tag: ...
     if (t.startsWith('tag: ')) {
       // Tags are usually global, we might want to keep them or filter?
       // Let's keep them as is, or strip 'tag: '?
       // Original logic stripped 'tag: '.
-      t = 'refs/tags/${t.substring(5).trim()}'; 
+      t = 'refs/tags/${t.substring(5).trim()}';
       // Actually standard ref is refs/tags/...
     }
-    
+
     // Now t should be a full ref like 'refs/heads/master' or 'refs/remotes/origin/master'
-    // But sometimes it might be just 'master' if %D is not fully qualified? 
-    // %D gives full refs usually? 
-    // "ref names without the ' (', ')' wrapping." 
-    // Actually, %D gives "HEAD -> master, origin/master" (short names)? 
+    // But sometimes it might be just 'master' if %D is not fully qualified?
+    // %D gives full refs usually?
+    // "ref names without the ' (', ')' wrapping."
+    // Actually, %D gives "HEAD -> master, origin/master" (short names)?
     // No, %D gives "HEAD -> refs/heads/master, refs/remotes/origin/master" (full names) IS NOT GUARANTEED?
     // Let's verify git documentation.
     // %d: ref names, like the --decorate option of git-log.
@@ -628,20 +628,20 @@ List<String> _parseRefs(String decoration, {bool includeLocal = true, List<Strin
     // --decorate=full vs --decorate=short (default).
     // git log defaults to short decoration.
     // So %D will likely output SHORT names if we don't specify --decorate=full.
-    
+
     // To be safe, I should use --decorate=full in logArgs?
     // But wait, I can just interpret what I get.
     // If I see 'refs/heads/', it's local.
     // If I see 'refs/remotes/', it's remote.
     // If I see 'origin/...', it's likely remote (short).
-    
+
     // Let's assume we ADD '--decorate=full' to logArgs to be robust.
     // I will add another Edit to add '--decorate=full'.
-    
+
     bool isLocal = false;
     bool isRemote = false;
     // bool isTag = false;
-    
+
     if (t.startsWith('refs/heads/')) {
       isLocal = true;
     } else if (t.startsWith('refs/remotes/')) {
@@ -650,7 +650,9 @@ List<String> _parseRefs(String decoration, {bool includeLocal = true, List<Strin
       // isTag = true;
     } else {
       // Fallback for short names or other refs
-      if (t.startsWith('origin/') || (remoteNames != null && remoteNames.any((r) => t.startsWith('$r/')))) {
+      if (t.startsWith('origin/') ||
+          (remoteNames != null &&
+              remoteNames.any((r) => t.startsWith('$r/')))) {
         isRemote = true;
       } else {
         // Assume local if not remote?
@@ -658,7 +660,7 @@ List<String> _parseRefs(String decoration, {bool includeLocal = true, List<Strin
         isLocal = true;
       }
     }
-    
+
     if (isLocal && !includeLocal) continue;
     if (isRemote) {
       // Check if allowed remote
@@ -671,30 +673,32 @@ List<String> _parseRefs(String decoration, {bool includeLocal = true, List<Strin
         // In _getGraphUnlocked(includeLocal: true), remoteNames is null.
         // So if remoteNames is null, we DROP remotes?
         // Yes, let's assume if remoteNames is null/empty, we don't want remotes.
-        continue; 
+        continue;
       }
-      
+
       // If remoteNames is provided, we check if it matches
       bool matches = false;
       for (final r in remoteNames) {
         if (t.contains('/$r/') || t.startsWith('$r/')) {
-           matches = true;
-           break;
+          matches = true;
+          break;
         }
       }
       if (!matches) continue;
-      
+
       // EXPLICITLY EXCLUDE REMOTE HEAD (e.g. refs/remotes/origin/HEAD)
       // It usually points to the default branch on remote, but in graph view it's noise.
       if (t.endsWith('/HEAD')) continue;
     }
-    
+
     // Clean up for display
     var clean = t;
-    if (clean.startsWith('refs/heads/')) clean = clean.substring(11);
-    else if (clean.startsWith('refs/remotes/')) clean = clean.substring(13);
+    if (clean.startsWith('refs/heads/'))
+      clean = clean.substring(11);
+    else if (clean.startsWith('refs/remotes/'))
+      clean = clean.substring(13);
     else if (clean.startsWith('refs/tags/')) clean = clean.substring(10);
-    
+
     refs.add(clean);
   }
   return refs.toList();
@@ -1084,6 +1088,14 @@ Future<bool> _checkDocxIdentical(
   }
 }
 
+void main() async {
+  while (true) {
+    print('开始比较两个文档...');
+    final result1 = await _checkDocxIdentical('1.docx', '2.docx');
+    print(result1);
+  }
+}
+
 Future<Uint8List> previewVersion(String repoPath, String commitId) async {
   return _withRepoLock(repoPath, () async {
     final cacheDir = Directory(p.join(_baseDir(), 'cache'));
@@ -1383,25 +1395,26 @@ Future<void> pushToRemote(String repoPath, String username, String token,
       print('Fetch after push failed: $e');
     }
 
-  print('Executing git push with args: $args');
-  try {
-    output = await _runGit(args, repoPath);
-    print('Git push output: ${output.join('\n')}');
+    print('Executing git push with args: $args');
+    try {
+      output = await _runGit(args, repoPath);
+      print('Git push output: ${output.join('\n')}');
 
-    // Automatically setup webhook
-    print('hook OK');
-    await _ensureWebhook(repoName, owner, token);
-  } catch (e) {
-    print('Git push failed with error: $e');
-    // If push failed, it might be because of non-fast-forward (rejected).
-    // Even if the error message is localized (e.g. Chinese), we should check the repo state.
-    if (!force) {
-      final outStr = output.join('\n');
-      if (outStr.contains('Everything up-to-date')) {
-        await _checkIfBehind(repoPath, remoteUrl);
+      // Automatically setup webhook
+      print('hook OK');
+      await _ensureWebhook(repoName, owner, token);
+    } catch (e) {
+      print('Git push failed with error: $e');
+      // If push failed, it might be because of non-fast-forward (rejected).
+      // Even if the error message is localized (e.g. Chinese), we should check the repo state.
+      if (!force) {
+        final outStr = output.join('\n');
+        if (outStr.contains('Everything up-to-date')) {
+          await _checkIfBehind(repoPath, remoteUrl);
+        }
       }
     }
-  }});
+  });
 }
 
 Future<void> _checkIfBehind(String repoPath, String remoteUrl) async {
@@ -1704,20 +1717,19 @@ Future<PullPreviewResult> previewPull(
     }
 
     // 2. Get Current Graph (from Preview Repo, which is a copy of Local)
-    final currentGraph = await _getGraphUnlocked(previewDir, includeLocal: true);
-    
+    final currentGraph =
+        await _getGraphUnlocked(previewDir, includeLocal: true);
+
     // 3. Get Target Graph
     String? targetBranchName;
     final currentBranch = await getCurrentBranch(previewDir);
     if (currentBranch != null) {
-       targetBranchName = '$remoteName/$currentBranch';
+      targetBranchName = '$remoteName/$currentBranch';
     }
 
-    final targetGraph = await _getGraphUnlocked(previewDir, 
-      includeLocal: false, 
-      remoteNames: [remoteName]
-    );
-    
+    final targetGraph = await _getGraphUnlocked(previewDir,
+        includeLocal: false, remoteNames: [remoteName]);
+
     final finalTargetGraph = GraphResponse(
       commits: targetGraph.commits,
       branches: targetGraph.branches,
@@ -1735,36 +1747,40 @@ Future<PullPreviewResult> previewPull(
 
       // Direct rebase on current branch in PREVIEW DIR
       try {
-        await _runGit(['rebase', '-X', 'theirs', '$remoteName/$currentBranch'], previewDir);
+        await _runGit(['rebase', '-X', 'theirs', '$remoteName/$currentBranch'],
+            previewDir);
         await _forceRegenerateRepoDocx(previewDir);
       } catch (e) {
         // Check for conflicts
-          final status = await _runGit(['status', '--porcelain'], previewDir);
-          if (status.any((l) => l.startsWith('UU') || l.startsWith('AA'))) {
-            hasConflicts = true;
-            conflictingFiles = status
-                .where((l) => l.startsWith('UU') || l.startsWith('AA'))
-                .map((l) => l.substring(3).trim())
-                .toList();
-          }
+        final status = await _runGit(['status', '--porcelain'], previewDir);
+        if (status.any((l) => l.startsWith('UU') || l.startsWith('AA'))) {
+          hasConflicts = true;
+          conflictingFiles = status
+              .where((l) => l.startsWith('UU') || l.startsWith('AA'))
+              .map((l) => l.substring(3).trim())
+              .toList();
+        }
       }
 
       // Get Result Graph
-      resultGraph = await _getGraphUnlocked(previewDir, includeLocal: true, remoteNames: []);
-
+      resultGraph = await _getGraphUnlocked(previewDir,
+          includeLocal: true, remoteNames: []);
     } else if (type == 'branch' || type == 'fork') {
-       if (currentBranch == null) throw Exception('Detached HEAD');
+      if (currentBranch == null) throw Exception('Detached HEAD');
 
-       // FORK/BRANCH Preview Logic:
-       try {
-         await _runGit(['branch', '-f', 'PreviewFork', '$remoteName/$currentBranch'], previewDir);
-         await _runGit(['checkout', 'PreviewFork'], previewDir);
-         await _forceRegenerateRepoDocx(previewDir);
-       } catch (e) {
-         throw Exception('Failed to create/checkout PreviewFork branch: $e');
-       }
-       
-       resultGraph = await _getGraphUnlocked(previewDir, includeLocal: true, remoteNames: []);
+      // FORK/BRANCH Preview Logic:
+      try {
+        await _runGit(
+            ['branch', '-f', 'PreviewFork', '$remoteName/$currentBranch'],
+            previewDir);
+        await _runGit(['checkout', 'PreviewFork'], previewDir);
+        await _forceRegenerateRepoDocx(previewDir);
+      } catch (e) {
+        throw Exception('Failed to create/checkout PreviewFork branch: $e');
+      }
+
+      resultGraph = await _getGraphUnlocked(previewDir,
+          includeLocal: true, remoteNames: []);
     }
 
     // Fix for Rebase Preview (Label cleanup)
@@ -1779,28 +1795,27 @@ Future<PullPreviewResult> previewPull(
       current: currentGraph,
       target: finalTargetGraph,
       result: resultGraph,
-      rowMapping: {}, 
+      rowMapping: {},
       hasConflicts: hasConflicts,
       conflictingFiles: conflictingFiles,
     );
-    
+
     _previewCache[cacheKey] = result;
 
     return result;
   });
 }
 
-  // Map<String, int> _computeUnifiedMapping(List<GraphResponse> graphs) {
-  // ...
-  // }
-
+// Map<String, int> _computeUnifiedMapping(List<GraphResponse> graphs) {
+// ...
+// }
 
 Future<void> forkLocal(String repoName, String newBranchName) async {
   final repoPath = _projectDir(repoName);
   return _withRepoLock(repoPath, () async {
     final currentBranch = await getCurrentBranch(repoPath);
     final remoteName = repoName.toLowerCase();
-    
+
     // FORK/BRANCH Execution Logic:
     // 1. Cleanup any stale PreviewFork branch
     try {
@@ -1811,14 +1826,16 @@ Future<void> forkLocal(String repoName, String newBranchName) async {
     // This creates 'newBranchName' pointing to 'remote/currentBranch' and switches to it.
     // The original local branch is left untouched.
     if (currentBranch != null) {
-        await _runGit(['checkout', '-b', newBranchName, '$remoteName/$currentBranch'], repoPath);
-        // Force regenerate docx to match the new branch content (which is remote content)
-        await _forceRegenerateRepoDocx(repoPath);
+      await _runGit(
+          ['checkout', '-b', newBranchName, '$remoteName/$currentBranch'],
+          repoPath);
+      // Force regenerate docx to match the new branch content (which is remote content)
+      await _forceRegenerateRepoDocx(repoPath);
     } else {
-        // Fallback if no current branch (unlikely in this flow)
-        await _runGit(['checkout', '-b', newBranchName], repoPath);
+      // Fallback if no current branch (unlikely in this flow)
+      await _runGit(['checkout', '-b', newBranchName], repoPath);
     }
-    
+
     clearCache();
   });
 }
@@ -1833,7 +1850,6 @@ Future<void> prepareMerge(String repoName, String targetBranch) async {
 
     final savedTracking = jsonDecode(await trackingFile.readAsString());
     final docxPath = savedTracking['docxPath'] as String?;
-
 
     if (docxPath == null) {
       throw Exception('Tracking configuration invalid');
