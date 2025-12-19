@@ -13,9 +13,7 @@ Office.onReady((info) => {
     document.getElementById("sideload-msg").style.display = "none";
     document.getElementById("app-body").style.display = "flex";
     
-    document.getElementById("write-text").onclick = writeText;
-    document.getElementById("save-document").onclick = saveDocument;
-    document.getElementById("monitor-save").onclick = monitorSave;
+
 
     // Connect to WebSocket Server
     connectWebSocket();
