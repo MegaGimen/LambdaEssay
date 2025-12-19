@@ -44,7 +44,7 @@
   {
     "id": 1765615035934,
     "text": "解决5000端口/compare失败的问题",
-    "completed": false,
+    "completed": true,
     "createdAt": "2025-12-13T08:37:15.934Z"
   },
   {
@@ -92,7 +92,7 @@
   {
     "id": 1765336340576,
     "text": "优化文档比较，用word内部的文档比较工具（plugin）；COM复用word的进程（web）",
-    "completed": false,
+    "completed": true,
     "createdAt": "2025-12-10T03:12:20.576Z"
   },
   {
