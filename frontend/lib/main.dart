@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'models.dart';
 import 'visualize.dart';
 import 'backup.dart';
 import 'pull_preview.dart';
@@ -22,89 +23,6 @@ class GitGraphApp extends StatelessWidget {
       home: const GraphPage(),
     );
   }
-}
-
-class CommitNode {
-  final String id;
-  final List<String> parents;
-  final List<String> refs;
-  final String author;
-  final String date;
-  final String subject;
-  CommitNode({
-    required this.id,
-    required this.parents,
-    required this.refs,
-    required this.author,
-    required this.date,
-    required this.subject,
-  });
-  factory CommitNode.fromJson(Map<String, dynamic> j) => CommitNode(
-        id: j['id'],
-        parents: (j['parents'] as List).cast<String>(),
-        refs: (j['refs'] as List).cast<String>(),
-        author: j['author'],
-        date: j['date'],
-        subject: j['subject'],
-      );
-}
-
-class Branch {
-  final String name;
-  final String head;
-  Branch({required this.name, required this.head});
-  factory Branch.fromJson(Map<String, dynamic> j) =>
-      Branch(name: j['name'], head: j['head']);
-}
-
-class EdgeInfo {
-  final String child;
-  final String parent;
-  final List<String> branches;
-  final bool isMerge;
-  EdgeInfo({
-    required this.child,
-    required this.parent,
-    required this.branches,
-    this.isMerge = false,
-  });
-}
-
-class GraphData {
-  final List<CommitNode> commits;
-  final List<Branch> branches;
-  final Map<String, List<String>> chains;
-  final String? currentBranch;
-  final List<List<String>> customEdges;
-  GraphData({
-    required this.commits,
-    required this.branches,
-    required this.chains,
-    this.currentBranch,
-    this.customEdges = const [],
-  });
-  factory GraphData.fromJson(Map<String, dynamic> j) => GraphData(
-        commits: ((j['commits'] as List).map(
-          (e) => CommitNode.fromJson(e as Map<String, dynamic>),
-        )).toList(),
-        branches: ((j['branches'] as List).map(
-          (e) => Branch.fromJson(e as Map<String, dynamic>),
-        )).toList(),
-        chains: (j['chains'] as Map<String, dynamic>).map(
-          (k, v) => MapEntry(k, (v as List).cast<String>()),
-        ),
-        currentBranch: j['currentBranch'],
-        customEdges: (j['customEdges'] as List?)
-                ?.map((e) => (e as List).cast<String>())
-                .toList() ??
-            [],
-      );
-}
-
-class WorkingState {
-  final bool changed;
-  final String? baseId;
-  WorkingState({required this.changed, this.baseId});
 }
 
 class GraphPage extends StatefulWidget {
@@ -2286,7 +2204,7 @@ class _GraphViewState extends State<_GraphView> {
       final resp = await http.post(
         Uri.parse('http://localhost:8080/branch/create'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'repoPath': widget.repoPath, 'branchName': name}),
+        body: jsonEncode({'repoPath': widget.repoPath, 'branchName': Branch.encodeName(name)}),
       );
       if (resp.statusCode != 200) throw Exception(resp.body);
       if (widget.onUpdate != null) {
@@ -2377,7 +2295,7 @@ class _GraphViewState extends State<_GraphView> {
     if (ok != true) return;
     final name = nameCtrl.text.trim();
     if (name.isEmpty) return;
-    await _doSwitchBranch(name);
+    await _doSwitchBranch(Branch.encodeName(name));
   }
 
   void _showNodeActionDialog(CommitNode node) {
@@ -2828,7 +2746,7 @@ class _GraphViewState extends State<_GraphView> {
                                           Navigator.pop(context);
                                           _doSwitchBranch(b);
                                         },
-                                        child: Text(b),
+                                        child: Text(Branch.decodeName(b)),
                                       ))
                                   .toList(),
                             ),
@@ -2876,7 +2794,7 @@ class _GraphViewState extends State<_GraphView> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    '当前分支: ${widget.data.currentBranch ?? "Unknown"}',
+                    '当前分支: ${Branch.decodeName(widget.data.currentBranch ?? "Unknown")}',
                     style: const TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
@@ -3056,7 +2974,7 @@ class _GraphViewState extends State<_GraphView> {
                             ),
                             const SizedBox(width: 6),
                             Text(
-                              b.name,
+                              Branch.decodeName(b.name),
                               style: TextStyle(
                                 fontWeight: b.name == widget.data.currentBranch
                                     ? FontWeight.bold
@@ -3867,14 +3785,13 @@ class GraphPainter extends CustomPainter {
       if (msg.length > 10) {
         msg = '${msg.substring(0, 10)}...';
       }
-
       textPainter.text = TextSpan(
         style: const TextStyle(color: Colors.black, fontSize: 12),
         children: [
           TextSpan(text: '提交id：${c.id.substring(0, 7)}'),
           if (c.refs.isNotEmpty)
             TextSpan(
-                text: ' [${c.refs.first}]',
+                text: ' [${Branch.decodeName(c.refs.first)}]',
                 style: const TextStyle(fontWeight: FontWeight.bold)),
           const TextSpan(text: '\n'),
           TextSpan(text: '提交信息：$msg'),

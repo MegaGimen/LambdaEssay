@@ -381,7 +381,7 @@ class GraphPainter extends CustomPainter {
           TextSpan(text: '提交id：${c.id.substring(0, 7)}'),
           if (c.refs.isNotEmpty && !isGhost)
             TextSpan(
-                text: ' [${c.refs.first}]',
+                text: ' [${Branch.decodeName(c.refs.first)}]',
                 style: const TextStyle(fontWeight: FontWeight.bold)),
           const TextSpan(text: '\n'),
           TextSpan(text: '提交信息：$msg'),
@@ -849,7 +849,7 @@ class _SimpleGraphViewState extends State<SimpleGraphView> {
                         const SizedBox(width: 8),
                         Flexible(
                           child: Text(
-                            e.key, 
+                            Branch.decodeName(e.key), 
                             style: const TextStyle(fontSize: 12),
                             overflow: TextOverflow.ellipsis,
                           ),
