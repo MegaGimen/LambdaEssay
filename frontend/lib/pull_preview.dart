@@ -167,7 +167,9 @@ class _PullPreviewPageState extends State<PullPreviewPage> {
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: _hasConflicts ? Colors.orange : Colors.blue,
                                 ),
-                                child: Text(_hasConflicts ? '存在冲突 (仍要尝试)' : '确认操作'),
+                                child: Text(widget.type == 'remote' 
+                                    ? '关闭' 
+                                    : (_hasConflicts ? '存在冲突 (仍要尝试)' : '确认操作')),
                               ),
                             ],
                           ),

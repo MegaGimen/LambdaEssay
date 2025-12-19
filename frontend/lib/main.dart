@@ -5,8 +5,6 @@ import 'package:flutter/gestures.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'visualize.dart';
-import 'models.dart';
-import 'graph_view.dart';
 import 'backup.dart';
 import 'pull_preview.dart';
 
@@ -1003,6 +1001,28 @@ class _GraphPageState extends State<GraphPage> {
     }
   }
 
+  Future<void> _onPreviewRemote() async {
+    if (!await _ensureToken()) {
+      setState(() => error = '请先登录');
+      return;
+    }
+    if (currentProjectName == null) {
+      setState(() => error = '当前没有打开的项目');
+      return;
+    }
+
+    // Directly open preview page with type='remote'
+    // This will fetch remote and local graphs and show them side-by-side
+    // The backend 'previewPull' will skip rebase/fork logic if type is not recognized,
+    // effectively just returning the comparison graphs.
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => PullPreviewPage(
+      repoName: currentProjectName!,
+      username: _username!,
+      token: _token!,
+      type: 'remote', 
+    )));
+  }
+
   Future<void> _onUpdateRepo() async {
     final name = currentProjectName;
     if (name == null || name.isEmpty) return;
@@ -1844,6 +1864,11 @@ class _GraphPageState extends State<GraphPage> {
                 ElevatedButton(
                   onPressed: loading ? null : _onPull,
                   child: const Text('拉取'),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: loading ? null : _onPreviewRemote,
+                  child: const Text('预览远程'),
                 ),
                 const SizedBox(width: 8),
                 if (currentProjectName != null)
