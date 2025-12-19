@@ -5,6 +5,32 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'models.dart';
+class PullPreviewResult {
+  final GraphResponse current;
+  final GraphResponse target;
+  final GraphResponse? result;
+  final Map<String, int> rowMapping;
+  final bool hasConflicts;
+  final List<String> conflictingFiles;
+
+  PullPreviewResult({
+    required this.current,
+    required this.target,
+    this.result,
+    required this.rowMapping,
+    this.hasConflicts = false,
+    this.conflictingFiles = const [],
+  });
+
+  Map<String, dynamic> toJson() => {
+        'current': current.toJson(),
+        'target': target.toJson(),
+        'result': result?.toJson(),
+        'rowMapping': rowMapping,
+        'hasConflicts': hasConflicts,
+        'conflictingFiles': conflictingFiles,
+      };
+}
 
 Future<dynamic> Function(Map<String, dynamic>)? pluginSender;
 
@@ -33,12 +59,14 @@ Future<T> _withRepoLock<T>(String repoPath, Future<T> Function() block) async {
 }
 
 final Map<String, GraphResponse> _graphCache = <String, GraphResponse>{};
+final Map<String, PullPreviewResult> _previewCache = {};
 
 const String kContentDirName = 'doc_content';
 const String kRepoDocxName = 'content.docx';
 
 void clearCache() {
   _graphCache.clear();
+  _previewCache.clear();
 }
 
 // --- Helpers for Docx/Folder operations ---
@@ -278,6 +306,7 @@ Future<List<String>> _runGit(List<String> args, String repoPath) async {
       fullArgs,
       stdoutEncoding: utf8,
       stderrEncoding: utf8,
+      environment: {'GIT_TERMINAL_PROMPT': '0'}, // Prevent interactive prompts
     );
     if (res.exitCode != 0) {
       print("git error (exitCode=${res.exitCode}) args=$args");
@@ -295,6 +324,7 @@ Future<List<String>> _runGit(List<String> args, String repoPath) async {
       fullArgs,
       stdoutEncoding: systemEncoding,
       stderrEncoding: systemEncoding,
+      environment: {'GIT_TERMINAL_PROMPT': '0'},
     );
     if (res.exitCode != 0) {
       print("git error fallback");
@@ -317,6 +347,33 @@ Future<List<Branch>> getBranches(String repoPath) async {
     final parts = l.split('|');
     if (parts.length >= 2) {
       result.add(Branch(name: parts[0], head: parts[1]));
+    }
+  }
+  return result;
+}
+
+Future<List<Branch>> getRemoteBranches(
+    String repoPath, String? remoteName) async {
+  final args = [
+    'for-each-ref',
+    '--format=%(refname:short)|%(objectname)',
+  ];
+  if (remoteName != null && remoteName.isNotEmpty) {
+    args.add('refs/remotes/$remoteName');
+  } else {
+    args.add('refs/remotes');
+  }
+
+  final lines = await _runGit(args, repoPath);
+  final result = <Branch>[];
+  for (final l in lines) {
+    if (l.trim().isEmpty) continue;
+    final parts = l.split('|');
+    if (parts.length >= 2) {
+      final name = parts[0];
+      if (name.endsWith('/HEAD')) continue;
+      if (remoteName != null && name == remoteName) continue;
+      result.add(Branch(name: name, head: parts[1]));
     }
   }
   return result;
@@ -392,71 +449,100 @@ Future<List<List<String>>> _collectAllEdges(
 
 Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
   return _withRepoLock(repoPath, () async {
-    final key = '${repoPath}|${limit ?? 0}';
-    final cached = _graphCache[key];
-    if (cached != null) {
-      print('Graph cache hit for $key');
-      return cached;
-    }
-    print('Graph cache miss for $key, fetching...');
-    final branches = await getBranches(repoPath);
-    final chains = await getBranchChains(repoPath, branches, limit: limit);
-    final current = await getCurrentBranch(repoPath);
-    // final customEdges = await _readEdges(repoPath); // Replaced by _collectAllEdges
-
-    final logArgs = [
-      'log',
-      '--branches',
-      '--tags',
-      '--date=iso',
-      '--encoding=UTF-8',
-      '--pretty=format:%H|%P|%d|%s|%an|%ad',
-      '--date-order',
-      '--remotes',
-    ];
-    if (limit != null && limit > 0) {
-      logArgs.add('--max-count=$limit');
-    }
-    final lines = await _runGit(logArgs, repoPath);
-    final commits = <CommitNode>[];
-    for (final l in lines) {
-      if (l.trim().isEmpty) continue;
-      final parts = l.split('|');
-      if (parts.length < 6) continue;
-      final id = parts[0];
-      final rawParents = parts[1].trim().isEmpty
-          ? <String>[]
-          : parts[1].trim().split(RegExp(r'\s+'));
-
-      final parents = rawParents;
-      final dec = parts[2];
-      final refs = _parseRefs(dec);
-      final subject = parts[3];
-      final author = parts[4];
-      final date = parts[5];
-      commits.add(
-        CommitNode(
-          id: id,
-          parents: parents,
-          refs: refs,
-          author: author,
-          date: date,
-          subject: subject,
-        ),
-      );
-    }
-
-    final customEdges = await _collectAllEdges(repoPath, commits);
-
-    final resp = GraphResponse(
-        commits: commits,
-        branches: branches,
-        chains: chains,
-        currentBranch: current,
-        customEdges: customEdges);
-    _graphCache[key] = resp;
-    return resp;
+    return _getGraphUnlocked(repoPath, limit: limit);
   });
+}
+
+Future<GraphResponse> _getGraphUnlocked(String repoPath,
+    {int? limit, bool includeLocal = true, List<String>? remoteNames}) async {
+  final key = '${repoPath}|${limit ?? 0}|$includeLocal|$remoteNames';
+  // final cached = _graphCache[key];
+  // if (cached != null) {
+  //   print('Graph cache hit for $key');
+  //   return cached;
+  // }
+  // Disable cache for preview accuracy
+  print('Graph fetching for $key...');
+
+  final branches = <Branch>[];
+  if (includeLocal) {
+    branches.addAll(await getBranches(repoPath));
+  }
+  if (remoteNames != null) {
+    for (final r in remoteNames) {
+      branches.addAll(await getRemoteBranches(repoPath, r));
+    }
+  }
+
+  final chains = await getBranchChains(repoPath, branches, limit: limit);
+  final current = await getCurrentBranch(repoPath);
+
+  final logArgs = [
+    'log',
+  ];
+  if (includeLocal) logArgs.add('--branches');
+  if (remoteNames != null) {
+    if (remoteNames.isEmpty) {
+      logArgs.add('--remotes'); // All remotes
+    } else {
+      for (final r in remoteNames) {
+        logArgs.add('--remotes=$r');
+      }
+    }
+  }
+
+  logArgs.addAll([
+    '--tags',
+    '--decorate=full',
+    '--date=iso',
+    '--encoding=UTF-8',
+    '--pretty=format:%H|%P|%D|%s|%an|%ad',
+    '--date-order',
+  ]);
+
+  if (limit != null && limit > 0) {
+    logArgs.add('--max-count=$limit');
+  }
+  final lines = await _runGit(logArgs, repoPath);
+  final commits = <CommitNode>[];
+  for (final l in lines) {
+    if (l.trim().isEmpty) continue;
+    final parts = l.split('|');
+    if (parts.length < 6) continue;
+    final id = parts[0];
+    final rawParents = parts[1].trim().isEmpty
+        ? <String>[]
+        : parts[1].trim().split(RegExp(r'\s+'));
+
+    final parents = rawParents;
+    final dec = parts[2];
+    final refs =
+        _parseRefs(dec, includeLocal: includeLocal, remoteNames: remoteNames);
+    final subject = parts[3];
+    final author = parts[4];
+    final date = parts[5];
+    commits.add(
+      CommitNode(
+        id: id,
+        parents: parents,
+        refs: refs,
+        author: author,
+        date: date,
+        subject: subject,
+      ),
+    );
+  }
+
+  final customEdges = await _collectAllEdges(repoPath, commits);
+
+  final resp = GraphResponse(
+      commits: commits,
+      branches: branches,
+      chains: chains,
+      currentBranch: current,
+      customEdges: customEdges);
+  _graphCache[key] = resp;
+  return resp;
 }
 
 Future<void> commitChanges(
@@ -578,23 +664,127 @@ Future<Uint8List> compareWorking(String repoPath) async {
   });
 }
 
-List<String> _parseRefs(String decoration) {
+List<String> _parseRefs(String decoration,
+    {bool includeLocal = true, List<String>? remoteNames}) {
   final s = decoration.trim();
   if (s.isEmpty) return <String>[];
-  final start = s.indexOf('(');
-  final end = s.lastIndexOf(')');
-  if (start < 0 || end < 0 || end <= start) return <String>[];
-  final inner = s.substring(start + 1, end);
-  final items = inner.split(',');
+
+  // %D format: "HEAD -> refs/heads/master, refs/remotes/origin/master, tag: v1"
+  // It does NOT have wrapping parenthesis like %d
+
+  // However, if we were using %d, it would be "(HEAD -> master, origin/master)".
+  // We switched to %D.
+  // But wait, if I switched to %D, the old parsing logic (expecting parenthesis) might fail if %D doesn't wrap.
+  // Git doc says: %D: "ref names without the ' (', ')' wrapping."
+  // So I need to remove the parenthesis stripping logic or handle both.
+  // Let's handle just the split.
+
+  // Split by comma
+  final items = s.split(',');
   final refs = <String>{};
+
   for (var i in items) {
-    final t = i.trim();
+    var t = i.trim();
     if (t.isEmpty) continue;
-    if (t.startsWith('origin/')) continue;
-    final cleaned = t
-        .replaceAll(RegExp(r'^HEAD ->\s*'), '')
-        .replaceAll(RegExp(r'^tag:\s*'), '');
-    refs.add(cleaned);
+
+    // Handle HEAD -> ...
+    if (t.startsWith('HEAD -> ')) {
+      t = t.substring(8).trim();
+    }
+
+    // Handle tag: ...
+    if (t.startsWith('tag: ')) {
+      // Tags are usually global, we might want to keep them or filter?
+      // Let's keep them as is, or strip 'tag: '?
+      // Original logic stripped 'tag: '.
+      t = 'refs/tags/${t.substring(5).trim()}';
+      // Actually standard ref is refs/tags/...
+    }
+
+    // Now t should be a full ref like 'refs/heads/master' or 'refs/remotes/origin/master'
+    // But sometimes it might be just 'master' if %D is not fully qualified?
+    // %D gives full refs usually?
+    // "ref names without the ' (', ')' wrapping."
+    // Actually, %D gives "HEAD -> master, origin/master" (short names)?
+    // No, %D gives "HEAD -> refs/heads/master, refs/remotes/origin/master" (full names) IS NOT GUARANTEED?
+    // Let's verify git documentation.
+    // %d: ref names, like the --decorate option of git-log.
+    // %D: ref names without the " (", ")" wrapping.
+    // --decorate=full vs --decorate=short (default).
+    // git log defaults to short decoration.
+    // So %D will likely output SHORT names if we don't specify --decorate=full.
+
+    // To be safe, I should use --decorate=full in logArgs?
+    // But wait, I can just interpret what I get.
+    // If I see 'refs/heads/', it's local.
+    // If I see 'refs/remotes/', it's remote.
+    // If I see 'origin/...', it's likely remote (short).
+
+    // Let's assume we ADD '--decorate=full' to logArgs to be robust.
+    // I will add another Edit to add '--decorate=full'.
+
+    bool isLocal = false;
+    bool isRemote = false;
+    // bool isTag = false;
+
+    if (t.startsWith('refs/heads/')) {
+      isLocal = true;
+    } else if (t.startsWith('refs/remotes/')) {
+      isRemote = true;
+    } else if (t.startsWith('refs/tags/')) {
+      // isTag = true;
+    } else {
+      // Fallback for short names or other refs
+      if (t.startsWith('origin/') ||
+          (remoteNames != null &&
+              remoteNames.any((r) => t.startsWith('$r/')))) {
+        isRemote = true;
+      } else {
+        // Assume local if not remote?
+        // Or assume local if it doesn't look like a remote?
+        isLocal = true;
+      }
+    }
+
+    if (isLocal && !includeLocal) continue;
+    if (isRemote) {
+      // Check if allowed remote
+      if (remoteNames == null) {
+        // If remoteNames is null (and includeLocal is true/false), what do we do?
+        // Usually if includeLocal is true, we might hide remotes?
+        // User said: "In displaying local, flagrantly filter out ALL remote branches".
+        // So if includeLocal=true (Local View), we DROP isRemote.
+        // Wait, 'remoteNames' is null in Local View?
+        // In _getGraphUnlocked(includeLocal: true), remoteNames is null.
+        // So if remoteNames is null, we DROP remotes?
+        // Yes, let's assume if remoteNames is null/empty, we don't want remotes.
+        continue;
+      }
+
+      // If remoteNames is provided, we check if it matches
+      bool matches = false;
+      for (final r in remoteNames) {
+        if (t.contains('/$r/') || t.startsWith('$r/')) {
+          matches = true;
+          break;
+        }
+      }
+      if (!matches) continue;
+
+      // EXPLICITLY EXCLUDE REMOTE HEAD (e.g. refs/remotes/origin/HEAD)
+      // It usually points to the default branch on remote, but in graph view it's noise.
+      if (t.endsWith('/HEAD')) continue;
+    }
+
+    // Clean up for display
+    var clean = t;
+    if (clean.startsWith('refs/heads/'))
+      clean = clean.substring(11);
+    else if (clean.startsWith('refs/remotes/'))
+      clean = clean.substring(13);
+    else if (clean.startsWith('refs/tags/')) clean = clean.substring(10);
+
+    refs.add(clean);
   }
   return refs.toList();
 }
@@ -665,6 +855,10 @@ Future<void> _writeTracking(String name, Map<String, dynamic> data) async {
 
 String _projectDir(String name) {
   return p.normalize(p.join(_baseDir(), name));
+}
+
+String _getPreviewDir(String name) {
+  return p.normalize(p.join(_baseDir(), 'preview', name));
 }
 
 // Deprecated: _findRepoDocx (we use kContentDirName now)
@@ -979,6 +1173,14 @@ Future<bool> _checkDocxIdentical(
   }
 }
 
+void main() async {
+  while (true) {
+    print('开始比较两个文档...');
+    final result1 = await _checkDocxIdentical('1.docx', '2.docx');
+    print(result1);
+  }
+}
+
 Future<Uint8List> previewVersion(String repoPath, String commitId) async {
   return _withRepoLock(repoPath, () async {
     final cacheDir = Directory(p.join(_baseDir(), 'cache'));
@@ -1269,10 +1471,23 @@ Future<void> pushToRemote(String repoPath, String username, String token,
       print('Fetch after push failed: $e');
     }
 
-    if (!force) {
-      final outStr = output.join('\n');
-      if (outStr.contains('Everything up-to-date')) {
-        await _checkIfBehind(repoPath, remoteUrl);
+    print('Executing git push with args: $args');
+    try {
+      output = await _runGit(args, repoPath);
+      print('Git push output: ${output.join('\n')}');
+
+      // Automatically setup webhook
+      print('hook OK');
+      await _ensureWebhook(repoName, owner, token);
+    } catch (e) {
+      print('Git push failed with error: $e');
+      // If push failed, it might be because of non-fast-forward (rejected).
+      // Even if the error message is localized (e.g. Chinese), we should check the repo state.
+      if (!force) {
+        final outStr = output.join('\n');
+        if (outStr.contains('Everything up-to-date')) {
+          await _checkIfBehind(repoPath, remoteUrl);
+        }
       }
     }
   });
@@ -1341,12 +1556,13 @@ Future<Map<String, dynamic>> pullFromRemote(
     final remoteUrl =
         'http://$username:$token@47.242.109.145:3000/$owner/$repoName.git';
 
-    Map<String, dynamic>? savedTracking;
+    // Map<String, dynamic>? savedTracking;
+    // Map<String, dynamic>? savedTracking;
     bool isFresh = !dir.existsSync() || !gitDir.existsSync();
 
     if (!isFresh && force) {
       try {
-        savedTracking = await _readTracking(repoName);
+        // savedTracking = await _readTracking(repoName);
       } catch (_) {}
       try {
         if (dir.existsSync()) {
@@ -1387,8 +1603,7 @@ Future<Map<String, dynamic>> pullFromRemote(
           }
         } catch (e) {}
       }
-
-      savedTracking = await _readTracking(repoName);
+      // savedTracking = await _readTracking(repoName);
 
       try {
         await addRemote(projDir, remoteName, remoteUrl);
@@ -1448,7 +1663,7 @@ Future<Map<String, dynamic>> pullFromRemote(
         }
       }
     } catch (e) {}
-
+/*
     if (savedTracking != null && savedTracking.isNotEmpty) {
       // Ensure content.docx is up to date (especially if we just cloned or reset)
       await _forceRegenerateRepoDocx(projDir);
@@ -1461,15 +1676,19 @@ Future<Map<String, dynamic>> pullFromRemote(
         if (File(localDocx).existsSync()) {
             await _writeExternalDocx(projDir, localDocx);
         } else {
-             // If localDocx missing (unlikely after regenerate), try contentDir
-             final contentDir = Directory(p.join(projDir, kContentDirName));
-             if (contentDir.existsSync()) {
-                 await _writeExternalDocx(projDir, contentDir.path);
-             }
+          if (File(localDocx).existsSync()) {
+            final bytes = await File(localDocx).readAsBytes();
+            await File(docxPath).writeAsBytes(bytes);
+          } else {
+            final contentDir = Directory(p.join(projDir, kContentDirName));
+            if (contentDir.existsSync()) {
+              await _zipDir(contentDir.path, docxPath);
+            }
+          }
         }
       }
     }
-
+*/
     await _startWatcher(repoName);
     clearCache();
     return {
@@ -1543,23 +1762,178 @@ Future<void> rebasePull(String repoName, String username, String token) async {
   clearCache();
 }
 
+Future<void> cancelPull(String repoName) async {
+  // No-op for main repo since we use preview copy
+  // We keep the cache for future previews
+}
+
+Future<PullPreviewResult> previewPull(
+    String repoName, String username, String token, String type) async {
+  final projDir = _projectDir(repoName);
+  // Lock projDir to ensure consistent snapshot for copy
+  return _withRepoLock(projDir, () async {
+    final previewDir = _getPreviewDir(repoName);
+    final cacheKey = '$repoName|$type';
+    final cachedResult = _previewCache[cacheKey];
+
+    if (cachedResult != null) {
+      print('Preview cache hit for $cacheKey');
+      return cachedResult;
+    }
+
+    // Prepare Preview Directory
+    final pd = Directory(previewDir);
+    if (pd.existsSync()) {
+      try {
+        pd.deleteSync(recursive: true);
+      } catch (e) {
+        print("Failed to delete preview dir: $e");
+        // Try to proceed, maybe it's fine
+      }
+    }
+    pd.createSync(recursive: true);
+
+    // Copy projDir to previewDir
+    await _copyDir(projDir, previewDir);
+
+    // From now on, operate on previewDir
+    final remoteName = repoName.toLowerCase();
+    final owner = await _resolveRepoOwner(repoName, token);
+    final remoteUrl =
+        'http://$username:$token@47.242.109.145:3000/$owner/$repoName.git';
+
+    // Ensure remote exists in preview repo
+    await addRemote(previewDir, remoteName, remoteUrl);
+
+    try {
+      await _runGit(['fetch', remoteName], previewDir);
+    } catch (e) {
+      print('Fetch failed during preview: $e');
+      throw Exception('Failed to fetch from remote: $e');
+    }
+
+    // 2. Get Current Graph (from Preview Repo, which is a copy of Local)
+    final currentGraph =
+        await _getGraphUnlocked(previewDir, includeLocal: true);
+
+    // 3. Get Target Graph
+    String? targetBranchName;
+    final currentBranch = await getCurrentBranch(previewDir);
+    if (currentBranch != null) {
+      targetBranchName = '$remoteName/$currentBranch';
+    }
+
+    final targetGraph = await _getGraphUnlocked(previewDir,
+        includeLocal: false, remoteNames: [remoteName]);
+
+    final finalTargetGraph = GraphResponse(
+      commits: targetGraph.commits,
+      branches: targetGraph.branches,
+      chains: targetGraph.chains,
+      currentBranch: targetBranchName ?? targetGraph.currentBranch,
+      customEdges: targetGraph.customEdges,
+    );
+
+    GraphResponse? resultGraph;
+    bool hasConflicts = false;
+    List<String> conflictingFiles = [];
+
+    if (type == 'rebase') {
+      if (currentBranch == null) throw Exception('Detached HEAD');
+
+      // Direct rebase on current branch in PREVIEW DIR
+      try {
+        await _runGit(['rebase', '-X', 'theirs', '$remoteName/$currentBranch'],
+            previewDir);
+        await _forceRegenerateRepoDocx(previewDir);
+      } catch (e) {
+        // Check for conflicts
+        final status = await _runGit(['status', '--porcelain'], previewDir);
+        if (status.any((l) => l.startsWith('UU') || l.startsWith('AA'))) {
+          hasConflicts = true;
+          conflictingFiles = status
+              .where((l) => l.startsWith('UU') || l.startsWith('AA'))
+              .map((l) => l.substring(3).trim())
+              .toList();
+        }
+      }
+
+      // Get Result Graph
+      resultGraph = await _getGraphUnlocked(previewDir,
+          includeLocal: true, remoteNames: []);
+    } else if (type == 'branch' || type == 'fork') {
+      if (currentBranch == null) throw Exception('Detached HEAD');
+
+      // FORK/BRANCH Preview Logic:
+      try {
+        await _runGit(
+            ['branch', '-f', 'PreviewFork', '$remoteName/$currentBranch'],
+            previewDir);
+        await _runGit(['checkout', 'PreviewFork'], previewDir);
+        await _forceRegenerateRepoDocx(previewDir);
+      } catch (e) {
+        throw Exception('Failed to create/checkout PreviewFork branch: $e');
+      }
+
+      resultGraph = await _getGraphUnlocked(previewDir,
+          includeLocal: true, remoteNames: []);
+    }
+
+    // Fix for Rebase Preview (Label cleanup)
+    if (type == 'rebase' && currentBranch != null && resultGraph != null) {
+      for (final c in resultGraph.commits) {
+        c.refs.remove(currentBranch);
+        c.refs.remove('refs/heads/$currentBranch');
+      }
+    }
+
+    final result = PullPreviewResult(
+      current: currentGraph,
+      target: finalTargetGraph,
+      result: resultGraph,
+      rowMapping: {},
+      hasConflicts: hasConflicts,
+      conflictingFiles: conflictingFiles,
+    );
+
+    _previewCache[cacheKey] = result;
+
+    return result;
+  });
+}
+
+// Map<String, int> _computeUnifiedMapping(List<GraphResponse> graphs) {
+// ...
+// }
+
 Future<void> forkLocal(String repoName, String newBranchName) async {
   final repoPath = _projectDir(repoName);
-  // forkAndReset logic inline or separate? Inline for simplicity.
-  // checkout -b newBranch
-  // fetch remote
-  // reset current (which was master) to remote/master?
-  // User wants to move local changes to new branch.
+  return _withRepoLock(repoPath, () async {
+    final currentBranch = await getCurrentBranch(repoPath);
+    final remoteName = repoName.toLowerCase();
 
-  // 1. Create branch (keeps local changes)
-  await _runGit(['checkout', '-b', newBranchName], repoPath);
+    // FORK/BRANCH Execution Logic:
+    // 1. Cleanup any stale PreviewFork branch
+    try {
+      await _runGit(['branch', '-D', 'PreviewFork'], repoPath);
+    } catch (_) {}
 
-  // The old branch is still there, but we are now on new branch.
-  // That's usually enough for "Fork Local".
-  // If we want to reset the old branch, we need to checkout it, reset, then checkout new.
-  // But we are now safe on new branch.
+    // 2. Create and checkout new branch from remote
+    // This creates 'newBranchName' pointing to 'remote/currentBranch' and switches to it.
+    // The original local branch is left untouched.
+    if (currentBranch != null) {
+      await _runGit(
+          ['checkout', '-b', newBranchName, '$remoteName/$currentBranch'],
+          repoPath);
+      // Force regenerate docx to match the new branch content (which is remote content)
+      await _forceRegenerateRepoDocx(repoPath);
+    } else {
+      // Fallback if no current branch (unlikely in this flow)
+      await _runGit(['checkout', '-b', newBranchName], repoPath);
+    }
 
-  clearCache();
+    clearCache();
+  });
 }
 
 Future<void> prepareMerge(String repoName, String targetBranch) async {
@@ -1745,4 +2119,60 @@ Future<List<String>> findIdenticalCommit(String name) async {
     } catch (_) {}
   }
   return identicals;
+}
+
+Future<void> _ensureWebhook(String repoName, String owner, String token) async {
+  final giteaUrl = 'http://47.242.109.145:3000/';
+  final targetUrl = 'http://47.242.109.145:4829/webhook';
+  final headers = {
+    'Authorization': 'token $token',
+    'Content-Type': 'application/json',
+  };
+
+  try {
+    // 1. List existing hooks
+    final listResp = await http.get(
+      Uri.parse('$giteaUrl/api/v1/repos/$owner/$repoName/hooks'),
+      headers: headers,
+    );
+
+    if (listResp.statusCode == 200) {
+      final List<dynamic> hooks = jsonDecode(listResp.body);
+      for (final hook in hooks) {
+        final config = hook['config'];
+        if (config != null && config['url'] == targetUrl) {
+          print('Webhook already exists for $repoName');
+          return;
+        }
+      }
+    } else {
+      print('Failed to list webhooks: ${listResp.statusCode} ${listResp.body}');
+    }
+
+    // 2. Create hook
+    print('Creating webhook for $repoName...');
+    final createResp = await http.post(
+      Uri.parse('$giteaUrl/api/v1/repos/$owner/$repoName/hooks'),
+      headers: headers,
+      body: jsonEncode({
+        'type': 'gitea',
+        'config': {
+          'content_type': 'json',
+          'url': targetUrl,
+          'http_method': 'post',
+        },
+        'events': ['push'],
+        'active': true,
+      }),
+    );
+
+    if (createResp.statusCode == 201) {
+      print('Webhook created successfully for $repoName');
+    } else {
+      print(
+          'Failed to create webhook: ${createResp.statusCode} ${createResp.body}');
+    }
+  } catch (e) {
+    print('Error setting up webhook: $e');
+  }
 }

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:process/process.dart';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:shelf/shelf.dart';
@@ -8,6 +9,8 @@ import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:path/path.dart' as p;
 import '../lib/git_service.dart';
+import '../lib/backup_service.dart';
+import '../lib/diff/repocmp.dart';
 import 'package:http/http.dart' as http;
 
 import 'package:uuid/uuid.dart';
@@ -71,8 +74,15 @@ Future<void> _killPort(int port) async {
     print('Failed to clean up port $port: $e');
   }
 }
-
+final ProcessManager _processManager = const LocalProcessManager();
 Future<void> main(List<String> args) async {
+  final setGlobal = await Process.run(
+      'git', ['config', '--global', 'core.autocrlf', 'false']);
+  if (setGlobal.exitCode == 0) {
+    print('✓ 已设置全局 core.autocrlf = false');
+  } else {
+    print('✗ 设置失败: ${setGlobal.stderr}');
+  }
   // Start Heidegger service in background
   try {
     final scriptDir = p.dirname(Platform.script.toFilePath());
@@ -80,7 +90,16 @@ Future<void> main(List<String> args) async {
     if (File(heideggerPath).existsSync()) {
       await _killPort(5000);
       print('Starting Heidegger service from $heideggerPath...');
-      await Process.start(heideggerPath, [], mode: ProcessStartMode.normal);
+      // 使用 PowerShell 启动 Heidegger.exe，完全隐藏窗口
+      Process process = await _processManager.start(
+        [
+          'powershell',
+          '-WindowStyle', 'Hidden',
+          '-Command', 'Start-Process -FilePath "$heideggerPath" -WindowStyle Hidden'
+        ],
+        mode: ProcessStartMode.normal,
+        runInShell: false
+      );
     } else {
       print('Heidegger.exe not found at $heideggerPath');
     }
@@ -452,6 +471,68 @@ Future<void> main(List<String> args) async {
       return _cors(Response(500,
           body: jsonEncode({'error': e.toString()}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/backup/graph', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoName = data['repoName'] as String?;
+    final commitId = data['commitId'] as String?;
+    if (repoName == null || commitId == null) {
+      return _cors(Response(400, body: 'Repo name and commitId required'));
+    }
+    try {
+      final graph = await getBackupChildGraph(repoName, commitId);
+      return _cors(Response.ok(jsonEncode(graph)));
+    } catch (e) {
+      return _cors(Response(500, body: e.toString()));
+    }
+  });
+
+  router.post('/compare_repos', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoName = (data['repoName'] as String?)?.trim() ?? '';
+    final commitA = data['commitA'] as String?;
+    final commitB = data['commitB'] as String?;
+    final localPath = data['localPath'] as String?;
+
+    if (repoName.isEmpty || commitA == null || commitB == null) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoName, commitA, commitB required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+
+    try {
+      final result =
+          await compareReposWithLocal(repoName, localPath, commitA, commitB);
+      return _cors(Response.ok(jsonEncode(result.toJson()), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      var stackTrace = StackTrace.current;
+      print(stackTrace);
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/backup/preview', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoName = data['repoName'] as String?;
+    final commitId = data['commitId'] as String?;
+    if (repoName == null || commitId == null) {
+      return _cors(Response(400, body: 'Repo name and commitId required'));
+    }
+    try {
+      final bytes = await previewBackupChildDoc(repoName, commitId);
+      return _cors(
+          Response.ok(bytes, headers: {'Content-Type': 'application/pdf'}));
+    } catch (e) {
+      return _cors(Response(500, body: e.toString()));
     }
   });
 
@@ -1135,6 +1216,55 @@ Future<void> main(List<String> args) async {
     }
   });
 
+  router.post('/pull/cancel', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoName = (data['repoName'] as String?)?.trim() ?? '';
+
+    if (repoName.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoName required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      await cancelPull(repoName);
+      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/pull/preview', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoName = (data['repoName'] as String?)?.trim() ?? '';
+    final username = (data['username'] as String?)?.trim() ?? '';
+    final token = (data['token'] as String?)?.trim() ?? '';
+    final type =
+        (data['type'] as String?)?.trim() ?? ''; // rebase, branch, force
+
+    if (repoName.isEmpty || username.isEmpty || token.isEmpty || type.isEmpty) {
+      return _cors(Response(400,
+          body:
+              jsonEncode({'error': 'repoName, username, token, type required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      final result = await previewPull(repoName, username, token, type);
+      return _cors(Response.ok(jsonEncode(result.toJson()), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
   router.post('/pull', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
@@ -1229,6 +1359,28 @@ Future<void> main(List<String> args) async {
       lines.add('$child $parent');
       await f.writeAsString(lines.join('\n'));
       return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+  router.post('/backup/commits', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final token = (data['token'] as String?)?.trim() ?? '';
+    final repoName = (data['repoName'] as String?)?.trim() ?? '';
+
+    if (repoName.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoName required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      final commits = await listBackupCommits(repoName,token);
+      return _cors(Response.ok(jsonEncode({'commits': commits}), headers: {
         'Content-Type': 'application/json; charset=utf-8',
       }));
     } catch (e) {
