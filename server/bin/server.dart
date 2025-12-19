@@ -65,7 +65,8 @@ Future<void> _killPort(int port) async {
 }
 
 Future<void> main(List<String> args) async {
-    final setGlobal = await Process.run('git', ['config', '--global', 'core.autocrlf', 'false']);
+  final setGlobal = await Process.run(
+      'git', ['config', '--global', 'core.autocrlf', 'false']);
   if (setGlobal.exitCode == 0) {
     print('✓ 已设置全局 core.autocrlf = false');
   } else {
@@ -195,22 +196,6 @@ Future<void> main(List<String> args) async {
     }
   });
 
-  router.post('/backup/commits', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoName = data['repoName'] as String?;
-    final force = data['force'] as bool? ?? false;
-    if (repoName == null || repoName.isEmpty) {
-      return _cors(Response(400, body: 'Repo name required'));
-    }
-    try {
-      final commits = await listBackupCommits(repoName, force: force);
-      return _cors(Response.ok(jsonEncode({'commits': commits})));
-    } catch (e) {
-      return _cors(Response(500, body: e.toString()));
-    }
-  });
-
   router.post('/backup/graph', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
@@ -242,7 +227,8 @@ Future<void> main(List<String> args) async {
     }
 
     try {
-      final result = await compareReposWithLocal(repoName, localPath, commitA, commitB);
+      final result =
+          await compareReposWithLocal(repoName, localPath, commitA, commitB);
       return _cors(Response.ok(jsonEncode(result.toJson()), headers: {
         'Content-Type': 'application/json; charset=utf-8',
       }));
@@ -956,7 +942,7 @@ Future<void> main(List<String> args) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
     final repoName = (data['repoName'] as String?)?.trim() ?? '';
-    
+
     if (repoName.isEmpty) {
       return _cors(Response(400,
           body: jsonEncode({'error': 'repoName required'}),
@@ -980,11 +966,13 @@ Future<void> main(List<String> args) async {
     final repoName = (data['repoName'] as String?)?.trim() ?? '';
     final username = (data['username'] as String?)?.trim() ?? '';
     final token = (data['token'] as String?)?.trim() ?? '';
-    final type = (data['type'] as String?)?.trim() ?? ''; // rebase, branch, force
+    final type =
+        (data['type'] as String?)?.trim() ?? ''; // rebase, branch, force
 
     if (repoName.isEmpty || username.isEmpty || token.isEmpty || type.isEmpty) {
       return _cors(Response(400,
-          body: jsonEncode({'error': 'repoName, username, token, type required'}),
+          body:
+              jsonEncode({'error': 'repoName, username, token, type required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
@@ -1104,8 +1092,8 @@ Future<void> main(List<String> args) async {
   router.post('/backup/commits', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
+    final token = (data['token'] as String?)?.trim() ?? '';
     final repoName = (data['repoName'] as String?)?.trim() ?? '';
-    final force = data['force'] == true;
 
     if (repoName.isEmpty) {
       return _cors(Response(400,
@@ -1113,7 +1101,7 @@ Future<void> main(List<String> args) async {
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
-      final commits = await listBackupCommits(repoName, force: force);
+      final commits = await listBackupCommits(repoName,token);
       return _cors(Response.ok(jsonEncode({'commits': commits}), headers: {
         'Content-Type': 'application/json; charset=utf-8',
       }));
@@ -1123,7 +1111,6 @@ Future<void> main(List<String> args) async {
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
   });
-
 
   final handler =
       const Pipeline().addMiddleware(logRequests()).addHandler(router);

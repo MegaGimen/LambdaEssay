@@ -3,15 +3,47 @@ import 'dart:convert';
 import 'package:path/path.dart' as p;
 import 'package:http/http.dart' as http;
 import 'models.dart';
+
+import 'package:crypto/crypto.dart';
+
+Future<String> sha1hash(String filePath) async {
+  print(filePath);
+
+  try {
+    final file = File(filePath);
+
+    if (!file.existsSync()) {
+      return "错误：文件 '$filePath' 不存在";
+    }
+
+    final stream = file.openRead();
+    final hash = sha1;
+    final bytes = await stream.fold<List<int>>(
+        <int>[], (previous, element) => previous..addAll(element));
+
+    final digest = hash.convert(bytes);
+    return digest.toString();
+  } on FileSystemException catch (e) {
+    if (e.osError?.errorCode == 13) {
+      return "错误：没有权限读取文件 '$filePath'";
+    }
+    return "错误：${e.message}";
+  } catch (e) {
+    return "错误：$e";
+  }
+}
+
 String _baseDir() {
   final app = Platform.environment['APPDATA'];
-  if (app != null && app.isNotEmpty) return p.join(app, 'gitdocx_history_cache');
+  if (app != null && app.isNotEmpty)
+    return p.join(app, 'gitdocx_history_cache');
   final home = Platform.environment['HOME'] ?? '';
   if (home.isNotEmpty) return p.join(home, '.gitdocx_history_cachex');
   return p.join(Directory.systemTemp.path, 'gitdocx_history_cache');
 }
+
 final String _backupBaseUrl = 'http://47.242.109.145:4829';
-final String _tempDirName = p.join(_baseDir(),'temp_backups');
+final String _tempDirName = p.join(_baseDir(), 'temp_backups');
 
 // New checkout base directory
 final String _checkoutBaseDir =
@@ -22,43 +54,54 @@ String _getBackupDir(String repoName) {
   return p.join(p.dirname(scriptDir), _tempDirName, repoName);
 }
 
-Future<List<Map<String, dynamic>>> listBackupCommits(String repoName,
-    {bool force = false}) async {
+Future<List<Map<String, dynamic>>> listBackupCommits(
+    String repoName, String AuthToken) async {
   final dirPath = _getBackupDir(repoName);
   final dir = Directory(dirPath);
-
-  if (force && await dir.exists()) {
-    await dir.delete(recursive: true);
+  String LocalSha1 = "";
+  if (await File('$dirPath.zip').exists()) {
+    LocalSha1 = await sha1hash('$dirPath.zip');
   }
 
-  if (!await dir.exists()) {
-    // Download
-    print('Downloading backup for $repoName...');
-    final zipUrl = '$_backupBaseUrl/backups/$repoName/download';
-    final resp = await http.get(Uri.parse(zipUrl));
-    if (resp.statusCode != 200) {
-      throw Exception('Failed to download backup: ${resp.statusCode}');
+  final zipUrl =
+      '$_backupBaseUrl/backups/$repoName/download?token=$AuthToken&LocalSha1=$LocalSha1';
+  final resp = await http.get(Uri.parse(zipUrl));
+
+  if (resp.statusCode != 200) {
+    print(resp.body);
+    throw Exception('Failed to download backup: ${resp.statusCode}');
+  }
+
+  try {
+    final jsonData = jsonDecode(resp.body);
+    print("Debug,jsonData=$jsonData,everything cool bro!");
+    if (jsonData["message"] == "success") print("File up to date");
+  } catch (_) {
+    print("New file!");
+    //新的文件
+    if (await dir.exists()) await dir.delete(recursive: true);
+    if (await File('$dirPath.zip').exists())
+      await File('$dirPath.zip').delete();
+    print("Deleted");
+    if (!await dir.exists()) {
+      // Download
+      print('Downloading backup for $repoName...');
+
+      final zipFile = File('$dirPath.zip');
+      await zipFile.parent.create(recursive: true);
+      await zipFile.writeAsBytes(resp.bodyBytes);
+
+      // Unzip using PowerShell
+      print('Unzipping $repoName...');
+      final res = await Process.run('powershell', [
+        '-Command',
+        'Expand-Archive -Path "${zipFile.path}" -DestinationPath "$dirPath" -Force'
+      ]);
+
+      if (res.exitCode != 0) {
+        throw Exception('Failed to unzip: ${res.stderr}');
+      }
     }
-
-    final zipFile = File('$dirPath.zip');
-    await zipFile.parent.create(recursive: true);
-    await zipFile.writeAsBytes(resp.bodyBytes);
-
-    // Unzip using PowerShell
-    print('Unzipping $repoName...');
-    final res = await Process.run('powershell', [
-      '-Command',
-      'Expand-Archive -Path "${zipFile.path}" -DestinationPath "$dirPath" -Force'
-    ]);
-
-    if (res.exitCode != 0) {
-      throw Exception('Failed to unzip: ${res.stderr}');
-    }
-
-    // Cleanup zip
-    //if (await zipFile.exists()) {
-    // await zipFile.delete();
-    //}
   }
 
   // Pre-cache all snapshots logic
@@ -77,7 +120,8 @@ Future<void> _precacheSnapshots(String repoName, String repoPath) async {
     final snapshotDirs = entities.whereType<Directory>().where((d) {
       return p.basename(d.path).contains('_son-');
     }).toList();
-
+    print(
+        "On executing _precacheSnapshots with param snapshotDirs=$snapshotDirs");
     if (snapshotDirs.isNotEmpty) {
       print('Found ${snapshotDirs.length} snapshots.');
       final checkoutRoot = Directory(p.join(_checkoutBaseDir, repoName));
@@ -95,7 +139,7 @@ Future<void> _precacheSnapshots(String repoName, String repoPath) async {
         if (await targetDir.exists()) {
           await targetDir.delete(recursive: true);
         }
-        
+
         try {
           await d.rename(targetDir.path);
         } catch (e) {
@@ -105,8 +149,9 @@ Future<void> _precacheSnapshots(String repoName, String repoPath) async {
           ]);
           await d.delete(recursive: true);
         }
-        
-        await Process.run('git', ['init', '--bare', '.'], workingDirectory: targetDir.path);
+
+        await Process.run('git', ['init', '--bare', '.'],
+            workingDirectory: targetDir.path);
       }
       return;
     }
@@ -215,24 +260,27 @@ await targetoutputFile.writeAsString(targetDirstdoutOutput);
   */
 }
 
-Future<List<Map<String, dynamic>>> _getCommitsFromDir(String repoPath, String repoName) async {
+Future<List<Map<String, dynamic>>> _getCommitsFromDir(
+    String repoPath, String repoName) async {
+  print("Execute _getCommitsFromDir with param repoPath=$repoPath");
   // Check for cached snapshots first (Snapshot Mode)
   final cachedRepoDir = Directory(p.join(_checkoutBaseDir, repoName));
   if (await cachedRepoDir.exists()) {
+    print("cachedRepoDir.exists");
     final subs = cachedRepoDir.listSync().whereType<Directory>().toList();
     if (subs.isNotEmpty) {
       // We are in snapshot mode
       final commits = <Map<String, dynamic>>[];
       for (final d in subs) {
-          final id = p.basename(d.path);
-          commits.add({
-            'id': id,
-            'parents': [],
-            'refs': [],
-            'author': 'Snapshot',
-            'date': DateTime.now().toIso8601String(), 
-            'subject': 'Snapshot $id',
-          });
+        final id = p.basename(d.path);
+        commits.add({
+          'id': id,
+          'parents': [],
+          'refs': [],
+          'author': 'Snapshot',
+          'date': DateTime.now().toIso8601String(),
+          'subject': 'Snapshot $id',
+        });
       }
       return commits;
     }
@@ -287,13 +335,16 @@ Future<String> _findEffectiveRepoPath(String repoName) async {
   final repoDir = _getBackupDir(repoName);
   print("repodir=$repoDir");
   if (await Directory(p.join(repoDir, '.git')).exists()) {
+    print(1);
     return repoDir;
   }
 
   // Check if we have already cached snapshots in _checkoutBaseDir
   final checkoutDir = Directory(p.join(_checkoutBaseDir, repoName));
   if (await checkoutDir.exists() && checkoutDir.listSync().isNotEmpty) {
-    return repoDir; // Return this even if empty, as we have cached data
+    print(2);
+    print(checkoutDir);
+    return p.join(repoDir, repoName); // Who the fuck writes this piece of shit
   }
 
   // Check if we have snapshot folders (pre-exploded)
@@ -301,6 +352,7 @@ Future<String> _findEffectiveRepoPath(String repoName) async {
   if (await dir.exists()) {
     final subs = dir.listSync().whereType<Directory>();
     if (subs.any((d) => p.basename(d.path).contains('_son-'))) {
+      print(3);
       return repoDir;
     }
   }
@@ -349,8 +401,8 @@ Future<String> getSnapshotPath(String repoName, String commitId) async {
   final snapshotPath = p.join(_checkoutBaseDir, repoName, commitId);
   final snapshotDir = Directory(snapshotPath);
   if (!await snapshotDir.exists()) {
-     // Try to ensure it exists? Or just throw
-     throw Exception('Snapshot not found for $commitId');
+    // Try to ensure it exists? Or just throw
+    throw Exception('Snapshot not found for $commitId');
   }
   return snapshotPath;
 }
