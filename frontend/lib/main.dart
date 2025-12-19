@@ -1825,6 +1825,12 @@ class _GraphPageState extends State<GraphPage> {
                   onPressed: loading ? null : _onOpenTrackProject,
                   child: const Text('打开追踪项目'),
                 ),
+                                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: loading ? null : _onUpdateRepoAction,
+                  child: const Text('出现问题点我刷新'),
+                ),
+
                 const SizedBox(width: 8),
                 ElevatedButton(
                   onPressed: loading ? null : _onPush,
