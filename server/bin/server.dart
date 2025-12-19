@@ -171,6 +171,19 @@ Future<void> main(List<String> args) async {
                 final path = data['path'] as String?;
                 if (path != null) {
                    print('Plugin reported save event for: $path');
+                   // Notify frontend to start loading immediately
+                   for (final socket in _activeFrontendSockets) {
+                     try {
+                       socket.sink.add(jsonEncode({
+                         'type': 'loading_status',
+                         'loading': true,
+                         'message': '正在处理保存事件...'
+                       }));
+                     } catch (e) {
+                       print('Failed to notify frontend loading: $e');
+                     }
+                   }
+
                    for (final socket in _activeFrontendSockets) {
                      try {
                        socket.sink.add(jsonEncode({
