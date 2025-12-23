@@ -15,7 +15,7 @@ void main(List<String> arguments) {
     exit(1);
   }
   
-  int port = 3841;
+  int port = 3891;
   
   print('在端口 $port 上启动Dart HTTP服务器');
   print('服务目录: ${servingDirectory.absolute.path}');
