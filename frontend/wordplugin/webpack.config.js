@@ -90,6 +90,15 @@ module.exports = async (env, options) => {
         options: env.WEBPACK_BUILD || options.https !== undefined ? options.https : await getHttpsOptions(),
       },
       port: process.env.npm_package_config_dev_server_port || 3000,
+      proxy: [
+        {
+          context: ['/gitgraph'],
+          target: 'http://localhost:3891',
+          changeOrigin: true,
+          pathRewrite: { '^/gitgraph': '' },
+          secure: false,
+        },
+      ],
     },
   };
 
