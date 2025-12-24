@@ -1888,6 +1888,7 @@ class _GraphPageState extends State<GraphPage> {
                     onFindIdentical: _findIdentical,
                     identicalCommitIds: identicalCommitIds,
                     onLoading: (v) => setState(() => loading = v),
+                    transformationController: _graphTc,
                   ),
           ),
         ],
@@ -1938,6 +1939,7 @@ class _GraphView extends StatefulWidget {
 
 class _GraphViewState extends State<_GraphView> {
   late TransformationController _tc;
+  double _zoomLevel = 1.0;
   CommitNode? _hovered;
   Offset? _hoverPos;
   bool _rightPanActive = false;
@@ -2939,6 +2941,33 @@ class _GraphViewState extends State<_GraphView> {
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 6),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('整体缩放'),
+                      const SizedBox(width: 8),
+                      SizedBox(
+                        width: 180,
+                        child: Slider(
+                          min: 0.2,
+                          max: 4.0,
+                          value: _zoomLevel.clamp(0.2, 4.0),
+                          label: _zoomLevel.toStringAsFixed(1),
+                          onChanged: (v) {
+                            setState(() {
+                              _zoomLevel = v;
+                              final m = _tc.value.clone();
+                              final t = m.getTranslation();
+                              _tc.value = Matrix4.identity()
+                                ..translate(t.x, t.y)
+                                ..scale(v);
+                            });
+                          },
+                        ),
+                      ),
+                      Text(_zoomLevel.toStringAsFixed(1)),
+                    ],
+                  ),
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
