@@ -31,7 +31,7 @@ class _BackupPageState extends State<BackupPage> {
   // Store comparison results for each backup commit vs local
   final Map<String, ComparisonData> _comparisons = {};
   final TransformationController _sharedTc = TransformationController();
-  double _zoomLevel = 1.0;
+  double _uiScale = 1.0;
 
   bool _compareMode = false;
   final Set<String> _selectedCommits = {};
@@ -41,26 +41,18 @@ class _BackupPageState extends State<BackupPage> {
   @override
   void initState() {
     super.initState();
-    _sharedTc.addListener(_onScaleChanged);
+    // _sharedTc.addListener(_onScaleChanged);
     _loadBackups();
   }
 
   @override
   void dispose() {
-    _sharedTc.removeListener(_onScaleChanged);
+    // _sharedTc.removeListener(_onScaleChanged);
     _sharedTc.dispose();
     super.dispose();
   }
 
-  void _onScaleChanged() {
-    if (!mounted) return;
-    final s = _sharedTc.value.getMaxScaleOnAxis();
-    if ((s - _zoomLevel).abs() > 0.01) {
-      setState(() {
-        _zoomLevel = s;
-      });
-    }
-  }
+  // void _onScaleChanged() { ... }
 
   Future<void> _pickStart() async {
     final d = await showDatePicker(
@@ -325,26 +317,23 @@ class _BackupPageState extends State<BackupPage> {
   Widget build(BuildContext context) {
     final repo = widget.projectName;
     final commits = _filtered();
-    return Stack(
-      children: [
-        Scaffold(
+    return MediaQuery(
+      data: MediaQuery.of(context).copyWith(textScaleFactor: _uiScale),
+      child: Stack(
+        children: [
+          Scaffold(
           appBar: AppBar(
             title: Text('历史备份预览: $repo'),
             actions: [
               SizedBox(
                 width: 150,
                 child: Slider(
-                  value: _zoomLevel.clamp(0.2, 4.0),
-                  min: 0.2,
-                  max: 4.0,
+                  value: _uiScale.clamp(0.5, 2.0),
+                  min: 0.5,
+                  max: 2.0,
                   onChanged: (value) {
                     setState(() {
-                      _zoomLevel = value;
-                      final m = _sharedTc.value.clone();
-                      final t = m.getTranslation();
-                      _sharedTc.value = Matrix4.identity()
-                        ..translate(t.x, t.y)
-                        ..scale(value);
+                      _uiScale = value;
                     });
                   },
                 ),
@@ -575,7 +564,7 @@ class _BackupPageState extends State<BackupPage> {
         if (_loading)
           const Center(child: CircularProgressIndicator()),
       ],
-    );
+    ),);
   }
 }
 

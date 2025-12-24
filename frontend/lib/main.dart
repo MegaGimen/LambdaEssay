@@ -52,33 +52,26 @@ class _GraphPageState extends State<GraphPage> {
   String? _token;
 
   final TransformationController _graphTc = TransformationController();
-  double _zoomLevel = 1.0;
+  double _uiScale = 1.0;
 
   static const String baseUrl = 'http://localhost:8080';
 
   @override
   void initState() {
     super.initState();
-    _graphTc.addListener(_onScaleChanged);
+    // _graphTc.addListener(_onScaleChanged); // Decoupled graph zoom from UI scale
     _checkLogin();
   }
 
   @override
   void dispose() {
-    _graphTc.removeListener(_onScaleChanged);
+    // _graphTc.removeListener(_onScaleChanged);
     _graphTc.dispose();
     super.dispose();
   }
 
-  void _onScaleChanged() {
-    if (!mounted) return;
-    final s = _graphTc.value.getMaxScaleOnAxis();
-    if ((s - _zoomLevel).abs() > 0.01) {
-      setState(() {
-        _zoomLevel = s;
-      });
-    }
-  }
+  // void _onScaleChanged() { ... } // Removed
+
 
   Future<void> _checkLogin() async {
     final prefs = await SharedPreferences.getInstance();
@@ -1686,7 +1679,12 @@ class _GraphPageState extends State<GraphPage> {
       appBar: AppBar(title: const Text('Git Graph 可视化')),
       body: Column(
         children: [
-          if (_username == null)
+          MediaQuery(
+            data: MediaQuery.of(context).copyWith(textScaleFactor: _uiScale),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_username == null)
             Padding(
               padding: const EdgeInsets.all(8),
               child: _isRegisterMode
@@ -1784,22 +1782,17 @@ class _GraphPageState extends State<GraphPage> {
                 SizedBox(
                   width: 200,
                   child: Slider(
-                    value: _zoomLevel.clamp(0.2, 4.0),
-                    min: 0.2,
-                    max: 4.0,
+                    value: _uiScale.clamp(0.5, 2.0),
+                    min: 0.5,
+                    max: 2.0,
                     onChanged: (value) {
                       setState(() {
-                        _zoomLevel = value;
-                        final m = _graphTc.value.clone();
-                        final t = m.getTranslation();
-                        _graphTc.value = Matrix4.identity()
-                          ..translate(t.x, t.y)
-                          ..scale(value);
+                        _uiScale = value;
                       });
                     },
                   ),
                 ),
-                Text(_zoomLevel.toStringAsFixed(1)),
+                Text(_uiScale.toStringAsFixed(1)),
                 const SizedBox(width: 16),
                 IconButton(
                   onPressed: () {
@@ -1906,6 +1899,9 @@ class _GraphPageState extends State<GraphPage> {
               padding: const EdgeInsets.all(8),
               child: Text(error!, style: const TextStyle(color: Colors.red)),
             ),
+              ],
+            ),
+          ),
           Expanded(
             child: data == null
                 ? const Center(child: Text('输入路径并点击加载'))
@@ -1924,6 +1920,7 @@ class _GraphPageState extends State<GraphPage> {
                     identicalCommitIds: identicalCommitIds,
                     onLoading: (v) => setState(() => loading = v),
                     transformationController: _graphTc,
+                    uiScale: _uiScale,
                   ),
           ),
         ],
@@ -1954,6 +1951,7 @@ class _GraphView extends StatefulWidget {
   final List<String>? identicalCommitIds;
   final Function(bool)? onLoading;
   final TransformationController? transformationController;
+  final double uiScale;
   const _GraphView({
     required this.data,
     this.working,
@@ -1967,6 +1965,7 @@ class _GraphView extends StatefulWidget {
     this.identicalCommitIds,
     this.onLoading,
     this.transformationController,
+    this.uiScale = 1.0,
   });
   @override
   State<_GraphView> createState() => _GraphViewState();
@@ -2846,15 +2845,18 @@ class _GraphViewState extends State<_GraphView> {
                     ),
                   ),
                 ),
-              ),
-            ),
           ),
+          ),
+        ),
         ),
         Positioned(
           top: 16,
           left: 16,
-          child: Material(
-            elevation: 4,
+          child: Transform.scale(
+            scale: widget.uiScale,
+            alignment: Alignment.topLeft,
+            child: Material(
+              elevation: 4,
             borderRadius: BorderRadius.circular(8),
             child: Container(
               padding: const EdgeInsets.all(12),
@@ -2919,11 +2921,15 @@ class _GraphViewState extends State<_GraphView> {
             ),
           ),
         ),
+        ),
         Positioned(
           right: 16,
           top: 80,
-          child: Material(
-            elevation: 2,
+          child: Transform.scale(
+            scale: widget.uiScale,
+            alignment: Alignment.topRight,
+            child: Material(
+              elevation: 2,
             child: Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
@@ -3094,6 +3100,7 @@ class _GraphViewState extends State<_GraphView> {
                 ],
               ),
             ),
+          ),
           ),
         ),
         if (_hovered != null && _hoverPos != null)
