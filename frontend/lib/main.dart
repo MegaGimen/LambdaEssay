@@ -1346,14 +1346,58 @@ class _GraphPageState extends State<GraphPage> {
             _token!.isNotEmpty) {
           print('Auto-pulling for $name...');
           try {
-            await _postJson('http://localhost:8080/pull', {
+            // Check status first
+            final statusResp = await _postJson('http://localhost:8080/check_pull_status', {
               'repoName': name,
               'username': _username,
               'token': _token,
             });
-            if (mounted) {
-              ScaffoldMessenger.of(context)
-                  .showSnackBar(const SnackBar(content: Text('自动拉取成功')));
+
+            final status = statusResp['status'];
+            if (status == 'up-to-date') {
+               if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('远程仓库已是最新')));
+            } else if (status == 'behind') {
+              // Safe to pull (fast-forward likely)
+              await _postJson('http://localhost:8080/pull', {
+                'repoName': name,
+                'username': _username,
+                'token': _token,
+              });
+              if (mounted) {
+                ScaffoldMessenger.of(context)
+                    .showSnackBar(const SnackBar(content: Text('自动拉取成功')));
+              }
+            } else if (status == 'ahead' || status == 'diverged') {
+               // Prompt user
+               if (mounted) {
+                  bool isDiverged = status == 'diverged';
+                  final confirm = await showDialog<bool>(
+                    context: context,
+                    builder: (ctx) => AlertDialog(
+                      title: Text(isDiverged ? '远程仓库已分叉' : '本地有未推送的提交'),
+                      content: Text(isDiverged 
+                         ? '本地和远程都有新的提交，是否要手动解决冲突？' 
+                         : '本地有新的提交，是否要推送到远程？'),
+                      actions: [
+                        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('忽略')),
+                        ElevatedButton(
+                          onPressed: () => Navigator.pop(ctx, true), 
+                          child: Text(isDiverged ? '解决冲突' : '推送')
+                        ),
+                      ],
+                    ),
+                  );
+                  
+                  if (confirm == true) {
+                     if (isDiverged) {
+                         await _showResolveConflictDialog(isPush: false);
+                     } else {
+                         await _onPush();
+                     }
+                  }
+               }
+            } else {
+               print('Check pull status failed: ${statusResp['message']}');
             }
           } catch (e) {
             print('Auto-pull failed: $e');
