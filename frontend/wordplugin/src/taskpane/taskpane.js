@@ -51,6 +51,7 @@ function connectWebSocket() {
                 await saveDocument(data.id);
             } else if (data.action === 'replace') {
                 await replaceDocument(data.payload, data.id);
+                await saveDocument(data.id);
             }
         } catch (e) {
             log("Error processing message: " + e.message);
