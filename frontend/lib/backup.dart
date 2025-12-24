@@ -31,6 +31,7 @@ class _BackupPageState extends State<BackupPage> {
   // Store comparison results for each backup commit vs local
   final Map<String, ComparisonData> _comparisons = {};
   final TransformationController _sharedTc = TransformationController();
+  double _zoomLevel = 1.0;
 
   bool _compareMode = false;
   final Set<String> _selectedCommits = {};
@@ -40,7 +41,25 @@ class _BackupPageState extends State<BackupPage> {
   @override
   void initState() {
     super.initState();
+    _sharedTc.addListener(_onScaleChanged);
     _loadBackups();
+  }
+
+  @override
+  void dispose() {
+    _sharedTc.removeListener(_onScaleChanged);
+    _sharedTc.dispose();
+    super.dispose();
+  }
+
+  void _onScaleChanged() {
+    if (!mounted) return;
+    final s = _sharedTc.value.getMaxScaleOnAxis();
+    if ((s - _zoomLevel).abs() > 0.01) {
+      setState(() {
+        _zoomLevel = s;
+      });
+    }
   }
 
   Future<void> _pickStart() async {
@@ -310,9 +329,27 @@ class _BackupPageState extends State<BackupPage> {
       children: [
         Scaffold(
           appBar: AppBar(
-        title: Text('历史备份预览: $repo'),
-        actions: [
-          IconButton(
+            title: Text('历史备份预览: $repo'),
+            actions: [
+              SizedBox(
+                width: 150,
+                child: Slider(
+                  value: _zoomLevel.clamp(0.2, 4.0),
+                  min: 0.2,
+                  max: 4.0,
+                  onChanged: (value) {
+                    setState(() {
+                      _zoomLevel = value;
+                      final m = _sharedTc.value.clone();
+                      final t = m.getTranslation();
+                      _sharedTc.value = Matrix4.identity()
+                        ..translate(t.x, t.y)
+                        ..scale(value);
+                    });
+                  },
+                ),
+              ),
+              IconButton(
             onPressed: () {
               _sharedTc.value = Matrix4.identity();
             },

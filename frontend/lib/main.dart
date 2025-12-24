@@ -51,12 +51,33 @@ class _GraphPageState extends State<GraphPage> {
   String? _username;
   String? _token;
 
+  final TransformationController _graphTc = TransformationController();
+  double _zoomLevel = 1.0;
+
   static const String baseUrl = 'http://localhost:8080';
 
   @override
   void initState() {
     super.initState();
+    _graphTc.addListener(_onScaleChanged);
     _checkLogin();
+  }
+
+  @override
+  void dispose() {
+    _graphTc.removeListener(_onScaleChanged);
+    _graphTc.dispose();
+    super.dispose();
+  }
+
+  void _onScaleChanged() {
+    if (!mounted) return;
+    final s = _graphTc.value.getMaxScaleOnAxis();
+    if ((s - _zoomLevel).abs() > 0.01) {
+      setState(() {
+        _zoomLevel = s;
+      });
+    }
   }
 
   Future<void> _checkLogin() async {
@@ -1896,6 +1917,7 @@ class _GraphView extends StatefulWidget {
   final Future<void> Function()? onFindIdentical;
   final List<String>? identicalCommitIds;
   final Function(bool)? onLoading;
+  final TransformationController? transformationController;
   const _GraphView({
     required this.data,
     this.working,
@@ -1908,13 +1930,14 @@ class _GraphView extends StatefulWidget {
     this.onFindIdentical,
     this.identicalCommitIds,
     this.onLoading,
+    this.transformationController,
   });
   @override
   State<_GraphView> createState() => _GraphViewState();
 }
 
 class _GraphViewState extends State<_GraphView> {
-  final TransformationController _tc = TransformationController();
+  late TransformationController _tc;
   CommitNode? _hovered;
   Offset? _hoverPos;
   bool _rightPanActive = false;
@@ -1928,6 +1951,20 @@ class _GraphViewState extends State<_GraphView> {
   static const Duration _rightPanDelay = Duration(milliseconds: 200);
   final Set<String> _selectedNodes = {};
   bool _comparing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _tc = widget.transformationController ?? TransformationController();
+  }
+
+  @override
+  void dispose() {
+    if (widget.transformationController == null) {
+      _tc.dispose();
+    }
+    super.dispose();
+  }
 
   void _resetView() {
     setState(() {
