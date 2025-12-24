@@ -1627,6 +1627,56 @@ Future<Map<String, dynamic>> pullFromRemote(
   });
 }
 
+Future<Map<String, dynamic>> checkPullStatus(
+    String repoName, String username, String token) async {
+  final projDir = _projectDir(repoName);
+  return _withRepoLock(projDir, () async {
+    final remoteName = repoName.toLowerCase();
+    final owner = await _resolveRepoOwner(repoName, token);
+    final remoteUrl =
+        'http://$username:$token@47.242.109.145:3000/$owner/$repoName.git';
+
+    try {
+      await addRemote(projDir, remoteName, remoteUrl);
+      await _runGit(['fetch', remoteName], projDir);
+
+      final current = await getCurrentBranch(projDir);
+      if (current == null) return {'status': 'error', 'message': 'No current branch'};
+
+      final remoteBranch = '$remoteName/$current';
+      
+      // Check if remote branch exists
+      try {
+        await _runGit(['rev-parse', '--verify', remoteBranch], projDir);
+      } catch (_) {
+         // Remote branch doesn't exist?
+         return {'status': 'no_remote_branch'};
+      }
+
+      // Check behind/ahead count
+      final out = await _runGit(
+          ['rev-list', '--left-right', '--count', '$current...$remoteBranch'],
+          projDir);
+      
+      if (out.isEmpty) return {'status': 'error', 'message': 'Failed to check status'};
+      
+      final parts = out.first.trim().split(RegExp(r'\s+'));
+      if (parts.length < 2) return {'status': 'error', 'message': 'Invalid rev-list output'};
+      
+      final ahead = int.tryParse(parts[0]) ?? 0;
+      final behind = int.tryParse(parts[1]) ?? 0;
+
+      if (behind > 0 && ahead > 0) return {'status': 'diverged', 'behind': behind, 'ahead': ahead};
+      if (behind > 0) return {'status': 'behind', 'behind': behind};
+      if (ahead > 0) return {'status': 'ahead', 'ahead': ahead};
+      return {'status': 'up-to-date'};
+
+    } catch (e) {
+      return {'status': 'error', 'message': e.toString()};
+    }
+  });
+}
+
 Future<List<String>> listProjects() async {
   final base = Directory(_baseDir());
   if (!base.existsSync()) return [];
