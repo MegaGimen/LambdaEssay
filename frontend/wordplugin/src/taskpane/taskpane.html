@@ -17,21 +17,65 @@
         body, html {
             margin: 0;
             padding: 0;
-            height: 100%;
+            height: 100vh;
             width: 100%;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        #scale-container {
+            flex: 1;
+            width: 100%;
+            height: 100%;
+            position: relative;
             overflow: hidden;
         }
         #content-frame {
-            width: 100%;
-            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
             border: none;
-            display: block;
+            transform-origin: 0 0;
         }
     </style>
 </head>
 
 <body>
-    <iframe id="content-frame" src="/gitgraph/"></iframe>
+    <div id="scale-container">
+        <iframe id="content-frame" src="/gitgraph/"></iframe>
+    </div>
+
+    <script>
+        // Configuration
+        const BASE_WIDTH = 1000; // The virtual width we want to render the app at
+
+        function resizeIframe() {
+            const container = document.getElementById('scale-container');
+            const iframe = document.getElementById('content-frame');
+            
+            if (!container || !iframe) return;
+
+            const containerWidth = container.clientWidth;
+            const containerHeight = container.clientHeight;
+            
+            // Calculate scale to fit width
+            const scale = containerWidth / BASE_WIDTH;
+            
+            // Apply scale
+            iframe.style.width = `${BASE_WIDTH}px`;
+            iframe.style.transform = `scale(${scale})`;
+            
+            // Compensate height to fill the container after scaling
+            // height = containerHeight / scale
+            iframe.style.height = `${containerHeight / scale}px`;
+        }
+
+        window.addEventListener('resize', resizeIframe);
+        // Initial resize
+        window.addEventListener('load', resizeIframe);
+        // Also try periodically in case of layout shifts
+        setInterval(resizeIframe, 500);
+    </script>
 </body>
 
 </html>
