@@ -1510,7 +1510,12 @@ Future<Map<String, dynamic>> pullFromRemote(
         } catch (e) {}
 
         try {
-          await _runGit(['fetch', remoteUrl, 'HEAD'], projDir);
+          final current = await getCurrentBranch(projDir);
+          if (current != null) {
+            await _runGit(['fetch', remoteUrl, current], projDir);
+          } else {
+            await _runGit(['fetch', remoteUrl, 'HEAD'], projDir);
+          }
           final mergeBaseRes = await Process.run(
             'git',
             ['merge-base', '--is-ancestor', 'HEAD', 'FETCH_HEAD'],

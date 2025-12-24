@@ -1357,15 +1357,34 @@ class _GraphPageState extends State<GraphPage> {
             if (status == 'up-to-date') {
                if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('远程仓库已是最新')));
             } else if (status == 'behind') {
-              // Safe to pull (fast-forward likely)
-              await _postJson('http://localhost:8080/pull', {
-                'repoName': name,
-                'username': _username,
-                'token': _token,
-              });
               if (mounted) {
-                ScaffoldMessenger.of(context)
-                    .showSnackBar(const SnackBar(content: Text('自动拉取成功')));
+                final confirm = await showDialog<bool>(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    title: const Text('发现新版本'),
+                    content: const Text('远程仓库有新的提交（落后），是否拉取更新？'),
+                    actions: [
+                      TextButton(
+                          onPressed: () => Navigator.pop(ctx, false),
+                          child: const Text('稍后')),
+                      ElevatedButton(
+                          onPressed: () => Navigator.pop(ctx, true),
+                          child: const Text('拉取')),
+                    ],
+                  ),
+                );
+
+                if (confirm == true) {
+                  await _postJson('http://localhost:8080/pull', {
+                    'repoName': name,
+                    'username': _username,
+                    'token': _token,
+                  });
+                  if (mounted) {
+                    ScaffoldMessenger.of(context)
+                        .showSnackBar(const SnackBar(content: Text('自动拉取成功')));
+                  }
+                }
               }
             } else if (status == 'ahead' || status == 'diverged') {
                // Prompt user
@@ -1724,7 +1743,7 @@ class _GraphPageState extends State<GraphPage> {
       body: Column(
         children: [
           MediaQuery(
-            data: MediaQuery.of(context).copyWith(textScaleFactor: _uiScale),
+            data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(_uiScale)),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
