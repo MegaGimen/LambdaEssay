@@ -1777,6 +1777,41 @@ class _GraphPageState extends State<GraphPage> {
               ]),
             ),
           Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Row(
+              children: [
+                const Text('整体缩放: '),
+                SizedBox(
+                  width: 200,
+                  child: Slider(
+                    value: _zoomLevel.clamp(0.2, 4.0),
+                    min: 0.2,
+                    max: 4.0,
+                    onChanged: (value) {
+                      setState(() {
+                        _zoomLevel = value;
+                        final m = _graphTc.value.clone();
+                        final t = m.getTranslation();
+                        _graphTc.value = Matrix4.identity()
+                          ..translate(t.x, t.y)
+                          ..scale(value);
+                      });
+                    },
+                  ),
+                ),
+                Text(_zoomLevel.toStringAsFixed(1)),
+                const SizedBox(width: 16),
+                IconButton(
+                  onPressed: () {
+                    _graphTc.value = Matrix4.identity();
+                  },
+                  tooltip: '重置视图',
+                  icon: const Icon(Icons.center_focus_strong),
+                ),
+              ],
+            ),
+          ),
+          Padding(
             padding: const EdgeInsets.all(8),
             child: Row(
               children: [
@@ -1939,7 +1974,6 @@ class _GraphView extends StatefulWidget {
 
 class _GraphViewState extends State<_GraphView> {
   late TransformationController _tc;
-  double _zoomLevel = 1.0;
   CommitNode? _hovered;
   Offset? _hoverPos;
   bool _rightPanActive = false;
@@ -2941,33 +2975,6 @@ class _GraphViewState extends State<_GraphView> {
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 6),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text('整体缩放'),
-                      const SizedBox(width: 8),
-                      SizedBox(
-                        width: 180,
-                        child: Slider(
-                          min: 0.2,
-                          max: 4.0,
-                          value: _zoomLevel.clamp(0.2, 4.0),
-                          label: _zoomLevel.toStringAsFixed(1),
-                          onChanged: (v) {
-                            setState(() {
-                              _zoomLevel = v;
-                              final m = _tc.value.clone();
-                              final t = m.getTranslation();
-                              _tc.value = Matrix4.identity()
-                                ..translate(t.x, t.y)
-                                ..scale(v);
-                            });
-                          },
-                        ),
-                      ),
-                      Text(_zoomLevel.toStringAsFixed(1)),
-                    ],
-                  ),
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
