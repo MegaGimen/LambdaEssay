@@ -1025,7 +1025,11 @@ class _GraphPageState extends State<GraphPage> {
     final resp = await http.post(
       Uri.parse('http://localhost:8080/remote_graph'),
       headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'repoPath': repoPath, 'limit': limit}),
+      body: jsonEncode({
+        'repoPath': repoPath, 
+        'limit': limit,
+        'remoteNames': [], // Empty list requests all remotes
+      }),
     );
     if (resp.statusCode != 200) {
       throw Exception('Remote graph fetch error: ${resp.body}');
