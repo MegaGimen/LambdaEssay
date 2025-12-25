@@ -32,4 +32,4 @@ Git 仓库可视化 (Git Graph Visualization) 是一个基于 Flutter 开发的 
 - **wordplugin/**: 用于文档集成的 Office 插件。
 
 ### 协议
-本项目采用 **GNU Affero General Public License (AGPL)** 协议。
+本项目采用 **GNU Affero General Public License (AGPL)** 协议。**此许可证明确适用于本项目的所有历史版本、所有commit和所有分支**。
