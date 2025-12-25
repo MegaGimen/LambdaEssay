@@ -290,6 +290,12 @@ Future<void> _gitArchiveToDocx(
 
 // ------------------------------------------
 
+Future<void> fetchAll(String repoPath) async {
+  return _withRepoLock(repoPath, () async {
+    await _runGit(['fetch', '--all'], repoPath);
+  });
+}
+
 Future<List<String>> _runGit(List<String> args, String repoPath) async {
   final fullArgs = [
     '-c',
@@ -447,9 +453,11 @@ Future<List<List<String>>> _collectAllEdges(
   return result;
 }
 
-Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
+Future<GraphResponse> getGraph(String repoPath,
+    {int? limit, bool includeLocal = true, List<String>? remoteNames}) async {
   return _withRepoLock(repoPath, () async {
-    return _getGraphUnlocked(repoPath, limit: limit);
+    return _getGraphUnlocked(repoPath,
+        limit: limit, includeLocal: includeLocal, remoteNames: remoteNames);
   });
 }
 
@@ -469,8 +477,17 @@ Future<GraphResponse> _getGraphUnlocked(String repoPath,
     branches.addAll(await getBranches(repoPath));
   }
   if (remoteNames != null) {
-    for (final r in remoteNames) {
-      branches.addAll(await getRemoteBranches(repoPath, r));
+    if (remoteNames.isEmpty) {
+      final remotes = await _runGit(['remote'], repoPath);
+      for (final r in remotes) {
+        if (r.trim().isNotEmpty) {
+          branches.addAll(await getRemoteBranches(repoPath, r.trim()));
+        }
+      }
+    } else {
+      for (final r in remoteNames) {
+        branches.addAll(await getRemoteBranches(repoPath, r));
+      }
     }
   }
 
@@ -762,19 +779,22 @@ List<String> _parseRefs(String decoration,
       }
 
       // If remoteNames is provided, we check if it matches
-      bool matches = false;
-      for (final r in remoteNames) {
-        if (t.contains('/$r/') || t.startsWith('$r/')) {
-          matches = true;
-          break;
+      // If remoteNames is empty, it means ALL remotes are allowed
+      if (remoteNames.isNotEmpty) {
+        bool matches = false;
+        for (final r in remoteNames) {
+          if (t.startsWith('$r/') || t.contains('/$r/')) {
+            matches = true;
+            break;
+          }
         }
+        if (!matches) continue;
       }
-      if (!matches) continue;
-
-      // EXPLICITLY EXCLUDE REMOTE HEAD (e.g. refs/remotes/origin/HEAD)
-      // It usually points to the default branch on remote, but in graph view it's noise.
-      if (t.endsWith('/HEAD')) continue;
     }
+
+    // EXPLICITLY EXCLUDE REMOTE HEAD (e.g. refs/remotes/origin/HEAD)
+    // It usually points to the default branch on remote, but in graph view it's noise.
+    if (t.endsWith('/HEAD')) continue;
 
     // Clean up for display
     var clean = t;
@@ -866,6 +886,7 @@ String _getPreviewDir(String name) {
 
 final Map<String, StreamSubscription<FileSystemEvent>> _watchers = {};
 final Map<String, Timer> _debounceTimers = {};
+final Map<String, bool> _isUpdating = {};
 
 Future<Uint8List> compareCommits(
     String repoPath, String commit1, String commit2) async {
@@ -1008,6 +1029,8 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
     {String? newDocxPath}) async {
   final projDir = _projectDir(name);
   return _withRepoLock(projDir, () async {
+    _isUpdating[name] = true;
+    try {
     final dir = Directory(projDir);
     if (!dir.existsSync()) {
       throw Exception('project not found');
@@ -1103,6 +1126,10 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
       'workingChanged': changed,
       'head': head,
     };
+    } finally {
+      await Future.delayed(const Duration(milliseconds: 1000));
+      _isUpdating[name] = false;
+    }
   });
 }
 
@@ -1431,6 +1458,10 @@ Future<void> pushToRemote(String repoPath, String username, String token,
     final remoteUrl =
         'http://$username:$token@47.242.109.145:3000/$owner/$repoName.git';
 
+    // Ensure remote is added so fetch --all works
+    final remoteName = repoName.toLowerCase();
+    await addRemote(repoPath, remoteName, remoteUrl);
+
     final args = ['push'];
     if (force) args.add('--force');
     args.add(remoteUrl);
@@ -1466,7 +1497,7 @@ Future<void> pushToRemote(String repoPath, String username, String token,
     }
 
     try {
-      await _runGit(['fetch', remoteUrl], repoPath);
+      await _runGit(['fetch', remoteName], repoPath);
     } catch (e) {
       print('Fetch after push failed: $e');
     }
@@ -1586,7 +1617,12 @@ Future<Map<String, dynamic>> pullFromRemote(
         } catch (e) {}
 
         try {
-          await _runGit(['fetch', remoteUrl, 'HEAD'], projDir);
+          final current = await getCurrentBranch(projDir);
+          if (current != null) {
+            await _runGit(['fetch', remoteUrl, current], projDir);
+          } else {
+            await _runGit(['fetch', remoteUrl, 'HEAD'], projDir);
+          }
           final mergeBaseRes = await Process.run(
             'git',
             ['merge-base', '--is-ancestor', 'HEAD', 'FETCH_HEAD'],
@@ -1696,6 +1732,56 @@ Future<Map<String, dynamic>> pullFromRemote(
       'path': projDir,
       'isFresh': isFresh,
     };
+  });
+}
+
+Future<Map<String, dynamic>> checkPullStatus(
+    String repoName, String username, String token) async {
+  final projDir = _projectDir(repoName);
+  return _withRepoLock(projDir, () async {
+    final remoteName = repoName.toLowerCase();
+    final owner = await _resolveRepoOwner(repoName, token);
+    final remoteUrl =
+        'http://$username:$token@47.242.109.145:3000/$owner/$repoName.git';
+
+    try {
+      await addRemote(projDir, remoteName, remoteUrl);
+      await _runGit(['fetch', remoteName], projDir);
+
+      final current = await getCurrentBranch(projDir);
+      if (current == null) return {'status': 'error', 'message': 'No current branch'};
+
+      final remoteBranch = '$remoteName/$current';
+      
+      // Check if remote branch exists
+      try {
+        await _runGit(['rev-parse', '--verify', remoteBranch], projDir);
+      } catch (_) {
+         // Remote branch doesn't exist?
+         return {'status': 'no_remote_branch'};
+      }
+
+      // Check behind/ahead count
+      final out = await _runGit(
+          ['rev-list', '--left-right', '--count', '$current...$remoteBranch'],
+          projDir);
+      
+      if (out.isEmpty) return {'status': 'error', 'message': 'Failed to check status'};
+      
+      final parts = out.first.trim().split(RegExp(r'\s+'));
+      if (parts.length < 2) return {'status': 'error', 'message': 'Invalid rev-list output'};
+      
+      final ahead = int.tryParse(parts[0]) ?? 0;
+      final behind = int.tryParse(parts[1]) ?? 0;
+
+      if (behind > 0 && ahead > 0) return {'status': 'diverged', 'behind': behind, 'ahead': ahead};
+      if (behind > 0) return {'status': 'behind', 'behind': behind};
+      if (ahead > 0) return {'status': 'ahead', 'ahead': ahead};
+      return {'status': 'up-to-date'};
+
+    } catch (e) {
+      return {'status': 'error', 'message': e.toString()};
+    }
   });
 }
 

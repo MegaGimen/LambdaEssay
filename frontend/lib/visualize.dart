@@ -25,6 +25,8 @@ class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
   String? _fileName;
   final PdfViewerController _pdfViewerController = PdfViewerController();
 
+  double _zoomLevel = 1.0;
+
   @override
   void initState() {
     super.initState();
@@ -90,6 +92,19 @@ class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
                 icon: const Icon(Icons.arrow_back), onPressed: widget.onBack)
             : null,
         title: Text(_fileName ?? widget.title ?? 'PDF 预览'),
+        actions: [
+          Slider(
+            value: _zoomLevel,
+            min: 1.0,
+            max: 3.0,
+            onChanged: (value) {
+              setState(() {
+                _zoomLevel = value;
+                _pdfViewerController.zoomLevel = value;
+              });
+            },
+          ),
+        ],
       ),
       body: _pdfBytes == null
           ? Center(
