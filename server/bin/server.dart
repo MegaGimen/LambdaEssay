@@ -114,6 +114,27 @@ Future<void> main(List<String> args) async {
 
   router.options('/<ignored|.*>', _optionsHandler);
 
+  router.post('/fetch', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoPath = _sanitizePath(data['repoPath'] as String?);
+    if (repoPath.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoPath required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    final normalized = p.normalize(repoPath);
+    try {
+      await fetchAll(normalized);
+      return _cors(Response.ok(jsonEncode({'status': 'ok'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
   router.post('/branches', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;

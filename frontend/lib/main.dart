@@ -427,6 +427,9 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('推送成功')));
+      if (showRemotePreview) {
+        await _triggerGitFetch(repoPath);
+      }
       await _load();
     } catch (e) {
       final msg = e.toString();
@@ -1044,6 +1047,18 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     return GraphData.fromJson(j);
   }
 
+  Future<void> _triggerGitFetch(String repoPath) async {
+    try {
+      await http.post(
+        Uri.parse('http://localhost:8080/fetch'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'repoPath': repoPath}),
+      );
+    } catch (e) {
+      print('Fetch failed: $e');
+    }
+  }
+
   Future<void> _load() async {
     final path = pathCtrl.text.trim();
     if (path.isEmpty) {
@@ -1086,6 +1101,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       GraphData? rd;
       if (showRemotePreview) {
         try {
+          await _triggerGitFetch(path);
           rd = await _fetchRemoteGraph(path);
         } catch (e) {
           print('Remote graph fetch failed: $e');

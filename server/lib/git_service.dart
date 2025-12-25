@@ -212,6 +212,12 @@ Future<void> _gitArchiveToDocx(
 
 // ------------------------------------------
 
+Future<void> fetchAll(String repoPath) async {
+  return _withRepoLock(repoPath, () async {
+    await _runGit(['fetch', '--all'], repoPath);
+  });
+}
+
 Future<List<String>> _runGit(List<String> args, String repoPath) async {
   final fullArgs = [
     '-c',
