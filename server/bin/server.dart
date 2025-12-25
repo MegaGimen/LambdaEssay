@@ -395,6 +395,27 @@ Future<void> main(List<String> args) async {
 
   router.options('/<ignored|.*>', _optionsHandler);
 
+  router.post('/fetch', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoPath = _sanitizePath(data['repoPath'] as String?);
+    if (repoPath.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoPath required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    final normalized = p.normalize(repoPath);
+    try {
+      await fetchAll(normalized);
+      return _cors(Response.ok(jsonEncode({'status': 'ok'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
   router.post('/branches', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
@@ -454,6 +475,29 @@ Future<void> main(List<String> args) async {
     }
     try {
       final resp = await getGraph(normalized, limit: limit);
+      return _cors(Response.ok(jsonEncode(resp.toJson()),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/remote_graph', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoPath = _sanitizePath(data['repoPath'] as String?);
+    final limit = data['limit'] is int ? data['limit'] as int : null;
+    if (repoPath.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoPath required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    final normalized = p.normalize(repoPath);
+    try {
+      // Fetch remote graph: includeLocal=false, remoteNames=[] (all remotes)
+      final resp = await getGraph(normalized, limit: limit, includeLocal: false, remoteNames: []);
       return _cors(Response.ok(jsonEncode(resp.toJson()),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     } catch (e) {
@@ -599,6 +643,11 @@ Future<void> main(List<String> args) async {
     final data = jsonDecode(body) as Map<String, dynamic>;
     final projectName = (data['projectName'] as String?)?.trim() ?? '';
     final branchName = (data['branchName'] as String?)?.trim() ?? '';
+    if(branchName.contains(projectName+"/")){//拒绝切换远程分支
+      return _cors(Response(400,
+          body: jsonEncode({'error': '禁止切换到远程分支'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
     if (projectName.isEmpty || branchName.isEmpty) {
       return _cors(Response(400,
           body: jsonEncode({'error': 'projectName, branchName required'}),
@@ -1271,6 +1320,29 @@ Future<void> main(List<String> args) async {
       return _cors(Response.ok(jsonEncode(result.toJson()), headers: {
         'Content-Type': 'application/json; charset=utf-8',
       }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/check_pull_status', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoName = (data['repoName'] as String?)?.trim() ?? '';
+    final username = (data['username'] as String?)?.trim() ?? '';
+    final token = (data['token'] as String?)?.trim() ?? '';
+
+    if (repoName.isEmpty || username.isEmpty || token.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoName, username, token required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      final result = await checkPullStatus(repoName, username, token);
+      return _cors(Response.ok(jsonEncode(result),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
     } catch (e) {
       return _cors(Response(500,
           body: jsonEncode({'error': e.toString()}),
