@@ -1375,6 +1375,10 @@ Future<void> pushToRemote(String repoPath, String username, String token,
     final remoteUrl =
         'http://$username:$token@47.242.109.145:3000/$owner/$repoName.git';
 
+    // Ensure remote is added so fetch --all works
+    final remoteName = repoName.toLowerCase();
+    await addRemote(repoPath, remoteName, remoteUrl);
+
     final args = ['push'];
     if (force) args.add('--force');
     args.add(remoteUrl);
@@ -1410,7 +1414,7 @@ Future<void> pushToRemote(String repoPath, String username, String token,
     }
 
     try {
-      await _runGit(['fetch', remoteUrl], repoPath);
+      await _runGit(['fetch', remoteName], repoPath);
     } catch (e) {
       print('Fetch after push failed: $e');
     }
