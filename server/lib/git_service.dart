@@ -801,6 +801,7 @@ String _getPreviewDir(String name) {
 
 final Map<String, StreamSubscription<FileSystemEvent>> _watchers = {};
 final Map<String, Timer> _debounceTimers = {};
+final Map<String, bool> _isUpdating = {};
 
 Future<Uint8List> compareCommits(
     String repoPath, String commit1, String commit2) async {
@@ -943,6 +944,8 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
     {String? newDocxPath}) async {
   final projDir = _projectDir(name);
   return _withRepoLock(projDir, () async {
+    _isUpdating[name] = true;
+    try {
     final dir = Directory(projDir);
     if (!dir.existsSync()) {
       throw Exception('project not found');
@@ -1038,6 +1041,10 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
       'workingChanged': changed,
       'head': head,
     };
+    } finally {
+      await Future.delayed(const Duration(milliseconds: 1000));
+      _isUpdating[name] = false;
+    }
   });
 }
 

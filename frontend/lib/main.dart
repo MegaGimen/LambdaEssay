@@ -1311,16 +1311,6 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         pathCtrl.text = repoPath;
         docxPathCtrl.text = docxPath ?? '';
       });
-      final up = await _postJson('http://localhost:8080/track/update', {
-        'name': name,
-      });
-      setState(() {
-        working = WorkingState(
-          changed: up['workingChanged'] == true,
-          baseId: up['head'] as String?,
-        );
-      });
-      await _load();
       // Auto update after opening/selecting repo to sync latest status
       await _onUpdateRepoAction(forcePull: true);
     } catch (e) {
