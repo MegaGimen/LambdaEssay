@@ -341,6 +341,11 @@ Future<void> main(List<String> args) async {
     final data = jsonDecode(body) as Map<String, dynamic>;
     final projectName = (data['projectName'] as String?)?.trim() ?? '';
     final branchName = (data['branchName'] as String?)?.trim() ?? '';
+    if(branchName.contains(projectName+"/")){//拒绝切换远程分支
+      return _cors(Response(400,
+          body: jsonEncode({'error': '禁止切换到远程分支'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
     if (projectName.isEmpty || branchName.isEmpty) {
       return _cors(Response(400,
           body: jsonEncode({'error': 'projectName, branchName required'}),
