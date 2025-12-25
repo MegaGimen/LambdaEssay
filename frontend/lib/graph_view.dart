@@ -418,23 +418,34 @@ class GraphPainter extends CustomPainter {
       ..strokeWidth = 1.5;
     canvas.drawRect(Rect.fromLTWH(0, 0, graphWidth, graphHeight), borderPaint);
 
-    if (working?.changed == true && currentHeadId != null) {
-      final headRow = rowOf[currentHeadId];
-      final headLane = laneOf[currentHeadId];
-      if (headRow != null && headLane != null) {
-        // Draw ghost node above head (row - 1)
-        final ghostRow = headRow - 1;
-        // Position
-        final gx = headLane * laneWidth + laneWidth / 2;
-        final gy = ghostRow * rowHeight + rowHeight / 2;
-        final hx = headLane * laneWidth + laneWidth / 2;
-        final hy = headRow * rowHeight + rowHeight / 2;
+    if (working?.changed == true) {
+      double gx, gy;
+      bool drawEdge = false;
+      double hx = 0, hy = 0;
 
-        // Opacity
-        final opacity = 0.3 + 0.7 * (flashValue ?? 1.0);
-        final ghostColor = const Color.fromARGB(255, 255, 0, 0).withValues(alpha: opacity);
+      if (currentHeadId != null) {
+        final headRow = rowOf[currentHeadId];
+        final headLane = laneOf[currentHeadId];
+        if (headRow != null && headLane != null) {
+          final ghostRow = headRow - 1;
+          gx = headLane * laneWidth + laneWidth / 2;
+          gy = ghostRow * rowHeight + rowHeight / 2;
+          hx = headLane * laneWidth + laneWidth / 2;
+          hy = headRow * rowHeight + rowHeight / 2;
+          drawEdge = true;
+        } else {
+           gx = laneWidth / 2;
+           gy = rowHeight / 2;
+        }
+      } else {
+        gx = laneWidth / 2;
+        gy = rowHeight / 2;
+      }
 
-        // Dashed edge
+      final opacity = 0.3 + 0.7 * (flashValue ?? 1.0);
+      final ghostColor = const Color.fromARGB(255, 255, 0, 0).withValues(alpha: opacity);
+
+      if (drawEdge) {
         final edgePaint = Paint()
           ..color = ghostColor
           ..style = PaintingStyle.stroke
@@ -444,30 +455,28 @@ class GraphPainter extends CustomPainter {
         path.moveTo(gx, gy);
         path.lineTo(hx, hy);
         _drawDashedPath(canvas, path, edgePaint);
+      }
 
-        // Ghost node
-        final nodePaint = Paint()
+      final nodePaint = Paint()
           ..color = ghostColor
           ..style = PaintingStyle.stroke
           ..strokeWidth = 3.0;
         
-        canvas.drawCircle(Offset(gx, gy), nodeRadius, nodePaint);
+      canvas.drawCircle(Offset(gx, gy), nodeRadius, nodePaint);
         
-        // Optional: Draw 'Working' text
-        final tp = TextPainter(
-          text: TextSpan(
-            text: '未提交更改',
-            style: TextStyle(
-              color: ghostColor,
-              fontSize: 10,
-              fontWeight: FontWeight.bold,
-            ),
+      final tp = TextPainter(
+        text: TextSpan(
+          text: '文档有新的更改',
+          style: TextStyle(
+            color: ghostColor,
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
           ),
-          textDirection: TextDirection.ltr,
-        );
-        tp.layout();
-        tp.paint(canvas, Offset(gx + 12, gy - tp.height / 2));
-      }
+        ),
+        textDirection: TextDirection.ltr,
+      );
+      tp.layout();
+      tp.paint(canvas, Offset(gx + 12, gy - tp.height / 2));
     }
   }
 
@@ -613,7 +622,8 @@ class GraphPainter extends CustomPainter {
         oldDelegate.customNodeColors != customNodeColors ||
         oldDelegate.selectedNodes != selectedNodes ||
         oldDelegate.identicalCommitIds != identicalCommitIds ||
-        oldDelegate.working != working;
+        oldDelegate.working != working ||
+        oldDelegate.flashValue != flashValue;
   }
 }
 
