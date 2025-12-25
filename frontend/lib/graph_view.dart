@@ -17,6 +17,7 @@ class GraphPainter extends CustomPainter {
   final bool showCurrentHead; // New: Toggle for current head highlight
   final String primaryBranchName; // New: Primary branch name for lane 0
   final int? totalRows; // New: Force total rows for alignment
+  final double? flashValue; // New: Animation value for flashing effects
 
   static const double nodeRadius = 6;
 
@@ -40,6 +41,7 @@ class GraphPainter extends CustomPainter {
     this.preCalculatedRowOf,
     this.primaryBranchName = 'master',
     this.totalRows,
+    this.flashValue,
   });
 
   static const List<Color> lanePalette = [
@@ -416,9 +418,56 @@ class GraphPainter extends CustomPainter {
       ..strokeWidth = 1.5;
     canvas.drawRect(Rect.fromLTWH(0, 0, graphWidth, graphHeight), borderPaint);
 
-    if (working?.changed == true) {
-       // ... existing working state drawing ...
-       // (Keeping it simple, assume working state logic applies if provided)
+    if (working?.changed == true && currentHeadId != null) {
+      final headRow = rowOf[currentHeadId];
+      final headLane = laneOf[currentHeadId];
+      if (headRow != null && headLane != null) {
+        // Draw ghost node above head (row - 1)
+        final ghostRow = headRow - 1;
+        // Position
+        final gx = headLane * laneWidth + laneWidth / 2;
+        final gy = ghostRow * rowHeight + rowHeight / 2;
+        final hx = headLane * laneWidth + laneWidth / 2;
+        final hy = headRow * rowHeight + rowHeight / 2;
+
+        // Opacity
+        final opacity = 0.3 + 0.7 * (flashValue ?? 1.0);
+        final ghostColor = const Color.fromARGB(255, 255, 0, 0).withValues(alpha: opacity);
+
+        // Dashed edge
+        final edgePaint = Paint()
+          ..color = ghostColor
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.0;
+        
+        final path = Path();
+        path.moveTo(gx, gy);
+        path.lineTo(hx, hy);
+        _drawDashedPath(canvas, path, edgePaint);
+
+        // Ghost node
+        final nodePaint = Paint()
+          ..color = ghostColor
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 3.0;
+        
+        canvas.drawCircle(Offset(gx, gy), nodeRadius, nodePaint);
+        
+        // Optional: Draw 'Working' text
+        final tp = TextPainter(
+          text: TextSpan(
+            text: '未提交更改',
+            style: TextStyle(
+              color: ghostColor,
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        );
+        tp.layout();
+        tp.paint(canvas, Offset(gx + 12, gy - tp.height / 2));
+      }
     }
   }
 

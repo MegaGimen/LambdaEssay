@@ -32,20 +32,22 @@ class GraphPage extends StatefulWidget {
   State<GraphPage> createState() => _GraphPageState();
 }
 
-class _GraphPageState extends State<GraphPage> {
+class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   final TextEditingController pathCtrl = TextEditingController();
   final TextEditingController limitCtrl = TextEditingController(text: '500');
   final TextEditingController docxPathCtrl = TextEditingController();
   GraphData? data;
   GraphData? remoteData; // New: Remote graph data
-  bool showRemotePreview = false; // New: Toggle for remote preview
+  bool showRemotePreview = true; // New: Toggle for remote preview
   Map<String, int>? localRowMapping;
   Map<String, int>? remoteRowMapping;
   int? totalRows;
   final TransformationController _sharedController = TransformationController();
+  late AnimationController _sidebarFlashCtrl;
 
   @override
   void dispose() {
+    _sidebarFlashCtrl.dispose();
     _sharedController.dispose();
     pathCtrl.dispose();
     limitCtrl.dispose();
@@ -79,6 +81,10 @@ class _GraphPageState extends State<GraphPage> {
   void initState() {
     super.initState();
     _checkLogin();
+    _sidebarFlashCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 1),
+    )..repeat(reverse: true);
   }
 
   // void _onScaleChanged() { ... } // Removed
@@ -2194,8 +2200,9 @@ class _GraphView extends StatefulWidget {
   State<_GraphView> createState() => _GraphViewState();
 }
 
-class _GraphViewState extends State<_GraphView> {
+class _GraphViewState extends State<_GraphView> with SingleTickerProviderStateMixin {
   late TransformationController _tc;
+  late AnimationController _graphFlashCtrl;
   CommitNode? _hovered;
   Offset? _hoverPos;
   bool _rightPanActive = false;
@@ -2214,10 +2221,15 @@ class _GraphViewState extends State<_GraphView> {
   void initState() {
     super.initState();
     _tc = widget.transformationController ?? TransformationController();
+    _graphFlashCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    )..repeat(reverse: true);
   }
 
   @override
   void dispose() {
+    _graphFlashCtrl.dispose();
     if (widget.transformationController == null) {
       _tc.dispose();
     }
@@ -3053,21 +3065,27 @@ class _GraphViewState extends State<_GraphView> {
                   child: SizedBox(
                     width: _canvasSize!.width,
                     height: _canvasSize!.height,
-                    child: CustomPaint(
-                      painter: GraphPainter(
-                        widget.data,
-                        _branchColors!,
-                        _hoverEdgeKey(),
-                        _laneWidth,
-                        _rowHeight,
-                        working: widget.working,
-                        selectedNodes: _selectedNodes,
-                        identicalCommitIds: widget.identicalCommitIds,
-                        customRowMapping: widget.customRowMapping,
-                        totalRows: widget.totalRows,
-                        primaryBranchName: widget.primaryBranchName,
-                      ),
-                      size: _canvasSize!,
+                    child: AnimatedBuilder(
+                      animation: _graphFlashCtrl,
+                      builder: (context, child) {
+                        return CustomPaint(
+                          painter: GraphPainter(
+                            widget.data,
+                            _branchColors!,
+                            _hoverEdgeKey(),
+                            _laneWidth,
+                            _rowHeight,
+                            working: widget.working,
+                            selectedNodes: _selectedNodes,
+                            identicalCommitIds: widget.identicalCommitIds,
+                            customRowMapping: widget.customRowMapping,
+                            totalRows: widget.totalRows,
+                            primaryBranchName: widget.primaryBranchName,
+                            flashValue: _graphFlashCtrl.value,
+                          ),
+                          size: _canvasSize!,
+                        );
+                      },
                     ),
                   ),
                 ),
