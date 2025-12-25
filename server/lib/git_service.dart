@@ -1095,17 +1095,27 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
 
     print('restored? $restored');
     if (!restored) {
-      // Update repo content from source
-      // Do NOT unzip to doc_content yet. Just update content.docx.
-      await _updateContentDocx(projDir, sourcePath!);
+      // Check if Repo is already identical to Source (e.g. after a rollback)
+      bool alreadySynced = false;
+      final repoDocx = p.join(projDir, kRepoDocxName);
+      if (File(repoDocx).existsSync()) {
+        alreadySynced = await _checkDocxIdentical(sourcePath!, repoDocx);
+        print("Already synced with repo? $alreadySynced");
+      }
 
-      // Also force regenerate doc_content (unzip) to make sure working directory matches
-      // But wait, if we are going to commit, we need doc_content.
-      // And we need to show changes in graph?
-      // GitGraph usually shows committed changes.
-      // But we have "WorkingState".
-      // We need to unzip content.docx -> doc_content so that `git status` shows changes.
-      await _flushDocxToContent(projDir);
+      if (!alreadySynced) {
+        // Update repo content from source
+        // Do NOT unzip to doc_content yet. Just update content.docx.
+        await _updateContentDocx(projDir, sourcePath!);
+
+        // Also force regenerate doc_content (unzip) to make sure working directory matches
+        // But wait, if we are going to commit, we need doc_content.
+        // And we need to show changes in graph?
+        // GitGraph usually shows committed changes.
+        // But we have "WorkingState".
+        // We need to unzip content.docx -> doc_content so that `git status` shows changes.
+        await _flushDocxToContent(projDir);
+      }
     }
 
     // Check status
