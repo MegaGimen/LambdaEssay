@@ -369,9 +369,11 @@ Future<List<List<String>>> _collectAllEdges(
   return result;
 }
 
-Future<GraphResponse> getGraph(String repoPath, {int? limit}) async {
+Future<GraphResponse> getGraph(String repoPath,
+    {int? limit, bool includeLocal = true, List<String>? remoteNames}) async {
   return _withRepoLock(repoPath, () async {
-    return _getGraphUnlocked(repoPath, limit: limit);
+    return _getGraphUnlocked(repoPath,
+        limit: limit, includeLocal: includeLocal, remoteNames: remoteNames);
   });
 }
 
@@ -691,9 +693,8 @@ List<String> _parseRefs(String decoration,
     }
 
     // EXPLICITLY EXCLUDE REMOTE HEAD (e.g. refs/remotes/origin/HEAD)
-      // It usually points to the default branch on remote, but in graph view it's noise.
-      if (t.endsWith('/HEAD')) continue;
-    }
+    // It usually points to the default branch on remote, but in graph view it's noise.
+    if (t.endsWith('/HEAD')) continue;
 
     // Clean up for display
     var clean = t;

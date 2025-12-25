@@ -57,6 +57,7 @@ class _GraphPageState extends State<GraphPage> {
     super.dispose();
   }
   bool loading = false;
+  String? error;
   String? currentProjectName;
   WorkingState? working;
   List<String> identicalCommitIds = [];
@@ -943,27 +944,7 @@ class _GraphPageState extends State<GraphPage> {
     }
   }
 
-  Future<void> _onPreviewRemote() async {
-    if (!await _ensureToken()) {
-      setState(() => error = '请先登录');
-      return;
-    }
-    if (currentProjectName == null) {
-      setState(() => error = '当前没有打开的项目');
-      return;
-    }
 
-    // Directly open preview page with type='remote'
-    // This will fetch remote and local graphs and show them side-by-side
-    // The backend 'previewPull' will skip rebase/fork logic if type is not recognized,
-    // effectively just returning the comparison graphs.
-    await Navigator.push(context, MaterialPageRoute(builder: (_) => PullPreviewPage(
-      repoName: currentProjectName!,
-      username: _username!,
-      token: _token!,
-      type: 'remote', 
-    )));
-  }
 
   Future<void> _onUpdateRepo() async {
     final name = currentProjectName;
