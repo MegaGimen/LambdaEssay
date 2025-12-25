@@ -8,6 +8,7 @@ import 'models.dart';
 import 'visualize.dart';
 import 'backup.dart';
 import 'pull_preview.dart';
+import 'graph_view.dart';
 
 void main() {
   runApp(const GitGraphApp());
@@ -36,7 +37,25 @@ class _GraphPageState extends State<GraphPage> {
   final TextEditingController limitCtrl = TextEditingController(text: '500');
   final TextEditingController docxPathCtrl = TextEditingController();
   GraphData? data;
-  String? error;
+  GraphData? remoteData; // New: Remote graph data
+  bool showRemotePreview = false; // New: Toggle for remote preview
+  Map<String, int>? localRowMapping;
+  Map<String, int>? remoteRowMapping;
+  int? totalRows;
+  final TransformationController _sharedController = TransformationController();
+
+  @override
+  void dispose() {
+    _sharedController.dispose();
+    pathCtrl.dispose();
+    limitCtrl.dispose();
+    docxPathCtrl.dispose();
+    userCtrl.dispose();
+    passCtrl.dispose();
+    emailCtrl.dispose();
+    verifyCodeCtrl.dispose();
+    super.dispose();
+  }
   bool loading = false;
   String? currentProjectName;
   WorkingState? working;
@@ -51,7 +70,6 @@ class _GraphPageState extends State<GraphPage> {
   String? _username;
   String? _token;
 
-  final TransformationController _graphTc = TransformationController();
   double _uiScale = 1.0;
 
   static const String baseUrl = 'http://localhost:8080';
@@ -59,15 +77,7 @@ class _GraphPageState extends State<GraphPage> {
   @override
   void initState() {
     super.initState();
-    // _graphTc.addListener(_onScaleChanged); // Decoupled graph zoom from UI scale
     _checkLogin();
-  }
-
-  @override
-  void dispose() {
-    // _graphTc.removeListener(_onScaleChanged);
-    _graphTc.dispose();
-    super.dispose();
   }
 
   // void _onScaleChanged() { ... } // Removed
@@ -1029,6 +1039,20 @@ class _GraphPageState extends State<GraphPage> {
     return GraphData.fromJson(j);
   }
 
+  Future<GraphData> _fetchRemoteGraph(String repoPath) async {
+    final limit = int.tryParse(limitCtrl.text.trim());
+    final resp = await http.post(
+      Uri.parse('http://localhost:8080/remote_graph'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'repoPath': repoPath, 'limit': limit}),
+    );
+    if (resp.statusCode != 200) {
+      throw Exception('Remote graph fetch error: ${resp.body}');
+    }
+    final j = jsonDecode(resp.body) as Map<String, dynamic>;
+    return GraphData.fromJson(j);
+  }
+
   Future<void> _load() async {
     final path = pathCtrl.text.trim();
     if (path.isEmpty) {
@@ -1039,6 +1063,11 @@ class _GraphPageState extends State<GraphPage> {
       loading = true;
       error = null;
       data = null;
+      remoteData = null;
+      localRowMapping = null;
+      remoteRowMapping = null;
+      totalRows = null;
+      // showRemotePreview = false; // Preserve user choice
     });
 
     // Try fetch tracking info
@@ -1063,16 +1092,67 @@ class _GraphPageState extends State<GraphPage> {
 
     try {
       final gd = await _loadGraph(path);
+      GraphData? rd;
+      if (showRemotePreview) {
+        try {
+          rd = await _fetchRemoteGraph(path);
+        } catch (e) {
+          print('Remote graph fetch failed: $e');
+        }
+      }
+
       setState(() {
         data = gd;
+        remoteData = rd;
         loading = false;
       });
+      
+      if (rd != null) {
+        _calculateRowMappings();
+      }
     } catch (e) {
       setState(() {
         error = e.toString();
         loading = false;
       });
     }
+  }
+
+  void _calculateRowMappings() {
+    if (data == null || remoteData == null) return;
+    
+    final localIds = data!.commits.map((c) => c.id).toSet();
+    final remoteIds = remoteData!.commits.map((c) => c.id).toSet();
+    
+    final allCommits = <String, CommitNode>{};
+    for (final c in data!.commits) allCommits[c.id] = c;
+    for (final c in remoteData!.commits) allCommits[c.id] = c;
+    
+    final sorted = allCommits.values.toList();
+    sorted.sort((a, b) {
+      final d = b.date.compareTo(a.date);
+      if (d != 0) return d;
+      return b.id.compareTo(a.id);
+    });
+    
+    final localMap = <String, int>{};
+    final remoteMap = <String, int>{};
+    
+    for (int i = 0; i < sorted.length; i++) {
+      final c = sorted[i];
+      if (localIds.contains(c.id)) {
+        localMap[c.id] = i;
+      }
+      if (remoteIds.contains(c.id)) {
+        remoteMap[c.id] = i;
+      }
+    }
+    
+    setState(() {
+      localRowMapping = localMap;
+      remoteRowMapping = remoteMap;
+      totalRows = sorted.length;
+    });
   }
 
   Future<void> _onCreateTrackProject() async {
@@ -1859,7 +1939,7 @@ class _GraphPageState extends State<GraphPage> {
                 const SizedBox(width: 16),
                 IconButton(
                   onPressed: () {
-                    _graphTc.value = Matrix4.identity();
+                    _sharedController.value = Matrix4.identity();
                   },
                   tooltip: '重置视图',
                   icon: const Icon(Icons.center_focus_strong),
@@ -1896,9 +1976,28 @@ class _GraphPageState extends State<GraphPage> {
                   child: const Text('拉取'),
                 ),
                 const SizedBox(width: 8),
-                ElevatedButton(
-                  onPressed: loading ? null : _onPreviewRemote,
-                  child: const Text('预览远程'),
+                OutlinedButton.icon(
+                  onPressed: loading
+                      ? null
+                      : () {
+                          setState(() {
+                            showRemotePreview = !showRemotePreview;
+                          });
+                          if (showRemotePreview) {
+                            _load();
+                          } else {
+                            setState(() {
+                              remoteData = null;
+                              localRowMapping = null;
+                              remoteRowMapping = null;
+                              totalRows = null;
+                            });
+                          }
+                        },
+                  icon: Icon(showRemotePreview
+                      ? Icons.visibility_off
+                      : Icons.visibility),
+                  label: Text(showRemotePreview ? '隐藏远程' : '显示远程'),
                 ),
                 const SizedBox(width: 8),
                 if (currentProjectName != null)
@@ -1954,6 +2053,20 @@ class _GraphPageState extends State<GraphPage> {
                   onPressed: loading ? null : _load,
                   child: const Text('加载'),
                 ),
+                const SizedBox(width: 8),
+                OutlinedButton(
+                  onPressed: loading
+                      ? null
+                      : () {
+                          setState(() {
+                            showRemotePreview = !showRemotePreview;
+                          });
+                          if (data != null) {
+                            _load(); // Reload to fetch/clear remote data
+                          }
+                        },
+                  child: Text(showRemotePreview ? '隐藏远程' : '显示远程'),
+                ),
               ],
             ),
           ),
@@ -1968,23 +2081,76 @@ class _GraphPageState extends State<GraphPage> {
           Expanded(
             child: data == null
                 ? const Center(child: Text('输入路径并点击加载'))
-                : _GraphView(
-                    data: data!,
-                    working: (data!.commits.isEmpty && working != null)
-                        ? WorkingState(changed: true, baseId: working!.baseId)
-                        : working,
-                    repoPath: pathCtrl.text.trim(),
-                    projectName: currentProjectName,
-                    token: _token,
-                    onRefresh: _load,
-                    onUpdate: _onUpdateRepoAction,
-                    onMerge: _performMerge,
-                    onFindIdentical: _findIdentical,
-                    identicalCommitIds: identicalCommitIds,
-                    onLoading: (v) => setState(() => loading = v),
-                    transformationController: _graphTc,
-                    uiScale: _uiScale,
-                  ),
+                : (showRemotePreview && remoteData != null)
+                    ? Row(
+                        children: [
+                          Expanded(
+                            flex: 1,
+                            child: Container(
+                              decoration: const BoxDecoration(
+                                border: Border(
+                                    right: BorderSide(color: Colors.grey)),
+                              ),
+                              child: _GraphView(
+                                data: remoteData!,
+                                repoPath: pathCtrl.text.trim(),
+                                projectName: currentProjectName,
+                                token: _token,
+                                readOnly: true,
+                                primaryBranchName: 'origin/master',
+                                customRowMapping: remoteRowMapping,
+                                totalRows: totalRows,
+                                transformationController: _sharedController,
+                                uiScale: _uiScale,
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            flex: 1,
+                            child: _GraphView(
+                              data: data!,
+                              working:
+                                  (data!.commits.isEmpty && working != null)
+                                      ? WorkingState(
+                                          changed: true, baseId: working!.baseId)
+                                      : working,
+                              repoPath: pathCtrl.text.trim(),
+                              projectName: currentProjectName,
+                              token: _token,
+                              onRefresh: _load,
+                              onUpdate: _onUpdateRepoAction,
+                              onMerge: _performMerge,
+                              onFindIdentical: _findIdentical,
+                              identicalCommitIds: identicalCommitIds,
+                              onLoading: (v) => setState(() => loading = v),
+                              transformationController: _sharedController,
+                              uiScale: _uiScale,
+                              customRowMapping: localRowMapping,
+                              totalRows: totalRows,
+                              primaryBranchName: 'master',
+                            ),
+                          ),
+                        ],
+                      )
+                    : _GraphView(
+                        data: data!,
+                        working: (data!.commits.isEmpty && working != null)
+                            ? WorkingState(
+                                changed: true, baseId: working!.baseId)
+                            : working,
+                        repoPath: pathCtrl.text.trim(),
+                        projectName: currentProjectName,
+                        token: _token,
+                        onRefresh: _load,
+                        onUpdate: _onUpdateRepoAction,
+                        onMerge: _performMerge,
+                        onFindIdentical: _findIdentical,
+                        identicalCommitIds: identicalCommitIds,
+                        onLoading: (v) => setState(() => loading = v),
+                        transformationController: _sharedController,
+                        uiScale: _uiScale,
+                        primaryBranchName: 'master',
+                      ),
           ),
         ],
       ),
@@ -2015,6 +2181,11 @@ class _GraphView extends StatefulWidget {
   final Function(bool)? onLoading;
   final TransformationController? transformationController;
   final double uiScale;
+  final bool readOnly; // New
+  final String primaryBranchName; // New
+  final Map<String, int>? customRowMapping; // New
+  final int? totalRows; // New
+
   const _GraphView({
     required this.data,
     this.working,
@@ -2029,6 +2200,10 @@ class _GraphView extends StatefulWidget {
     this.onLoading,
     this.transformationController,
     this.uiScale = 1.0,
+    this.readOnly = false,
+    this.primaryBranchName = 'master',
+    this.customRowMapping,
+    this.totalRows,
   });
   @override
   State<_GraphView> createState() => _GraphViewState();
@@ -2903,6 +3078,9 @@ class _GraphViewState extends State<_GraphView> {
                         working: widget.working,
                         selectedNodes: _selectedNodes,
                         identicalCommitIds: widget.identicalCommitIds,
+                        customRowMapping: widget.customRowMapping,
+                        totalRows: widget.totalRows,
+                        primaryBranchName: widget.primaryBranchName,
                       ),
                       size: _canvasSize!,
                     ),
@@ -2915,75 +3093,77 @@ class _GraphViewState extends State<_GraphView> {
         Positioned(
           top: 16,
           left: 16,
-          child: Transform.scale(
-            scale: widget.uiScale,
-            alignment: Alignment.topLeft,
-            child: Material(
-              elevation: 4,
-            borderRadius: BorderRadius.circular(8),
-            child: Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    '当前分支: ${Branch.decodeName(widget.data.currentBranch ?? "Unknown")}',
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
+          child: widget.readOnly
+              ? const SizedBox.shrink()
+              : Transform.scale(
+                  scale: widget.uiScale,
+                  alignment: Alignment.topLeft,
+                  child: Material(
+                    elevation: 4,
+                    borderRadius: BorderRadius.circular(8),
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            '当前分支: ${Branch.decodeName(widget.data.currentBranch ?? "Unknown")}',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (widget.working?.changed == true)
+                                ElevatedButton.icon(
+                                  onPressed: _onCommit,
+                                  icon: const Icon(Icons.upload),
+                                  label: const Text('提交更改'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.green,
+                                    foregroundColor: Colors.white,
+                                  ),
+                                ),
+                              if (widget.working?.changed == true)
+                                const SizedBox(width: 8),
+                              OutlinedButton.icon(
+                                onPressed: _onCreateBranch,
+                                icon: const Icon(Icons.add),
+                                label: const Text('新建分支'),
+                              ),
+                              const SizedBox(width: 8),
+                              OutlinedButton.icon(
+                                onPressed: _onSwitchBranch,
+                                icon: const Icon(Icons.swap_horiz),
+                                label: const Text('切换分支'),
+                              ),
+                              const SizedBox(width: 8),
+                              OutlinedButton.icon(
+                                onPressed: _onMergeButton,
+                                icon: const Icon(Icons.call_merge),
+                                label: const Text('合并分支'),
+                              ),
+                              const SizedBox(width: 8),
+                              OutlinedButton.icon(
+                                onPressed: widget.onFindIdentical,
+                                icon: const Icon(Icons.find_in_page),
+                                label: const Text('查找相同版本'),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (widget.working?.changed == true)
-                        ElevatedButton.icon(
-                          onPressed: _onCommit,
-                          icon: const Icon(Icons.upload),
-                          label: const Text('提交更改'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.green,
-                            foregroundColor: Colors.white,
-                          ),
-                        ),
-                      if (widget.working?.changed == true)
-                        const SizedBox(width: 8),
-                      OutlinedButton.icon(
-                        onPressed: _onCreateBranch,
-                        icon: const Icon(Icons.add),
-                        label: const Text('新建分支'),
-                      ),
-                      const SizedBox(width: 8),
-                      OutlinedButton.icon(
-                        onPressed: _onSwitchBranch,
-                        icon: const Icon(Icons.swap_horiz),
-                        label: const Text('切换分支'),
-                      ),
-                      const SizedBox(width: 8),
-                      OutlinedButton.icon(
-                        onPressed: _onMergeButton,
-                        icon: const Icon(Icons.call_merge),
-                        label: const Text('合并分支'),
-                      ),
-                      const SizedBox(width: 8),
-                      OutlinedButton.icon(
-                        onPressed: widget.onFindIdentical,
-                        icon: const Icon(Icons.find_in_page),
-                        label: const Text('查找相同版本'),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
+                ),
         ),
         Positioned(
           right: 16,
@@ -3635,201 +3815,6 @@ class _GraphViewState extends State<_GraphView> {
   }
 }
 
-class GraphPainter extends CustomPainter {
-  final GraphData data;
-  final Map<String, Color> branchColors;
-  final String? hoverPairKey;
-  final double laneWidth;
-  final double rowHeight;
-  final WorkingState? working;
-  final Set<String> selectedNodes;
-  final List<String>? identicalCommitIds;
-  static const double nodeRadius = 6;
-  GraphPainter(
-    this.data,
-    this.branchColors,
-    this.hoverPairKey,
-    this.laneWidth,
-    this.rowHeight, {
-    this.working,
-    required this.selectedNodes,
-    this.identicalCommitIds,
-  });
-  static const List<Color> lanePalette = [
-    Color(0xFF1976D2),
-    Color(0xFF2E7D32),
-    Color(0xFF8E24AA),
-    Color(0xFFD81B60),
-    Color(0xFF00838F),
-    Color(0xFF5D4037),
-    Color(0xFF3949AB),
-    Color(0xFFF9A825),
-    Color(0xFF6D4C41),
-    Color(0xFF1E88E5),
-  ];
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final commits = data.commits;
-    final laneOf = _laneOfByBranches({for (final c in commits) c.id: c});
-    final rowOf = <String, int>{};
-    final paintNode = Paint()..color = const Color(0xFF1976D2);
-    final paintBorder = Paint()
-      ..color = const Color(0xFF1976D2)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.5;
-    final paintEdge = Paint()
-      ..strokeWidth = 2
-      ..style = PaintingStyle.stroke;
-    final byId = {for (final c in commits) c.id: c};
-    final colorMemo = _computeBranchColors(byId);
-    // 构造来自分支链的父->子关系，以及对每个边对的出现次数
-    final children = <String, List<String>>{}; // parent -> [child]
-    final pairCount = <String, int>{};
-    for (final entry in data.chains.entries) {
-      final ids = entry.value;
-      for (var i = 0; i + 1 < ids.length; i++) {
-        final child = ids[i];
-        final parent = ids[i + 1];
-        (children[parent] ??= <String>[]).add(child);
-        final key = '$child|$parent';
-        pairCount[key] = (pairCount[key] ?? 0) + 1;
-      }
-    }
-
-    for (var i = 0; i < commits.length; i++) {
-      final c = commits[i];
-      rowOf[c.id] = i;
-    }
-
-    // 绘制节点
-    String? currentHeadId;
-    if (data.currentBranch != null) {
-      for (final b in data.branches) {
-        if (b.name == data.currentBranch) {
-          currentHeadId = b.head;
-          break;
-        }
-      }
-    }
-
-    for (final c in commits) {
-      final row = rowOf[c.id]!;
-      final lane = laneOf[c.id]!;
-      final x = lane * laneWidth + laneWidth / 2;
-      final y = row * rowHeight + rowHeight / 2;
-      final childIds = children[c.id] ?? const <String>[];
-      final childColors =
-          childIds.map((id) => _colorOfCommit(id, colorMemo)).toSet();
-      final isSplit = childIds.length >= 2 && childColors.length >= 2;
-      final r = isSplit ? nodeRadius * 1.6 : nodeRadius;
-
-      if (c.id == currentHeadId) {
-        final paintCurHead = Paint()
-          ..color = Colors.green
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 3.0;
-        canvas.drawCircle(Offset(x, y), r + 5, paintCurHead);
-      }
-
-      if (identicalCommitIds != null && identicalCommitIds!.contains(c.id)) {
-        final paintIdent = Paint()
-          ..color = Colors.purple
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 4.0;
-        canvas.drawCircle(Offset(x, y), r + 8, paintIdent);
-      }
-
-      canvas.drawCircle(Offset(x, y), r, paintNode);
-      if (isSplit) {
-        canvas.drawCircle(Offset(x, y), r, paintBorder);
-      }
-      if (selectedNodes.contains(c.id)) {
-        final paintSel = Paint()
-          ..color = Colors.redAccent
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 3.0;
-        canvas.drawCircle(Offset(x, y), r + 4, paintSel);
-      }
-    }
-
-    // 绘制来自分支链的边，避免父列表造成的重边
-    final pairDrawn = <String, int>{};
-    for (final entry in data.chains.entries) {
-      final bname = entry.key;
-      final bcolor = branchColors[bname] ?? const Color(0xFF9E9E9E);
-      final ids = entry.value;
-      for (var i = 0; i + 1 < ids.length; i++) {
-        final child = ids[i];
-        final parent = ids[i + 1];
-        if (!rowOf.containsKey(child) || !rowOf.containsKey(parent)) continue;
-
-        // 过滤掉错误的连线：确保 parent 确实是 child 的父节点
-        final childNodeCheck = byId[child];
-        if (childNodeCheck != null &&
-            !childNodeCheck.parents.contains(parent)) {
-          continue;
-        }
-
-        final rowC = rowOf[child]!;
-        final laneC = laneOf[child]!;
-        final x = laneC * laneWidth + laneWidth / 2;
-        final y = rowC * rowHeight + rowHeight / 2;
-        final rowP = rowOf[parent]!;
-        final laneP = laneOf[parent]!;
-        final px = laneP * laneWidth + laneWidth / 2;
-        final py = rowP * rowHeight + rowHeight / 2;
-        final key = '$child|$parent';
-        final total = pairCount[key] ?? 1;
-        final done = pairDrawn[key] ?? 0;
-        pairDrawn[key] = done + 1;
-        // Simple straight lines with slight spread for parallel edges
-        final spread = (done - (total - 1) / 2.0) * 4.0;
-
-        final path = Path();
-        final sx = x + spread;
-        final sy = y;
-        final ex = px + spread;
-        final ey = py;
-
-        final childNode = byId[child];
-        bool isMergeEdge = false;
-        if (childNode != null && childNode.parents.length > 1) {
-          if (childNode.parents[0] != parent) {
-            isMergeEdge = true;
-          }
-        }
-
-        if (laneC == laneP) {
-          path.moveTo(sx, sy);
-          path.lineTo(ex, ey);
-        } else {
-          if (isMergeEdge) {
-            // 这里是 Chains 里的 Merge 边（斜线）。
-            // 用户要求：强制不显示蓝色的线（Git 定义的），而是统一由下方的黑色特判逻辑来绘制。
-            // 因此，如果判定为 Merge 边，这里直接跳过绘制。
-            continue;
-          } else {
-            // L-Shape (Split)
-            // Parent (ex, ey) -> Horizontal -> Vertical -> Child (sx, sy)
-            path.moveTo(ex, ey);
-            path.lineTo(sx, ey);
-            path.lineTo(sx, sy);
-          }
-        }
-
-        paintEdge.color = bcolor;
-        bool isCurrent = data.currentBranch == bname;
-        bool isHover = hoverPairKey != null && hoverPairKey == key;
-
-        paintEdge.strokeWidth = isCurrent ? 4.0 : (isHover ? 3.0 : 2.0);
-
-
-        canvas.drawPath(path, paintEdge);
-      }
-    }
-
-    // 补全 First Parent 连线逻辑已移除
 
 
 
@@ -3844,254 +3829,12 @@ class GraphPainter extends CustomPainter {
 
 
 
-    // 补全 First Parent 连线 (防止 Chains 数据缺失导致的断链)
-    // 仅补画 First Parent，不处理其他父节点，也不添加额外的高亮效果
-    for (final c in commits) {
-      if (c.parents.isEmpty) continue;
-      
-      final rowC = rowOf[c.id];
-      final laneC = laneOf[c.id];
-      if (rowC == null || laneC == null) continue;
-
-      final x = laneC * laneWidth + laneWidth / 2;
-      final y = rowC * rowHeight + rowHeight / 2;
-
-      // 仅检查 First Parent
-      final p0Id = c.parents[0];
-      final key0 = '${c.id}|$p0Id';
-      
-      // 如果 Chains 遍历中没有画过这条线，则补画
-      if (!pairDrawn.containsKey(key0)) {
-        final rowP = rowOf[p0Id];
-        final laneP = laneOf[p0Id];
-        if (rowP != null && laneP != null) {
-          final px = laneP * laneWidth + laneWidth / 2;
-          final py = rowP * rowHeight + rowHeight / 2;
 
 
-          final paintMain = Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 2.0
-            ..color = _colorOfCommit(c.id, colorMemo);
 
-          final path = Path();
-          if (laneC == laneP) {
-            path.moveTo(x, y);
-            path.lineTo(px, py);
-          } else {
-            // L-Shape
-            path.moveTo(px, py);
-            path.lineTo(x, py);
-            path.lineTo(x, y);
-          }
-          canvas.drawPath(path, paintMain);
-        }
-      }
-    }
 
-    // Draw custom edges
-    final paintCustom = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.0
-      ..color = const Color(0xFF000000);
 
-    for (final edge in data.customEdges) {
-      if (edge.length < 2) continue;
-      final child = edge[0];
-      final parent = edge[1];
-      
-      final rowC = rowOf[child];
-      final laneC = laneOf[child];
-      final rowP = rowOf[parent];
-      final laneP = laneOf[parent];
-      
-      if (rowC == null || laneC == null || rowP == null || laneP == null) continue;
-      
-      final x = laneC * laneWidth + laneWidth / 2;
-      final y = rowC * rowHeight + rowHeight / 2;
-      final px = laneP * laneWidth + laneWidth / 2;
-      final py = rowP * rowHeight + rowHeight / 2;
-      
-      final path = Path();
-      path.moveTo(x, y);
-      path.lineTo(px, py);
-      canvas.drawPath(path, paintCustom);
-    }
 
-    final textPainter = TextPainter(textDirection: TextDirection.ltr);
-    for (final c in commits) {
-      final row = rowOf[c.id]!;
-      final lane = laneOf[c.id]!;
-      final x = lane * laneWidth + laneWidth / 2 + 10;
-      final y = row * rowHeight + rowHeight / 2;
-      String msg = c.subject;
-      if (msg.length > 10) {
-        msg = '${msg.substring(0, 10)}...';
-      }
-      textPainter.text = TextSpan(
-        style: const TextStyle(color: Colors.black, fontSize: 12),
-        children: [
-          TextSpan(text: '提交id：${c.id.substring(0, 7)}'),
-          if (c.refs.isNotEmpty)
-            TextSpan(
-                text: ' [${Branch.decodeName(c.refs.first)}]',
-                style: const TextStyle(fontWeight: FontWeight.bold)),
-          const TextSpan(text: '\n'),
-          TextSpan(text: '提交信息：$msg'),
-        ],
-      );
-      textPainter.layout();
-      textPainter.paint(canvas, Offset(x, y - textPainter.height / 2));
-    }
 
-    // 边框分区与当前状态
-    int maxLane = -1;
-    for (final v in laneOf.values) {
-      if (v > maxLane) maxLane = v;
-    }
-    if (maxLane < 0) maxLane = 0;
-    final graphWidth = (maxLane + 1) * laneWidth;
-    final graphHeight = commits.length * rowHeight;
-    final borderPaint = Paint()
-      ..color = const Color(0xFF000000)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
-    canvas.drawRect(Rect.fromLTWH(0, 0, graphWidth, graphHeight), borderPaint);
 
-    if (working?.changed == true) {
-      final overlayMargin = 40.0;
-      final overlayWidth = 240.0;
-      final overlayX = graphWidth + overlayMargin;
 
-      // Fix for empty project: ensure staging area has height
-      double overlayHeight = graphHeight;
-      if (commits.isEmpty) {
-        overlayHeight = rowHeight;
-      }
-
-      canvas.drawRect(
-        Rect.fromLTWH(overlayX, 0, overlayWidth, overlayHeight),
-        borderPaint,
-      );
-      final baseId = working?.baseId;
-      int row = 0;
-      if (baseId != null && rowOf.containsKey(baseId)) {
-        row = rowOf[baseId]!;
-      }
-      final cx = overlayX + overlayWidth / 2;
-      final cy = row * rowHeight + rowHeight / 2;
-      final paintCur = Paint()..color = const Color(0xFFD81B60);
-      canvas.drawCircle(Offset(cx, cy), nodeRadius * 1.6, paintCur);
-      final labelSpan = TextSpan(
-        text: '当前状态',
-        style: const TextStyle(color: Colors.black, fontSize: 12),
-      );
-      textPainter.text = labelSpan;
-      textPainter.layout();
-      textPainter.paint(canvas, Offset(cx + 10, cy - 8));
-    }
-  }
-
-  Color _colorOfCommit(String id, Map<String, Color> memo) {
-    return memo[id] ?? const Color(0xFF9E9E9E);
-  }
-
-  Map<String, Color> _computeBranchColors(Map<String, CommitNode> byId) {
-    final memo = <String, Color>{};
-    // Branch priority: master first, then others by name
-    final ordered = List<Branch>.from(data.branches);
-    ordered.sort((a, b) {
-      int pa = a.name == 'master' ? 0 : 1;
-      int pb = b.name == 'master' ? 0 : 1;
-      if (pa != pb) return pa - pb;
-      return a.name.compareTo(b.name);
-    });
-    int idx = 0;
-    for (final b in ordered) {
-      final color =
-          branchColors[b.name] ?? lanePalette[idx % lanePalette.length];
-      idx++;
-      var cur = byId[b.head];
-      // 仅为该分支独有的路径上色。如果遇到已经被更高优先级分支染色的节点，停止。
-      while (cur != null && memo[cur.id] == null) {
-        memo[cur.id] = color;
-        if (cur.parents.isEmpty) break;
-        // 仅沿 First Parent 染色，保持分支主干颜色一致
-        final next = byId[cur.parents.first];
-        cur = next;
-      }
-    }
-    return memo;
-  }
-
-  Map<String, int> _laneOfByBranches(Map<String, CommitNode> byId) {
-    final laneOf = <String, int>{};
-
-    // 1. 对分支进行排序 (master 优先)
-    final orderedBranches = List<Branch>.from(data.branches);
-    orderedBranches.sort((a, b) {
-      int pa = a.name == 'master' ? 0 : 1;
-      int pb = b.name == 'master' ? 0 : 1;
-      if (pa != pb) return pa - pb;
-      return a.name.compareTo(b.name);
-    });
-
-    int nextFreeLane = 0;
-
-    // 2. 按优先级为每个分支分配 Lane
-    for (final b in orderedBranches) {
-      var curId = b.head;
-      // 如果该分支的 Head 已经被分配了 Lane（说明它合并到了更高优先级的链上，或者就是同一个点），
-      // 则不需要为这个分支分配新的独立 Lane。
-      if (laneOf.containsKey(curId)) continue;
-
-      final currentBranchLane = nextFreeLane++;
-
-      // 沿 First Parent 回溯
-      while (true) {
-        if (laneOf.containsKey(curId)) {
-          // 遇到已经有 Lane 的节点，停止传播
-          break;
-        }
-        laneOf[curId] = currentBranchLane;
-
-        final node = byId[curId];
-        if (node == null || node.parents.isEmpty) break;
-
-        // 继续追溯 First Parent
-        curId = node.parents.first;
-      }
-    }
-
-    // 3. 查漏补缺：处理未被分支直接覆盖的节点（如 Merge 的 Second Parent 历史）
-    // 按照时间倒序（data.commits 应该已经是排好序的）
-    for (final c in data.commits) {
-      if (!laneOf.containsKey(c.id)) {
-        laneOf[c.id] = nextFreeLane++;
-      }
-
-      final currentLane = laneOf[c.id]!;
-
-      // 检查父节点
-      for (int i = 0; i < c.parents.length; i++) {
-        final pId = c.parents[i];
-        if (laneOf.containsKey(pId)) continue;
-
-        if (i == 0) {
-          // First Parent 继承
-          laneOf[pId] = currentLane;
-        } else {
-          // Second Parent 分配新 Lane
-          laneOf[pId] = nextFreeLane++;
-        }
-      }
-    }
-
-    return laneOf;
-  }
-
-  @override
-  bool shouldRepaint(covariant GraphPainter oldDelegate) {
-    return oldDelegate.data != data;
-  }
-}

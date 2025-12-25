@@ -182,6 +182,29 @@ Future<void> main(List<String> args) async {
     }
   });
 
+  router.post('/remote_graph', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoPath = _sanitizePath(data['repoPath'] as String?);
+    final limit = data['limit'] is int ? data['limit'] as int : null;
+    if (repoPath.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoPath required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    final normalized = p.normalize(repoPath);
+    try {
+      // Fetch remote graph: includeLocal=false, remoteNames=[] (all remotes)
+      final resp = await getGraph(normalized, limit: limit, includeLocal: false, remoteNames: []);
+      return _cors(Response.ok(jsonEncode(resp.toJson()),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
   router.post('/compare', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;

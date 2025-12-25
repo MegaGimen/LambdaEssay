@@ -15,6 +15,8 @@ class GraphPainter extends CustomPainter {
   final Map<String, Color>? customNodeColors;
   final List<CommitNode> ghostNodes; // New: Ghost nodes
   final bool showCurrentHead; // New: Toggle for current head highlight
+  final String primaryBranchName; // New: Primary branch name for lane 0
+  final int? totalRows; // New: Force total rows for alignment
 
   static const double nodeRadius = 6;
 
@@ -36,6 +38,8 @@ class GraphPainter extends CustomPainter {
     this.showCurrentHead = true,
     this.preCalculatedLaneOf,
     this.preCalculatedRowOf,
+    this.primaryBranchName = 'master',
+    this.totalRows,
   });
 
   static const List<Color> lanePalette = [
@@ -51,16 +55,23 @@ class GraphPainter extends CustomPainter {
     Color(0xFF1E88E5),
   ];
 
-  static Map<String, int> calculateLaneOf(List<CommitNode> allCommits, List<Branch> branches) {
+  static Map<String, int> calculateLaneOf(List<CommitNode> allCommits, List<Branch> branches, {String primaryBranch = 'master'}) {
     // Create a map for fast lookup
     final byId = {for (final c in allCommits) c.id: c};
     
     final laneOf = <String, int>{};
     final orderedBranches = List<Branch>.from(branches);
     orderedBranches.sort((a, b) {
-      int pa = a.name == 'master' ? 0 : 1;
-      int pb = b.name == 'master' ? 0 : 1;
+      int pa = a.name == primaryBranch ? 0 : 1;
+      int pb = b.name == primaryBranch ? 0 : 1;
       if (pa != pb) return pa - pb;
+      // Prioritize branches starting with the same prefix as primary (e.g. origin/)
+      if (primaryBranch.contains('/')) {
+        final prefix = primaryBranch.split('/')[0];
+        int paRemote = a.name.startsWith(prefix) ? 0 : 1;
+        int pbRemote = b.name.startsWith(prefix) ? 0 : 1;
+        if (paRemote != pbRemote) return paRemote - pbRemote;
+      }
       return a.name.compareTo(b.name);
     });
 
@@ -520,8 +531,8 @@ class GraphPainter extends CustomPainter {
     final memo = <String, Color>{};
     final ordered = List<Branch>.from(data.branches);
     ordered.sort((a, b) {
-      int pa = a.name == 'master' ? 0 : 1;
-      int pb = b.name == 'master' ? 0 : 1;
+      int pa = a.name == primaryBranchName ? 0 : 1;
+      int pb = b.name == primaryBranchName ? 0 : 1;
       if (pa != pb) return pa - pb;
       return a.name.compareTo(b.name);
     });
@@ -545,8 +556,8 @@ class GraphPainter extends CustomPainter {
     final laneOf = <String, int>{};
     final orderedBranches = List<Branch>.from(branches);
     orderedBranches.sort((a, b) {
-      int pa = a.name == 'master' ? 0 : 1;
-      int pb = b.name == 'master' ? 0 : 1;
+      int pa = a.name == primaryBranchName ? 0 : 1;
+      int pb = b.name == primaryBranchName ? 0 : 1;
       if (pa != pb) return pa - pb;
       return a.name.compareTo(b.name);
     });
@@ -653,6 +664,8 @@ class SimpleGraphView extends StatefulWidget {
   final List<CommitNode> ghostNodes;
   final bool showCurrentHead;
   final bool showLegend;
+  final String primaryBranchName;
+  final int? totalRows;
 
   const SimpleGraphView({
     super.key,
@@ -665,6 +678,8 @@ class SimpleGraphView extends StatefulWidget {
     this.ghostNodes = const [],
     this.showCurrentHead = true,
     this.showLegend = false,
+    this.primaryBranchName = 'master',
+    this.totalRows,
   });
 
   @override
@@ -716,7 +731,7 @@ class _SimpleGraphViewState extends State<SimpleGraphView> {
     }
 
     // Reuse the static method from GraphPainter with effective branches
-    _cachedLaneOf = GraphPainter.calculateLaneOf(allCommits, effectiveBranches);
+    _cachedLaneOf = GraphPainter.calculateLaneOf(allCommits, effectiveBranches, primaryBranch: widget.primaryBranchName);
     
     _cachedRowOf = {};
     for (var i = 0; i < allCommits.length; i++) {
@@ -742,7 +757,8 @@ class _SimpleGraphViewState extends State<SimpleGraphView> {
     // Ideally update layout here if data changed
     if (widget.data != oldWidget.data || 
         widget.ghostNodes != oldWidget.ghostNodes || 
-        widget.customRowMapping != oldWidget.customRowMapping) {
+        widget.customRowMapping != oldWidget.customRowMapping ||
+        widget.primaryBranchName != oldWidget.primaryBranchName) {
        _updateLayout();
     }
   }
@@ -799,6 +815,8 @@ class _SimpleGraphViewState extends State<SimpleGraphView> {
                 showCurrentHead: widget.showCurrentHead,
                 preCalculatedLaneOf: _cachedLaneOf,
                 preCalculatedRowOf: _cachedRowOf,
+                primaryBranchName: widget.primaryBranchName,
+                totalRows: widget.totalRows,
               ),
               size: _canvasSize!,
             ),
@@ -870,14 +888,8 @@ class _SimpleGraphViewState extends State<SimpleGraphView> {
 
   Size _computeCanvasSize(GraphData data) {
     final commits = data.commits;
-    // Simplified estimation or we can reuse _laneOfByBranches logic but that's inside Painter.
-    // For now, let's just make it large enough or access logic if possible.
-    // Since GraphPainter calculates logic internally, we can't easily get it here without duplicating.
-    // However, GraphPainter paints based on what it calculates.
-    // We need size passed to CustomPaint.
-    // Let's implement a simple estimation:
-    return Size(2000, (commits.length + 5) * _rowHeight);
-    // Ideally we should move _laneOfByBranches to a static helper or utility class.
+    final total = widget.totalRows ?? commits.length;
+    return Size(2000, (total + 5) * _rowHeight);
   }
 
   Map<String, Color> _assignBranchColors(List<Branch> branches) {
