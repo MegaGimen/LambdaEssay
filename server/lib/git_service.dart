@@ -393,8 +393,17 @@ Future<GraphResponse> _getGraphUnlocked(String repoPath,
     branches.addAll(await getBranches(repoPath));
   }
   if (remoteNames != null) {
-    for (final r in remoteNames) {
-      branches.addAll(await getRemoteBranches(repoPath, r));
+    if (remoteNames.isEmpty) {
+      final remotes = await _runGit(['remote'], repoPath);
+      for (final r in remotes) {
+        if (r.trim().isNotEmpty) {
+          branches.addAll(await getRemoteBranches(repoPath, r.trim()));
+        }
+      }
+    } else {
+      for (final r in remoteNames) {
+        branches.addAll(await getRemoteBranches(repoPath, r));
+      }
     }
   }
 
