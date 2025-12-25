@@ -677,16 +677,20 @@ List<String> _parseRefs(String decoration,
       }
 
       // If remoteNames is provided, we check if it matches
-      bool matches = false;
-      for (final r in remoteNames) {
-        if (t.contains('/$r/') || t.startsWith('$r/')) {
-          matches = true;
-          break;
+      // If remoteNames is empty, it means ALL remotes are allowed
+      if (remoteNames.isNotEmpty) {
+        bool matches = false;
+        for (final r in remoteNames) {
+          if (t.startsWith('$r/') || t.contains('/$r/')) {
+            matches = true;
+            break;
+          }
         }
+        if (!matches) continue;
       }
-      if (!matches) continue;
+    }
 
-      // EXPLICITLY EXCLUDE REMOTE HEAD (e.g. refs/remotes/origin/HEAD)
+    // EXPLICITLY EXCLUDE REMOTE HEAD (e.g. refs/remotes/origin/HEAD)
       // It usually points to the default branch on remote, but in graph view it's noise.
       if (t.endsWith('/HEAD')) continue;
     }
