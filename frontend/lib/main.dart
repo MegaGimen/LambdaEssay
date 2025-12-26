@@ -1565,83 +1565,75 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         throw Exception('准备合并失败: ${resp.body}');
       }
 
-      // Step 3: User Review
-      final confirm = await showDialog<bool>(
-        context: context,
-        barrierDismissible: false,
-        builder: (ctx) => AlertDialog(
-          title: const Text('处理合并冲突'),
-          content: const Text('差异文档已生成并替换了您的追踪文件。\n\n'
-              '请现在打开 Word 文档：\n'
-              '1. 查看“修订”内容。\n'
-              '2. 接受或拒绝更改以解决冲突。\n'
-              '3. 保存并关闭文档。\n\n'
-              '完成后，点击“确认合并完成”。'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消合并 (还原?)'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('确认合并完成'),
-            ),
-          ],
-        ),
-      );
-
-      if (confirm != true) {
-        // Restore logic if cancelled
-        setState(() => loading = true);
-        await http.post(
-          Uri.parse('http://localhost:8080/restore_docx'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'repoName': currentProjectName ?? ''}),
+      // Step 3 & 4: User Review Loop
+      bool confirmed = false;
+      while (!confirmed) {
+        // Step 3: User Review
+        final confirm = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) => AlertDialog(
+            title: const Text('处理合并冲突'),
+            content: const Text('差异文档已生成并替换了您的追踪文件。\n\n'
+                '请现在打开 Word 文档：\n'
+                '1. 查看“修订”内容。\n'
+                '2. 接受或拒绝更改以解决冲突。\n'
+                '3. 保存并关闭文档。\n\n'
+                '完成后，点击“确认合并完成”。'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('取消合并 (还原文件)'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('确认合并完成'),
+              ),
+            ],
+          ),
         );
-        setState(() => loading = false);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('合并已取消，文档已还原')),
+
+        if (confirm != true) {
+          // Restore logic if cancelled in Step 3
+          setState(() => loading = true);
+          await http.post(
+            Uri.parse('http://localhost:8080/restore_docx'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'repoName': currentProjectName ?? ''}),
           );
+          setState(() => loading = false);
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('合并已取消，文档已还原')),
+            );
+          }
+          return;
         }
-        return;
-      }
 
-      // Step 4: Double Confirmation
-      final doubleCheck = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('最后确认'),
-          content: const Text('您确定已经处理完所有冲突并保存了吗？\n'
-              '即将生成合并提交。'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('我还要再看看'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('确定执行'),
-            ),
-          ],
-        ),
-      );
-
-      if (doubleCheck != true) {
-        // Restore logic if cancelled
-        setState(() => loading = true);
-        await http.post(
-          Uri.parse('http://localhost:8080/restore_docx'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'repoName': currentProjectName ?? ''}),
+        // Step 4: Double Confirmation
+        final doubleCheck = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('最后确认'),
+            content: const Text('您确定已经处理完所有冲突并保存了吗？\n'
+                '即将生成合并提交。'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('我还要再看看'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('确定执行'),
+              ),
+            ],
+          ),
         );
-        setState(() => loading = false);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('合并已取消，文档已还原')),
-          );
+
+        if (doubleCheck == true) {
+          confirmed = true;
         }
-        return;
+        // If doubleCheck is false, loop back to Step 3
       }
 
       if (!mounted) return;
