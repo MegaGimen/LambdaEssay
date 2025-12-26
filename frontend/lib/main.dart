@@ -2714,7 +2714,7 @@ class _GraphViewState extends State<_GraphView> with SingleTickerProviderStateMi
         title: const Text('确认回退'),
         content: Text('确定要将工作区文档回退到版本 ${node.id.substring(0, 7)} 吗？\n'
             '当前未提交的更改可能会丢失。\n'
-            '请确保 Word 文档已关闭。'),
+            '请确保 Word 文档的插件已经加载。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
