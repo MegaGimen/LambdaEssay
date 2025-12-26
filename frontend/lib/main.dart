@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:file_picker/file_picker.dart';
 import 'models.dart';
 import 'visualize.dart';
 import 'backup.dart';
@@ -753,30 +754,61 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       final docxCtrl = TextEditingController();
       final ok = await showDialog<bool>(
         context: context,
-        builder: (_) => AlertDialog(
-          title: const Text('设置追踪文档'),
-          content: SizedBox(
-            width: 400,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text('这是一个新的克隆（或已被重置），请重新设置要追踪的Word文档(.docx)或解包文件夹'),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: docxCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'docx文件路径或解包文件夹路径 c:\\path\\to\\...',
+        builder: (_) => StatefulBuilder(
+          builder: (context, setState) => AlertDialog(
+            title: const Text('设置追踪文档'),
+            content: SizedBox(
+              width: 500,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('这是一个新的克隆（或已被重置），请重新设置要追踪的Word文档(.docx)或解包文件夹'),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: docxCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'docx文件路径或解包文件夹路径',
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.insert_drive_file),
+                        tooltip: '选择文件',
+                        onPressed: () async {
+                          FilePickerResult? result = await FilePicker.platform.pickFiles(
+                            type: FileType.custom,
+                            allowedExtensions: ['docx'],
+                          );
+                          if (result != null && result.files.single.path != null) {
+                            docxCtrl.text = result.files.single.path!;
+                          }
+                        },
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.folder),
+                        tooltip: '选择文件夹',
+                        onPressed: () async {
+                          String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
+                          if (selectedDirectory != null) {
+                            docxCtrl.text = selectedDirectory;
+                          }
+                        },
+                      ),
+                    ],
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
+            actions: [
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('确定'),
+              ),
+            ],
           ),
-          actions: [
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('确定'),
-            ),
-          ],
         ),
       );
       if (ok == true) {
@@ -1098,37 +1130,68 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     final docxCtrl = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('新建追踪项目'),
-        content: SizedBox(
-          width: 420,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: nameCtrl,
-                decoration: const InputDecoration(labelText: '项目名称'),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: docxCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'docx文件路径 c:\\path\\to\\file.docx',
+      builder: (_) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('新建追踪项目'),
+          content: SizedBox(
+            width: 500,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameCtrl,
+                  decoration: const InputDecoration(labelText: '项目名称'),
                 ),
-              ),
-            ],
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: docxCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'docx文件路径或解包文件夹',
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.insert_drive_file),
+                      tooltip: '选择文件',
+                      onPressed: () async {
+                        FilePickerResult? result = await FilePicker.platform.pickFiles(
+                          type: FileType.custom,
+                          allowedExtensions: ['docx'],
+                        );
+                        if (result != null && result.files.single.path != null) {
+                          docxCtrl.text = result.files.single.path!;
+                        }
+                      },
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.folder),
+                      tooltip: '选择文件夹',
+                      onPressed: () async {
+                        String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
+                        if (selectedDirectory != null) {
+                          docxCtrl.text = selectedDirectory;
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('创建'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('创建'),
-          ),
-        ],
       ),
     );
     if (ok != true) return;
@@ -1389,18 +1452,48 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           final docxCtrl = TextEditingController();
           final ok = await showDialog<bool>(
             context: context,
-            builder: (_) => AlertDialog(
-              title: const Text('选择docx文件路径'),
-              content: SizedBox(
-                width: 420,
-                child: TextField(
-                  controller: docxCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'docx文件路径 c:\\path\\to\\file.docx',
+            builder: (_) => StatefulBuilder(
+              builder: (context, setState) => AlertDialog(
+                title: const Text('选择docx文件路径'),
+                content: SizedBox(
+                  width: 500,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: docxCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'docx文件路径或解包文件夹',
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.insert_drive_file),
+                        tooltip: '选择文件',
+                        onPressed: () async {
+                          FilePickerResult? result = await FilePicker.platform.pickFiles(
+                            type: FileType.custom,
+                            allowedExtensions: ['docx'],
+                          );
+                          if (result != null && result.files.single.path != null) {
+                            docxCtrl.text = result.files.single.path!;
+                          }
+                        },
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.folder),
+                        tooltip: '选择文件夹',
+                        onPressed: () async {
+                          String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
+                          if (selectedDirectory != null) {
+                            docxCtrl.text = selectedDirectory;
+                          }
+                        },
+                      ),
+                    ],
                   ),
                 ),
-              ),
-              actions: [
+                actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context, false),
                   child: const Text('取消'),
@@ -1411,7 +1504,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                 ),
               ],
             ),
-          );
+          ),
+        );
           if (ok == true) {
             docx = docxCtrl.text.trim();
           } else {
@@ -1629,18 +1723,48 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
     final ok = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
-        title: Text('修改Docx路径: $name'),
-        content: SizedBox(
-          width: 400,
-          child: TextField(
-            controller: docxCtrl,
-            decoration: const InputDecoration(
-              labelText: 'c:\\path\\to\\file.docx',
+      builder: (_) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: Text('修改Docx路径: $name'),
+          content: SizedBox(
+            width: 500,
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: docxCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'c:\\path\\to\\file.docx',
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.insert_drive_file),
+                  tooltip: '选择文件',
+                  onPressed: () async {
+                    FilePickerResult? result = await FilePicker.platform.pickFiles(
+                      type: FileType.custom,
+                      allowedExtensions: ['docx'],
+                    );
+                    if (result != null && result.files.single.path != null) {
+                      docxCtrl.text = result.files.single.path!;
+                    }
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.folder),
+                  tooltip: '选择文件夹',
+                  onPressed: () async {
+                    String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
+                    if (selectedDirectory != null) {
+                      docxCtrl.text = selectedDirectory;
+                    }
+                  },
+                ),
+              ],
             ),
           ),
-        ),
-        actions: [
+          actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
             child: const Text('取消'),
@@ -1651,7 +1775,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           ),
         ],
       ),
-    );
+    ),
+  );
 
     if (ok == true) {
       final newPath = docxCtrl.text.trim();
