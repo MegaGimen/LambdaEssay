@@ -12,6 +12,7 @@ dependencies:
   xml: ^6.5.0
   syncfusion_flutter_pdfviewer: ^31.1.19
   file_picker: ^10.3.8
+  web_socket_channel: ^2.4.0
 dev_dependencies:
   flutter_test:
     sdk: flutter
