@@ -9,6 +9,7 @@ import 'visualize.dart';
 import 'backup.dart';
 import 'pull_preview.dart';
 import 'graph_view.dart';
+import 'widgets/draggable_resizable_window.dart';
 
 void main() {
   runApp(const GitGraphApp());
@@ -77,9 +78,90 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
   static const String baseUrl = 'http://localhost:8080';
 
+  // Layout state
+  Rect? _branchControlRect;
+  Rect? _viewControlRect;
+  Rect? _remoteViewControlRect;
+
+  Future<void> _loadLayoutPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final bLeft = prefs.getDouble('branchControl_left');
+    final bTop = prefs.getDouble('branchControl_top');
+    final bWidth = prefs.getDouble('branchControl_width');
+    final bHeight = prefs.getDouble('branchControl_height');
+    
+    if (bLeft != null && bTop != null && bWidth != null && bHeight != null) {
+      _branchControlRect = Rect.fromLTWH(bLeft, bTop, bWidth, bHeight);
+    }
+
+    final vLeft = prefs.getDouble('viewControl_left');
+    final vTop = prefs.getDouble('viewControl_top');
+    final vWidth = prefs.getDouble('viewControl_width');
+    final vHeight = prefs.getDouble('viewControl_height');
+    
+    if (vLeft != null && vTop != null && vWidth != null && vHeight != null) {
+      _viewControlRect = Rect.fromLTWH(vLeft, vTop, vWidth, vHeight);
+    }
+
+    final rvLeft = prefs.getDouble('remoteViewControl_left');
+    final rvTop = prefs.getDouble('remoteViewControl_top');
+    final rvWidth = prefs.getDouble('remoteViewControl_width');
+    final rvHeight = prefs.getDouble('remoteViewControl_height');
+    
+    if (rvLeft != null && rvTop != null && rvWidth != null && rvHeight != null) {
+      _remoteViewControlRect = Rect.fromLTWH(rvLeft, rvTop, rvWidth, rvHeight);
+    }
+    
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _saveLayoutPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (_branchControlRect != null) {
+      await prefs.setDouble('branchControl_left', _branchControlRect!.left);
+      await prefs.setDouble('branchControl_top', _branchControlRect!.top);
+      await prefs.setDouble('branchControl_width', _branchControlRect!.width);
+      await prefs.setDouble('branchControl_height', _branchControlRect!.height);
+    }
+    if (_viewControlRect != null) {
+      await prefs.setDouble('viewControl_left', _viewControlRect!.left);
+      await prefs.setDouble('viewControl_top', _viewControlRect!.top);
+      await prefs.setDouble('viewControl_width', _viewControlRect!.width);
+      await prefs.setDouble('viewControl_height', _viewControlRect!.height);
+    }
+    if (_remoteViewControlRect != null) {
+      await prefs.setDouble('remoteViewControl_left', _remoteViewControlRect!.left);
+      await prefs.setDouble('remoteViewControl_top', _remoteViewControlRect!.top);
+      await prefs.setDouble('remoteViewControl_width', _remoteViewControlRect!.width);
+      await prefs.setDouble('remoteViewControl_height', _remoteViewControlRect!.height);
+    }
+  }
+  
+  void _resetLayout() async {
+     setState(() {
+       _branchControlRect = null;
+       _viewControlRect = null;
+       _remoteViewControlRect = null;
+     });
+     final prefs = await SharedPreferences.getInstance();
+     await prefs.remove('branchControl_left');
+     await prefs.remove('branchControl_top');
+     await prefs.remove('branchControl_width');
+     await prefs.remove('branchControl_height');
+     await prefs.remove('viewControl_left');
+     await prefs.remove('viewControl_top');
+     await prefs.remove('viewControl_width');
+     await prefs.remove('viewControl_height');
+     await prefs.remove('remoteViewControl_left');
+     await prefs.remove('remoteViewControl_top');
+     await prefs.remove('remoteViewControl_width');
+     await prefs.remove('remoteViewControl_height');
+  }
+
   @override
   void initState() {
     super.initState();
+    _loadLayoutPrefs();
     _checkLogin();
     _sidebarFlashCtrl = AnimationController(
       vsync: this,
@@ -1934,6 +2016,11 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                   label: Text(showRemotePreview ? '隐藏远程' : '显示远程'),
                 ),
                 const SizedBox(width: 8),
+                OutlinedButton(
+                  onPressed: _resetLayout,
+                  child: const Text('设置为默认页面布局'),
+                ),
+                const SizedBox(width: 8),
                 if (currentProjectName != null)
                   Text(
                     ' 当前项目: $currentProjectName ',
@@ -2014,6 +2101,13 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                                       totalRows: totalRows,
                                       transformationController: _sharedController,
                                       uiScale: _uiScale,
+                                      branchControlRect: null, // Remote doesn't show branch controls usually, or if so, separate rect
+                                      viewControlRect: _remoteViewControlRect,
+                                      onBranchControlRectChanged: null,
+                                      onViewControlRectChanged: (r) {
+                                        setState(() => _remoteViewControlRect = r);
+                                        _saveLayoutPrefs();
+                                      },
                                     ),
                                   ),
                                 ],
@@ -2056,6 +2150,16 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                                     customRowMapping: localRowMapping,
                                     totalRows: totalRows,
                                     primaryBranchName: 'master',
+                                    branchControlRect: _branchControlRect,
+                                    viewControlRect: _viewControlRect,
+                                    onBranchControlRectChanged: (r) {
+                                      setState(() => _branchControlRect = r);
+                                      _saveLayoutPrefs();
+                                    },
+                                    onViewControlRectChanged: (r) {
+                                      setState(() => _viewControlRect = r);
+                                      _saveLayoutPrefs();
+                                    },
                                   ),
                                 ),
                               ],
@@ -2081,6 +2185,16 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                         transformationController: _sharedController,
                         uiScale: _uiScale,
                         primaryBranchName: 'master',
+                        branchControlRect: _branchControlRect,
+                        viewControlRect: _viewControlRect,
+                        onBranchControlRectChanged: (r) {
+                          setState(() => _branchControlRect = r);
+                          _saveLayoutPrefs();
+                        },
+                        onViewControlRectChanged: (r) {
+                          setState(() => _viewControlRect = r);
+                          _saveLayoutPrefs();
+                        },
                       ),
           ),
         ],
@@ -2116,6 +2230,10 @@ class _GraphView extends StatefulWidget {
   final String primaryBranchName; // New
   final Map<String, int>? customRowMapping; // New
   final int? totalRows; // New
+  final Rect? branchControlRect;
+  final Rect? viewControlRect;
+  final ValueChanged<Rect>? onBranchControlRectChanged;
+  final ValueChanged<Rect>? onViewControlRectChanged;
 
   const _GraphView({
     required this.data,
@@ -2135,6 +2253,10 @@ class _GraphView extends StatefulWidget {
     this.primaryBranchName = 'master',
     this.customRowMapping,
     this.totalRows,
+    this.branchControlRect,
+    this.viewControlRect,
+    this.onBranchControlRectChanged,
+    this.onViewControlRectChanged,
   });
   @override
   State<_GraphView> createState() => _GraphViewState();
@@ -2879,8 +3001,18 @@ class _GraphViewState extends State<_GraphView> with SingleTickerProviderStateMi
     _branchColors ??= _assignBranchColors(widget.data.branches);
     _pairBranches ??= _buildPairBranches(widget.data);
     _canvasSize ??= _computeCanvasSize(widget.data);
-    return Stack(
-      children: [
+    
+    return LayoutBuilder(builder: (context, constraints) {
+      final screenWidth = constraints.maxWidth;
+      // Default Rects
+      final defaultBranchRect = const Rect.fromLTWH(16, 16, 320, 200);
+      final defaultViewRect = Rect.fromLTWH(screenWidth - 16 - 280, 80, 280, 500);
+
+      final branchRect = widget.branchControlRect ?? defaultBranchRect;
+      final viewRect = widget.viewControlRect ?? defaultViewRect;
+
+      return Stack(
+        children: [
         MouseRegion(
           onHover: (d) {
             final scene = _toScene(d.localPosition);
@@ -3033,105 +3165,104 @@ class _GraphViewState extends State<_GraphView> with SingleTickerProviderStateMi
           ),
         ),
         ),
-        Positioned(
-          top: 16,
-          left: 16,
-          child: widget.readOnly
-              ? const SizedBox.shrink()
-              : Transform.scale(
-                  scale: widget.uiScale,
-                  alignment: Alignment.topLeft,
-                  child: Material(
-                    elevation: 4,
+        if (!widget.readOnly)
+          Positioned.fromRect(
+            rect: branchRect,
+            child: DraggableResizableWindow(
+              rect: branchRect,
+              scale: widget.uiScale,
+              onRectChanged: (r) => widget.onBranchControlRectChanged?.call(r),
+              child: Material(
+                elevation: 4,
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
                     borderRadius: BorderRadius.circular(8),
-                    child: Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '当前分支: ${Branch.decodeName(widget.data.currentBranch ?? "Unknown")}',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                      const SizedBox(height: 8),
+                      Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text(
-                            '当前分支: ${Branch.decodeName(widget.data.currentBranch ?? "Unknown")}',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
+                          if (widget.working?.changed == true)
+                            ElevatedButton.icon(
+                              onPressed: _onCommit,
+                              icon: const Icon(Icons.upload),
+                              label: const Text('提交更改'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green,
+                                foregroundColor: Colors.white,
+                              ),
                             ),
+                          if (widget.working?.changed == true)
+                            const SizedBox(width: 8),
+                          OutlinedButton.icon(
+                            onPressed: _onCreateBranch,
+                            icon: const Icon(Icons.add),
+                            label: const Text('新建分支'),
                           ),
-                          const SizedBox(height: 8),
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (widget.working?.changed == true)
-                                ElevatedButton.icon(
-                                  onPressed: _onCommit,
-                                  icon: const Icon(Icons.upload),
-                                  label: const Text('提交更改'),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.green,
-                                    foregroundColor: Colors.white,
-                                  ),
-                                ),
-                              if (widget.working?.changed == true)
-                                const SizedBox(width: 8),
-                              OutlinedButton.icon(
-                                onPressed: _onCreateBranch,
-                                icon: const Icon(Icons.add),
-                                label: const Text('新建分支'),
-                              ),
-                              const SizedBox(width: 8),
-                              OutlinedButton.icon(
-                                onPressed: _onSwitchBranch,
-                                icon: const Icon(Icons.swap_horiz),
-                                label: const Text('切换分支'),
-                              ),
-                              const SizedBox(width: 8),
-                              OutlinedButton.icon(
-                                onPressed: _onMergeButton,
-                                icon: const Icon(Icons.call_merge),
-                                label: const Text('合并分支'),
-                              ),
-                              const SizedBox(width: 8),
-                              OutlinedButton.icon(
-                                onPressed: widget.onFindIdentical,
-                                icon: const Icon(Icons.find_in_page),
-                                label: const Text('查找相同版本'),
-                              ),
-                            ],
+                          const SizedBox(width: 8),
+                          OutlinedButton.icon(
+                            onPressed: _onSwitchBranch,
+                            icon: const Icon(Icons.swap_horiz),
+                            label: const Text('切换分支'),
+                          ),
+                          const SizedBox(width: 8),
+                          OutlinedButton.icon(
+                            onPressed: _onMergeButton,
+                            icon: const Icon(Icons.call_merge),
+                            label: const Text('合并分支'),
+                          ),
+                          const SizedBox(width: 8),
+                          OutlinedButton.icon(
+                            onPressed: widget.onFindIdentical,
+                            icon: const Icon(Icons.find_in_page),
+                            label: const Text('查找相同版本'),
                           ),
                         ],
                       ),
-                    ),
+                    ],
                   ),
                 ),
-        ),
-        Positioned(
-          right: 16,
-          top: 80,
-          child: Transform.scale(
+              ),
+            ),
+          ),
+        Positioned.fromRect(
+          rect: viewRect,
+          child: DraggableResizableWindow(
+            rect: viewRect,
             scale: widget.uiScale,
-            alignment: Alignment.topRight,
+            onRectChanged: (r) => widget.onViewControlRectChanged?.call(r),
             child: Material(
               elevation: 2,
-            child: Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFDFDFD),
-                borderRadius: BorderRadius.circular(6),
-                boxShadow: const [
-                  BoxShadow(color: Color(0x22000000), blurRadius: 4),
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFDFDFD),
+                  borderRadius: BorderRadius.circular(6),
+                  boxShadow: const [
+                    BoxShadow(color: Color(0x22000000), blurRadius: 4),
+                  ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
                       ElevatedButton.icon(
                         onPressed: _resetView,
                         icon: const Icon(Icons.home),
@@ -3429,8 +3560,9 @@ class _GraphViewState extends State<_GraphView> with SingleTickerProviderStateMi
               ),
             ),
           ),
-      ],
-    );
+        ],
+      );
+    });
   }
 
   EdgeInfo? _hoverEdge;
