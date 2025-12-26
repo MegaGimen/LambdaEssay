@@ -1660,7 +1660,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         }),
       );
 
-      setState(() => loading = false);
+      // Don't turn off loading here to prevent flickering
+      // setState(() => loading = false);
 
       if (resp2.statusCode != 200) {
         throw Exception('完成合并失败: ${resp2.body}');
@@ -1675,6 +1676,10 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       if (mounted) {
         print("Auto-updating after merge...");
         await _onUpdateRepoAction(forcePull: false);
+        // Ensure loading is off if _onUpdateRepoAction didn't do it (e.g. early return)
+        if (mounted && loading) {
+          setState(() => loading = false);
+        }
       }
       // Reload graph
       // await _load();
