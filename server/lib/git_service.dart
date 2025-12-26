@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'models.dart';
+
 class PullPreviewResult {
   final GraphResponse current;
   final GraphResponse target;
@@ -115,7 +116,7 @@ Future<void> _writeExternalDocx(String repoPath, String sourcePath) async {
   final name = p.basename(repoPath);
   final tracking = await _readTracking(name);
   final docxPath = tracking['docxPath'] as String?;
-  
+
   if (docxPath == null) return;
 
   bool handled = false;
@@ -124,23 +125,21 @@ Future<void> _writeExternalDocx(String repoPath, String sourcePath) async {
     try {
       final bytes = await File(sourcePath).readAsBytes();
       final base64Content = base64Encode(bytes);
-      
+
       final result = await pluginSender!({
         'action': 'replace',
         'payload': {
           'content': base64Content,
           'type': 'base64',
-          'options': {
-             'checkPath': docxPath
-          }
+          'options': {'checkPath': docxPath}
         }
       });
-      
+
       if (result == true) {
-         handled = true;
-         print('Updated external docx via plugin: $docxPath');
+        handled = true;
+        print('Updated external docx via plugin: $docxPath');
       } else {
-         print('Plugin update skipped/failed (result: $result)');
+        print('Plugin update skipped/failed (result: $result)');
       }
     } catch (e) {
       print('Plugin write attempt failed: $e');
@@ -148,37 +147,37 @@ Future<void> _writeExternalDocx(String repoPath, String sourcePath) async {
   }
 
   if (!handled) {
-             print('Updating external docx via disk write: $docxPath');
-             try {
-               if (FileSystemEntity.isDirectorySync(docxPath)) {
-                  if (FileSystemEntity.isDirectorySync(sourcePath)) {
-                     await _copyDir(sourcePath, docxPath);
-                  } else {
-                     // Unzip source file to target dir
-                     if (Directory(docxPath).existsSync()) {
-                        Directory(docxPath).deleteSync(recursive: true);
-                     }
-                     Directory(docxPath).createSync();
-                     await _unzipDocx(sourcePath, docxPath);
-                  }
-               } else {
-                  if (FileSystemEntity.isDirectorySync(sourcePath)) {
-                     // Zip source dir to target file
-                     await _zipDir(sourcePath, docxPath);
-                  } else {
-                     // Safer copy: read bytes and write bytes to avoid 183
-                     // File(sourcePath).copySync(docxPath);
-                     final bytes = File(sourcePath).readAsBytesSync();
-                     File(docxPath).writeAsBytesSync(bytes, flush: true);
-                  }
-               }
-             } catch (e) {
-                print('Disk write failed: $e');
-                // If it was a PathExistsException (183), maybe we can't overwrite?
-                // But writeAsBytesSync should truncate and write.
-                rethrow;
-             }
+    print('Updating external docx via disk write: $docxPath');
+    try {
+      if (FileSystemEntity.isDirectorySync(docxPath)) {
+        if (FileSystemEntity.isDirectorySync(sourcePath)) {
+          await _copyDir(sourcePath, docxPath);
+        } else {
+          // Unzip source file to target dir
+          if (Directory(docxPath).existsSync()) {
+            Directory(docxPath).deleteSync(recursive: true);
           }
+          Directory(docxPath).createSync();
+          await _unzipDocx(sourcePath, docxPath);
+        }
+      } else {
+        if (FileSystemEntity.isDirectorySync(sourcePath)) {
+          // Zip source dir to target file
+          await _zipDir(sourcePath, docxPath);
+        } else {
+          // Safer copy: read bytes and write bytes to avoid 183
+          // File(sourcePath).copySync(docxPath);
+          final bytes = File(sourcePath).readAsBytesSync();
+          File(docxPath).writeAsBytesSync(bytes, flush: true);
+        }
+      }
+    } catch (e) {
+      print('Disk write failed: $e');
+      // If it was a PathExistsException (183), maybe we can't overwrite?
+      // But writeAsBytesSync should truncate and write.
+      rethrow;
+    }
+  }
 }
 
 Future<void> _flushDocxToContent(String repoPath) async {
@@ -597,13 +596,13 @@ Future<void> switchBranch(String projectName, String branchName) async {
   return _withRepoLock(repoPath, () async {
     await _runGit(['checkout', '-f', branchName], repoPath);
     await _forceRegenerateRepoDocx(repoPath);
-    
+
     // Sync to external docx
     final localDocx = p.join(repoPath, kRepoDocxName);
     if (File(localDocx).existsSync()) {
-        await _writeExternalDocx(repoPath, localDocx);
+      await _writeExternalDocx(repoPath, localDocx);
     }
-    
+
     clearCache();
   });
 }
@@ -1031,111 +1030,111 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
   return _withRepoLock(projDir, () async {
     _isUpdating[name] = true;
     try {
-    final dir = Directory(projDir);
-    if (!dir.existsSync()) {
-      throw Exception('project not found');
-    }
-    var tracking = await _readTracking(name);
-    String? sourcePath = tracking['docxPath'] as String?;
-    if (newDocxPath != null && newDocxPath.trim().isNotEmpty) {
-      sourcePath = _sanitizeFsPath(newDocxPath);
-      tracking['docxPath'] = sourcePath;
-    }
-
-    // Verify source exists
-    bool sourceExists = false;
-    if (sourcePath != null && sourcePath.isNotEmpty) {
-      if (FileSystemEntity.isFileSync(sourcePath) ||
-          FileSystemEntity.isDirectorySync(sourcePath)) {
-        sourceExists = true;
+      final dir = Directory(projDir);
+      if (!dir.existsSync()) {
+        throw Exception('project not found');
       }
-    }
+      var tracking = await _readTracking(name);
+      String? sourcePath = tracking['docxPath'] as String?;
+      if (newDocxPath != null && newDocxPath.trim().isNotEmpty) {
+        sourcePath = _sanitizeFsPath(newDocxPath);
+        tracking['docxPath'] = sourcePath;
+      }
 
-    if (!sourceExists) {
-      return {'needDocx': true, 'repoPath': projDir};
-    }
-
-    // Ensure content dir exists in repo
-    final contentDir = Directory(p.join(projDir, kContentDirName));
-    if (!contentDir.existsSync()) {
-      contentDir.createSync();
-    }
-    tracking['repoDocxPath'] = contentDir.path;
-    await _writeTracking(name, tracking);
-
-    // Compare Source vs HEAD
-    bool restored = false;
-
-    final tmpDir = await Directory.systemTemp.createTemp('git_head_check_');
-    try {
-      final headDocx = p.join(tmpDir.path, 'HEAD.docx');
-      bool hasHead = false;
-      try {
-        await _gitArchiveToDocx(projDir, 'HEAD', headDocx);
-        hasHead = true;
-      } catch (_) {}
-
-      if (hasHead) {
-        final isIdentical = await _checkDocxIdentical(sourcePath!, headDocx);
-        print("identical? $isIdentical");
-        if (isIdentical) {
-          // Restore working copy (repo/doc_content) to HEAD
-          // Use reset --hard to ensure NO artifacts remain (e.g. untracked files in doc_content)
-          await _runGit(['reset', '--hard', 'HEAD'], projDir);
-          await _forceRegenerateRepoDocx(
-              projDir); // Sync content.docx from restored folder
-          restored = true;
+      // Verify source exists
+      bool sourceExists = false;
+      if (sourcePath != null && sourcePath.isNotEmpty) {
+        if (FileSystemEntity.isFileSync(sourcePath) ||
+            FileSystemEntity.isDirectorySync(sourcePath)) {
+          sourceExists = true;
         }
       }
-    } finally {
+
+      if (!sourceExists) {
+        return {'needDocx': true, 'repoPath': projDir};
+      }
+
+      // Ensure content dir exists in repo
+      final contentDir = Directory(p.join(projDir, kContentDirName));
+      if (!contentDir.existsSync()) {
+        contentDir.createSync();
+      }
+      tracking['repoDocxPath'] = contentDir.path;
+      await _writeTracking(name, tracking);
+
+      // Compare Source vs HEAD
+      bool restored = false;
+
+      final tmpDir = await Directory.systemTemp.createTemp('git_head_check_');
       try {
-        tmpDir.deleteSync(recursive: true);
+        final headDocx = p.join(tmpDir.path, 'HEAD.docx');
+        bool hasHead = false;
+        try {
+          await _gitArchiveToDocx(projDir, 'HEAD', headDocx);
+          hasHead = true;
+        } catch (_) {}
+
+        if (hasHead) {
+          final isIdentical = await _checkDocxIdentical(sourcePath!, headDocx);
+          print("identical? $isIdentical");
+          if (isIdentical) {
+            // Restore working copy (repo/doc_content) to HEAD
+            // Use reset --hard to ensure NO artifacts remain (e.g. untracked files in doc_content)
+            await _runGit(['reset', '--hard', 'HEAD'], projDir);
+            await _forceRegenerateRepoDocx(
+                projDir); // Sync content.docx from restored folder
+            restored = true;
+          }
+        }
+      } finally {
+        try {
+          tmpDir.deleteSync(recursive: true);
+        } catch (_) {}
+      }
+
+      print('restored? $restored');
+      if (!restored) {
+        // Check if Repo is already identical to Source (e.g. after a rollback)
+        bool alreadySynced = false;
+        final repoDocx = p.join(projDir, kRepoDocxName);
+        if (File(repoDocx).existsSync()) {
+          alreadySynced = await _checkDocxIdentical(sourcePath!, repoDocx);
+          print("Already synced with repo? $alreadySynced");
+        }
+
+        if (!alreadySynced) {
+          // Update repo content from source
+          // Do NOT unzip to doc_content yet. Just update content.docx.
+          await _updateContentDocx(projDir, sourcePath!);
+
+          // Also force regenerate doc_content (unzip) to make sure working directory matches
+          // But wait, if we are going to commit, we need doc_content.
+          // And we need to show changes in graph?
+          // GitGraph usually shows committed changes.
+          // But we have "WorkingState".
+          // We need to unzip content.docx -> doc_content so that `git status` shows changes.
+          await _flushDocxToContent(projDir);
+        }
+      }
+
+      // Check status
+      final status = await _runGit(['status', '--porcelain'], projDir);
+      if (status.isNotEmpty) {
+        print("Git Status dirty: $status");
+      }
+      final changed = status.isNotEmpty;
+
+      String? head;
+      try {
+        final lines = await _runGit(['rev-parse', 'HEAD'], projDir);
+        if (lines.isNotEmpty) head = lines.first.trim();
       } catch (_) {}
-    }
 
-    print('restored? $restored');
-    if (!restored) {
-      // Check if Repo is already identical to Source (e.g. after a rollback)
-      bool alreadySynced = false;
-      final repoDocx = p.join(projDir, kRepoDocxName);
-      if (File(repoDocx).existsSync()) {
-        alreadySynced = await _checkDocxIdentical(sourcePath!, repoDocx);
-        print("Already synced with repo? $alreadySynced");
-      }
-
-      if (!alreadySynced) {
-        // Update repo content from source
-        // Do NOT unzip to doc_content yet. Just update content.docx.
-        await _updateContentDocx(projDir, sourcePath!);
-
-        // Also force regenerate doc_content (unzip) to make sure working directory matches
-        // But wait, if we are going to commit, we need doc_content.
-        // And we need to show changes in graph?
-        // GitGraph usually shows committed changes.
-        // But we have "WorkingState".
-        // We need to unzip content.docx -> doc_content so that `git status` shows changes.
-        await _flushDocxToContent(projDir);
-      }
-    }
-
-    // Check status
-    final status = await _runGit(['status', '--porcelain'], projDir);
-    if (status.isNotEmpty) {
-      print("Git Status dirty: $status");
-    }
-    final changed = status.isNotEmpty;
-
-    String? head;
-    try {
-      final lines = await _runGit(['rev-parse', 'HEAD'], projDir);
-      if (lines.isNotEmpty) head = lines.first.trim();
-    } catch (_) {}
-
-    return {
-      'repoPath': projDir,
-      'workingChanged': changed,
-      'head': head,
-    };
+      return {
+        'repoPath': projDir,
+        'workingChanged': changed,
+        'head': head,
+      };
     } finally {
       await Future.delayed(const Duration(milliseconds: 1000));
       _isUpdating[name] = false;
@@ -1759,36 +1758,39 @@ Future<Map<String, dynamic>> checkPullStatus(
       await _runGit(['fetch', remoteName], projDir);
 
       final current = await getCurrentBranch(projDir);
-      if (current == null) return {'status': 'error', 'message': 'No current branch'};
+      if (current == null)
+        return {'status': 'error', 'message': 'No current branch'};
 
       final remoteBranch = '$remoteName/$current';
-      
+
       // Check if remote branch exists
       try {
         await _runGit(['rev-parse', '--verify', remoteBranch], projDir);
       } catch (_) {
-         // Remote branch doesn't exist?
-         return {'status': 'no_remote_branch'};
+        // Remote branch doesn't exist?
+        return {'status': 'no_remote_branch'};
       }
 
       // Check behind/ahead count
       final out = await _runGit(
           ['rev-list', '--left-right', '--count', '$current...$remoteBranch'],
           projDir);
-      
-      if (out.isEmpty) return {'status': 'error', 'message': 'Failed to check status'};
-      
+
+      if (out.isEmpty)
+        return {'status': 'error', 'message': 'Failed to check status'};
+
       final parts = out.first.trim().split(RegExp(r'\s+'));
-      if (parts.length < 2) return {'status': 'error', 'message': 'Invalid rev-list output'};
-      
+      if (parts.length < 2)
+        return {'status': 'error', 'message': 'Invalid rev-list output'};
+
       final ahead = int.tryParse(parts[0]) ?? 0;
       final behind = int.tryParse(parts[1]) ?? 0;
 
-      if (behind > 0 && ahead > 0) return {'status': 'diverged', 'behind': behind, 'ahead': ahead};
+      if (behind > 0 && ahead > 0)
+        return {'status': 'diverged', 'behind': behind, 'ahead': ahead};
       if (behind > 0) return {'status': 'behind', 'behind': behind};
       if (ahead > 0) return {'status': 'ahead', 'ahead': ahead};
       return {'status': 'up-to-date'};
-
     } catch (e) {
       return {'status': 'error', 'message': e.toString()};
     }
@@ -1821,7 +1823,7 @@ Future<String?> findProjectByDocxPath(String docxPath) async {
         final normTracked = p.normalize(trackedPath).toLowerCase();
         final normDocx = p.normalize(docxPath).toLowerCase();
         // print('DEBUG: Checking $name: $normTracked vs $normDocx');
-        
+
         // Normalize paths for comparison (manual lower case to be sure)
         if (normTracked == normDocx || p.equals(trackedPath, docxPath)) {
           print('DEBUG: Match found: $name');
@@ -2081,14 +2083,7 @@ Future<void> prepareMerge(String repoName, String targetBranch) async {
       }
 
       // 4. Update External (docxPath)
-      // Backup
-      final backupPath = '$docxPath.bak';
-      if (FileSystemEntity.isDirectorySync(docxPath)) {
-        // Backup Dir?
-        // _copyDir(docxPath, backupPath);
-      } else if (File(docxPath).existsSync()) {
-        File(docxPath).copySync(backupPath);
-      }
+      // No backup creation (handled by git restore if needed)
 
       if (FileSystemEntity.isDirectorySync(docxPath)) {
         // Unzip diffDocx to docxPath
@@ -2096,7 +2091,7 @@ Future<void> prepareMerge(String repoName, String targetBranch) async {
         // Directory(docxPath).deleteSync(recursive: true);
         // Directory(docxPath).createSync();
         // await _unzipDocx(diffDocx, docxPath);
-        
+
         // Use _writeExternalDocx for consistency (it handles dir unzipping too)
         await _writeExternalDocx(projDir, diffDocx);
       } else {
@@ -2112,8 +2107,12 @@ Future<void> prepareMerge(String repoName, String targetBranch) async {
 }
 
 Future<void> restoreDocx(String repoName) async {
-  // Restore backup if exists
-  // Simplification: Not fully implemented for dirs
+  final projDir = _projectDir(repoName);
+  await _ensureRepoDocx(projDir);
+  final sourcePath = p.join(projDir, kRepoDocxName);
+  print(sourcePath);
+  // Restore using _writeExternalDocx which handles Plugin API and file overwrite
+  await _writeExternalDocx(projDir, sourcePath);
 }
 
 Future<void> completeMerge(String repoName, String targetBranch) async {
