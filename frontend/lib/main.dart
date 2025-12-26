@@ -787,16 +787,6 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                           }
                         },
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.folder),
-                        tooltip: '选择文件夹',
-                        onPressed: () async {
-                          String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
-                          if (selectedDirectory != null) {
-                            docxCtrl.text = selectedDirectory;
-                          }
-                        },
-                      ),
                     ],
                   ),
                 ],
@@ -1166,16 +1156,6 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                         }
                       },
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.folder),
-                      tooltip: '选择文件夹',
-                      onPressed: () async {
-                        String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
-                        if (selectedDirectory != null) {
-                          docxCtrl.text = selectedDirectory;
-                        }
-                      },
-                    ),
                   ],
                 ),
               ],
@@ -1480,16 +1460,6 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                           }
                         },
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.folder),
-                        tooltip: '选择文件夹',
-                        onPressed: () async {
-                          String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
-                          if (selectedDirectory != null) {
-                            docxCtrl.text = selectedDirectory;
-                          }
-                        },
-                      ),
                     ],
                   ),
                 ),
@@ -1748,16 +1718,6 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                     );
                     if (result != null && result.files.single.path != null) {
                       docxCtrl.text = result.files.single.path!;
-                    }
-                  },
-                ),
-                IconButton(
-                  icon: const Icon(Icons.folder),
-                  tooltip: '选择文件夹',
-                  onPressed: () async {
-                    String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
-                    if (selectedDirectory != null) {
-                      docxCtrl.text = selectedDirectory;
                     }
                   },
                 ),
