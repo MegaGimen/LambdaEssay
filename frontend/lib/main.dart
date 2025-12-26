@@ -1404,7 +1404,12 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     }
   }
 
+  bool _isUpdatingRepo = false;
+
   Future<void> _onUpdateRepoAction({bool forcePull = false}) async {
+    if (_isUpdatingRepo) return;
+    _isUpdatingRepo = true;
+    try {
     print("Updating repo...");
     String? name = currentProjectName;
     if (name == null || name.isEmpty) {
@@ -1554,6 +1559,9 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     } catch (e) {
       setState(() => error = e.toString());
     }
+    } finally {
+      _isUpdatingRepo = false;
+    }
   }
 
   Future<void> _performMerge(String targetBranch) async {
@@ -1603,90 +1611,82 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         throw Exception('准备合并失败: ${resp.body}');
       }
 
-      // Step 3: User Review
-      final confirm = await showDialog<bool>(
-        context: context,
-        barrierDismissible: false,
-        builder: (ctx) => AlertDialog(
-          title: const Text('处理合并冲突'),
-          content: const Text('差异文档已生成并替换了您的追踪文件。\n\n'
-              '请现在打开 Word 文档：\n'
-              '1. 查看“修订”内容。\n'
-              '2. 接受或拒绝更改以解决冲突。\n'
-              '3. 保存并关闭文档。\n\n'
-              '完成后，点击“确认合并完成”。'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消合并 (还原?)'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('确认合并完成'),
-            ),
-          ],
-        ),
-      );
-
-      if (confirm != true) {
-        // Restore logic if cancelled
-        setState(() => loading = true);
-        await http.post(
-          Uri.parse('http://localhost:8080/restore_docx'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'repoName': currentProjectName ?? ''}),
+      // Step 3 & 4: User Review Loop
+      bool confirmed = false;
+      while (!confirmed) {
+        // Step 3: User Review
+        final confirm = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) => AlertDialog(
+            title: const Text('处理合并冲突'),
+            content: const Text('差异文档已生成并替换了您的追踪文件。\n\n'
+                '请现在打开 Word 文档：\n'
+                '1. 查看“修订”内容。\n'
+                '2. 接受或拒绝更改以解决冲突。\n'
+                '3. 保存并关闭文档。\n\n'
+                '完成后，点击“确认合并完成”。'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('取消合并 (还原文件)'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('确认合并完成'),
+              ),
+            ],
+          ),
         );
-        setState(() => loading = false);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('合并已取消，文档已还原')),
+
+        if (confirm != true) {
+          // Restore logic if cancelled in Step 3
+          setState(() => loading = true);
+          await http.post(
+            Uri.parse('http://localhost:8080/restore_docx'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'repoName': currentProjectName ?? ''}),
           );
+          setState(() => loading = false);
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('合并已取消，文档已还原')),
+            );
+          }
+          return;
         }
-        return;
-      }
 
-      // Step 4: Double Confirmation
-      final doubleCheck = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('最后确认'),
-          content: const Text('您确定已经处理完所有冲突并保存了吗？\n'
-              '即将生成合并提交。'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('我还要再看看'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('确定执行'),
-            ),
-          ],
-        ),
-      );
-
-      if (doubleCheck != true) {
-        // Restore logic if cancelled
-        setState(() => loading = true);
-        await http.post(
-          Uri.parse('http://localhost:8080/restore_docx'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'repoName': currentProjectName ?? ''}),
+        // Step 4: Double Confirmation
+        final doubleCheck = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('最后确认'),
+            content: const Text('您确定已经处理完所有冲突并保存了吗？\n'
+                '即将生成合并提交。'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('我还要再看看'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('确定执行'),
+              ),
+            ],
+          ),
         );
-        setState(() => loading = false);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('合并已取消，文档已还原')),
-          );
+
+        if (doubleCheck == true) {
+          confirmed = true;
         }
-        return;
+        // If doubleCheck is false, loop back to Step 3
       }
 
       if (!mounted) return;
       setState(() => loading = true);
 
       // Step 5: Auto Update Repo (Sync)
-      await _onUpdateRepoAction(forcePull: false);
+      // await _onUpdateRepoAction(forcePull: false);
 
       // Step 6: Complete Merge
       final resp2 = await http.post(
@@ -1698,7 +1698,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         }),
       );
 
-      setState(() => loading = false);
+      // Don't turn off loading here to prevent flickering
+      // setState(() => loading = false);
 
       if (resp2.statusCode != 200) {
         throw Exception('完成合并失败: ${resp2.body}');
@@ -1713,9 +1714,13 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       if (mounted) {
         print("Auto-updating after merge...");
         await _onUpdateRepoAction(forcePull: false);
+        // Ensure loading is off if _onUpdateRepoAction didn't do it (e.g. early return)
+        if (mounted && loading) {
+          setState(() => loading = false);
+        }
       }
       // Reload graph
-      await _load();
+      // await _load();
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -2011,41 +2016,6 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                 ],
               ),
             ),
-          Padding(
-            padding: const EdgeInsets.all(8),
-            child: Row(
-              children: [
-                const SizedBox(width: 8),
-                SizedBox(
-                  width: 120,
-                  child: TextField(
-                    controller: limitCtrl,
-                    decoration: const InputDecoration(labelText: '最近提交数'),
-                    keyboardType: TextInputType.number,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                  onPressed: loading ? null : _load,
-                  child: const Text('加载'),
-                ),
-                const SizedBox(width: 8),
-                OutlinedButton(
-                  onPressed: loading
-                      ? null
-                      : () {
-                          setState(() {
-                            showRemotePreview = !showRemotePreview;
-                          });
-                          if (data != null) {
-                            _load(); // Reload to fetch/clear remote data
-                          }
-                        },
-                  child: Text(showRemotePreview ? '隐藏远程' : '显示远程'),
-                ),
-              ],
-            ),
-          ),
           if (error != null)
             Padding(
               padding: const EdgeInsets.all(8),
@@ -2067,43 +2037,75 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                                 border: Border(
                                     right: BorderSide(color: Colors.grey)),
                               ),
-                              child: _GraphView(
-                                data: remoteData!,
-                                repoPath: pathCtrl.text.trim(),
-                                projectName: currentProjectName,
-                                token: _token,
-                                readOnly: true,
-                                primaryBranchName: 'origin/master',
-                                customRowMapping: remoteRowMapping,
-                                totalRows: totalRows,
-                                transformationController: _sharedController,
-                                uiScale: _uiScale,
+                              child: Column(
+                                children: [
+                                  Container(
+                                    width: double.infinity,
+                                    padding: const EdgeInsets.all(8.0),
+                                    color: Colors.grey.shade200,
+                                    child: const Text(
+                                      'Remote Repository (远程)',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(fontWeight: FontWeight.bold),
+                                    ),
+                                  ),
+                                  Expanded(
+                                    child: _GraphView(
+                                      data: remoteData!,
+                                      repoPath: pathCtrl.text.trim(),
+                                      projectName: currentProjectName,
+                                      token: _token,
+                                      readOnly: true,
+                                      primaryBranchName: 'origin/master',
+                                      customRowMapping: remoteRowMapping,
+                                      totalRows: totalRows,
+                                      transformationController: _sharedController,
+                                      uiScale: _uiScale,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ),
                           Expanded(
                             flex: 1,
-                            child: _GraphView(
-                              data: data!,
-                              working:
-                                  (data!.commits.isEmpty && working != null)
-                                      ? WorkingState(
-                                          changed: true, baseId: working!.baseId)
-                                      : working,
-                              repoPath: pathCtrl.text.trim(),
-                              projectName: currentProjectName,
-                              token: _token,
-                              onRefresh: _load,
-                              onUpdate: _onUpdateRepoAction,
-                              onMerge: _performMerge,
-                              onFindIdentical: _findIdentical,
-                              identicalCommitIds: identicalCommitIds,
-                              onLoading: (v) => setState(() => loading = v),
-                              transformationController: _sharedController,
-                              uiScale: _uiScale,
-                              customRowMapping: localRowMapping,
-                              totalRows: totalRows,
-                              primaryBranchName: 'master',
+                            child: Column(
+                              children: [
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.all(8.0),
+                                  color: Colors.grey.shade200,
+                                  child: const Text(
+                                    'Local Repository (本地)',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                                Expanded(
+                                  child: _GraphView(
+                                    data: data!,
+                                    working:
+                                        (data!.commits.isEmpty && working != null)
+                                            ? WorkingState(
+                                                changed: true, baseId: working!.baseId)
+                                            : working,
+                                    repoPath: pathCtrl.text.trim(),
+                                    projectName: currentProjectName,
+                                    token: _token,
+                                    onRefresh: _load,
+                                    onUpdate: _onUpdateRepoAction,
+                                    onMerge: _performMerge,
+                                    onFindIdentical: _findIdentical,
+                                    identicalCommitIds: identicalCommitIds,
+                                    onLoading: (v) => setState(() => loading = v),
+                                    transformationController: _sharedController,
+                                    uiScale: _uiScale,
+                                    customRowMapping: localRowMapping,
+                                    totalRows: totalRows,
+                                    primaryBranchName: 'master',
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ],
