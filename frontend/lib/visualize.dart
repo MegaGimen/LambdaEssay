@@ -1,8 +1,7 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
-// ignore: avoid_web_libraries_in_flutter
-import 'dart:html' as html;
+import 'package:file_picker/file_picker.dart';
 
 class VisualizeDocxPage extends StatefulWidget {
   final Uint8List? initialBytes;
@@ -34,53 +33,24 @@ class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
       _pdfBytes = widget.initialBytes;
       _fileName = widget.title;
     }
-    // Add listeners to prevent browser zoom
-    // This attempts to block the default browser zoom behavior when the user uses Ctrl+Scroll or Ctrl +/-
-    // allowing the PDF viewer's internal zoom or just preventing UI scaling.
-    // ignore: undefined_prefixed_name
-    html.window.addEventListener('wheel', _preventBrowserZoom, true);
-    // ignore: undefined_prefixed_name
-    html.window.addEventListener('keydown', _preventBrowserKeyZoom, true);
-  }
-
-  @override
-  void dispose() {
-    // ignore: undefined_prefixed_name
-    html.window.removeEventListener('wheel', _preventBrowserZoom, true);
-    // ignore: undefined_prefixed_name
-    html.window.removeEventListener('keydown', _preventBrowserKeyZoom, true);
-    super.dispose();
-  }
-
-  void _preventBrowserZoom(html.Event e) {
-    if (e is html.WheelEvent && e.ctrlKey) {
-      e.preventDefault();
-    }
-  }
-
-  void _preventBrowserKeyZoom(html.Event e) {
-    if (e is html.KeyboardEvent && e.ctrlKey) {
-      // Prevent Ctrl + (+, -, 0, =)
-      if (e.key == '=' || e.key == '-' || e.key == '+' || e.key == '0') {
-        e.preventDefault();
-      }
-    }
   }
 
   Future<void> _pickPdf() async {
-    final input = html.FileUploadInputElement();
-    input.accept = '.pdf';
-    input.click();
-    await input.onChange.first;
-    if (input.files?.isEmpty ?? true) return;
-    final file = input.files!.first;
-    final reader = html.FileReader();
-    reader.readAsArrayBuffer(file);
-    await reader.onLoad.first;
-    setState(() {
-      _pdfBytes = reader.result as Uint8List;
-      _fileName = file.name;
-    });
+    FilePickerResult? result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf'],
+      withData: true,
+    );
+
+    if (result != null && result.files.isNotEmpty) {
+      final file = result.files.first;
+      if (file.bytes != null) {
+        setState(() {
+          _pdfBytes = file.bytes;
+          _fileName = file.name;
+        });
+      }
+    }
   }
 
   @override
