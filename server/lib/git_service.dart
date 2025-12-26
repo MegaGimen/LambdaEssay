@@ -378,7 +378,7 @@ Future<List<Branch>> getRemoteBranches(
       final name = parts[0];
       if (name.endsWith('/HEAD')) continue;
       if (remoteName != null && name == remoteName) continue;
-      result.add(Branch(name: name, head: parts[1]));
+      result.add(Branch(name: name, head: parts[1].toLowerCase()));
     }
   }
   return result;
@@ -398,11 +398,31 @@ Future<List<List<String>>> _collectAllEdges(
     String repoPath, List<CommitNode> commits) async {
   final uniquePairs = <String>{};
   final commitIds = commits.map((c) => c.id).toSet();
-  final allParents = <String>{};
-  for (final c in commits) {
-    allParents.addAll(c.parents);
+  
+  // Regex for SHA1 pairs (40 hex chars), ignoring potential "zeros" line
+  final edgeRegex = RegExp(r'([0-9a-fA-F]{40})\s+([0-9a-fA-F]{40})');
+  final zeroRegex = RegExp(r'^[0]+$');
+
+  void parseContent(String content) {
+     final matches = edgeRegex.allMatches(content);
+     for (final m in matches) {
+       final u = m.group(1)!.toLowerCase();
+       final v = m.group(2)!.toLowerCase();
+       if (zeroRegex.hasMatch(u) || zeroRegex.hasMatch(v)) continue;
+       uniquePairs.add('$u|$v');
+     }
   }
 
+  // 1. Try to read local 'edges' file in the repo root
+  try {
+    final localFile = File(p.join(repoPath, 'edges'));
+    if (localFile.existsSync()) {
+      final content = await localFile.readAsString();
+      parseContent(content);
+    }
+  } catch (_) {}
+
+  // 2. Try to read from each commit
   Future<void> fetch(CommitNode c) async {
     try {
       final res = await Process.run(
@@ -412,18 +432,7 @@ Future<List<List<String>>> _collectAllEdges(
         stdoutEncoding: utf8,
       );
       if (res.exitCode == 0) {
-        final content = res.stdout.toString();
-        final lines = LineSplitter.split(content).toList();
-        if (lines.length > 1) {
-          for (var i = 1; i < lines.length; i++) {
-            final line = lines[i].trim();
-            if (line.isEmpty) continue;
-            final parts = line.split(RegExp(r'\s+'));
-            if (parts.length >= 2) {
-              uniquePairs.add('${parts[0]}|${parts[1]}');
-            }
-          }
-        }
+        parseContent(res.stdout.toString());
       }
     } catch (_) {}
   }
@@ -443,9 +452,7 @@ Future<List<List<String>>> _collectAllEdges(
     final v = parts[1];
 
     if (!commitIds.contains(u) || !commitIds.contains(v)) continue;
-
-    if (!allParents.contains(u)) continue;
-    if (!allParents.contains(v)) continue;
+    // Removed allParents check as it was too restrictive (filtered out tips)
 
     result.add([u, v]);
   }
@@ -525,10 +532,10 @@ Future<GraphResponse> _getGraphUnlocked(String repoPath,
     if (l.trim().isEmpty) continue;
     final parts = l.split('|');
     if (parts.length < 6) continue;
-    final id = parts[0];
+    final id = parts[0].toLowerCase();
     final rawParents = parts[1].trim().isEmpty
         ? <String>[]
-        : parts[1].trim().split(RegExp(r'\s+'));
+        : parts[1].trim().split(RegExp(r'\s+')).map((e) => e.toLowerCase()).toList();
 
     final parents = rawParents;
     final dec = parts[2];

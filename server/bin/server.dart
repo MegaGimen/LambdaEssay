@@ -91,7 +91,7 @@ Future<void> main(List<String> args) async {
       await _killPort(5000);
       print('Starting Heidegger service from $heideggerPath...');
       // 使用 PowerShell 启动 Heidegger.exe，完全隐藏窗口
-      Process process = await _processManager.start(
+      await _processManager.start(
         [
           'powershell',
           '-WindowStyle', 'Hidden',
