@@ -853,81 +853,12 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       return;
     }
 
-    setState(() => loading = true);
-    List<String> projects = [];
-    try {
-      final resp = await http.post(
-        Uri.parse('http://localhost:8080/remote/list'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'token': _token,
-          'repoPath': pathCtrl.text.trim(),
-        }),
-      );
-      if (resp.statusCode != 200) {
-        throw Exception(resp.body);
-      }
-      final body = jsonDecode(resp.body);
-      if (body is List) {
-        projects = body.cast<String>();
-      }
-    } catch (e) {
-      setState(() {
-        loading = false;
-        error = '获取远程列表失败: $e';
-      });
+    // 直接使用当前打开的项目名称，不再让用户选择
+    if (currentProjectName == null || currentProjectName!.isEmpty) {
+      setState(() => error = '当前未打开任何项目，无法拉取');
       return;
     }
-    setState(() => loading = false);
-
-    String? selected = projects.isNotEmpty ? projects.first : null;
-
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: const Text('拉取远程仓库'),
-          content: SizedBox(
-            width: 360,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text('选择要拉取的远程仓库'),
-                const SizedBox(height: 8),
-                projects.isEmpty
-                    ? const Text('未找到任何远程仓库')
-                    : DropdownButton<String>(
-                        isExpanded: true,
-                        value: selected,
-                        items: projects
-                            .map((p) => DropdownMenuItem(
-                                  value: p,
-                                  child: Text(p),
-                                ))
-                            .toList(),
-                        onChanged: (v) {
-                          setState(() => selected = v);
-                        },
-                      ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消'),
-            ),
-            ElevatedButton(
-              onPressed:
-                  selected == null ? null : () => Navigator.pop(context, true),
-              child: const Text('拉取'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (ok != true || selected == null) return;
-    final repoName = selected!;
+    final repoName = currentProjectName!;
 
     setState(() {
       loading = true;
