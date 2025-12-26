@@ -254,13 +254,24 @@ class GraphPainter extends CustomPainter {
       }
     }
 
+    // Collect custom edges for fast lookup to avoid duplicate drawing
+    final customEdgeKeys = <String>{};
+    for (final edge in data.customEdges) {
+      if (edge.length >= 2) {
+        final k1 = '${edge[0].trim().toLowerCase()}|${edge[1].trim().toLowerCase()}';
+        final k2 = '${edge[1].trim().toLowerCase()}|${edge[0].trim().toLowerCase()}';
+        customEdgeKeys.add(k1);
+        customEdgeKeys.add(k2);
+      }
+    }
+
     // Draw Edges - Real (Chains)
     final pairDrawn = <String, int>{};
     for (final entry in data.chains.entries) {
       final bname = entry.key;
       final bcolor = branchColors[bname] ?? const Color(0xFF9E9E9E);
       final ids = entry.value;
-      _drawChain(canvas, ids, bcolor, bname, rowOf, laneOf, byId, pairCount, pairDrawn);
+      _drawChain(canvas, ids, bcolor, bname, rowOf, laneOf, byId, pairCount, pairDrawn, customEdgeKeys);
     }
     
     // Draw Edges - Ghosts (Iterate ghost nodes and connect to parents)
@@ -269,17 +280,6 @@ class GraphPainter extends CustomPainter {
       ..color = Colors.grey
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
-    // Simple dash effect: 5px on, 5px off
-    // Note: DashPathEffect requires dart:ui
-    // We can't easily apply PathEffect to Paint in all Flutter versions without checking compatibility, 
-    // but standard Flutter does support paint.pathEffect.
-    // However, if we want to be safe, we can use simple stroke first.
-    // Let's try adding PathEffect if possible.
-    // Since I imported dart:ui as ui, I can use it.
-    // ghostEdgePaint.pathEffect = ui.DashPathEffect(const [5, 5], 0); 
-    // Wait, ui.DashPathEffect isn't always exposed directly in older Flutter/Dart versions via ui.
-    // It is `ui.PathEffect`? No, `DashPathEffect` is a class in `dart:ui`.
-    // Let's assume it works.
     
     for (final c in ghostNodes) {
        if (c.parents.isEmpty) continue;
@@ -290,6 +290,11 @@ class GraphPainter extends CustomPainter {
        for (final pId in c.parents) {
          if (!rowOf.containsKey(pId) || !laneOf.containsKey(pId)) continue;
          
+         final key = '${c.id.trim()}|${pId.trim()}';
+         if (customEdgeKeys.contains(key)) {
+            continue;
+         }
+
          final rowP = rowOf[pId]!;
          final laneP = laneOf[pId]!;
          
@@ -306,8 +311,10 @@ class GraphPainter extends CustomPainter {
 
       // Primary parent
       final p0Id = c.parents[0];
-      final key0 = '${c.id}|$p0Id';
-      if (!pairDrawn.containsKey(key0)) {
+      final key0 = '${c.id.trim().toLowerCase()}|${p0Id.trim().toLowerCase()}';
+      
+      // Check if this edge is already handled by customEdges
+      if (!pairDrawn.containsKey(key0) && !customEdgeKeys.contains(key0)) {
          final rowP = rowOf[p0Id];
          final laneP = laneOf[p0Id];
          if (rowP != null && laneP != null) {
@@ -340,6 +347,13 @@ class GraphPainter extends CustomPainter {
       // Merge parents
       for (int i = 1; i < c.parents.length; i++) {
         final pId = c.parents[i];
+        final keyMerge = '${c.id.trim().toLowerCase()}|${pId.trim().toLowerCase()}';
+        
+        // Skip if this is a custom edge
+        if (customEdgeKeys.contains(keyMerge)) {
+            continue;
+        }
+
         final rowP = rowOf[pId];
         final laneP = laneOf[pId];
         if (rowP == null || laneP == null) continue;
@@ -348,7 +362,7 @@ class GraphPainter extends CustomPainter {
           ..style = PaintingStyle.stroke
           ..strokeWidth = 2.0
           ..color = const Color(0xFF000000);
-        _drawEdge(canvas, rowC, laneC, rowP, laneP, paintMerge);
+        _drawEdge(canvas, rowC, laneC, rowP, laneP, paintMerge, isMerge: true);
       }
     }
 
@@ -368,7 +382,13 @@ class GraphPainter extends CustomPainter {
           ..style = PaintingStyle.stroke
           ..strokeWidth = 2.0
           ..color = const Color(0xFF000000);
-      _drawEdge(canvas, rowC, laneC, rowP, laneP, paint);
+      
+      // Draw direct line for custom edges
+      final x = laneC * laneWidth + laneWidth / 2;
+      final y = rowC * rowHeight + rowHeight / 2;
+      final px = laneP * laneWidth + laneWidth / 2;
+      final py = rowP * rowHeight + rowHeight / 2;
+      canvas.drawLine(Offset(x, y), Offset(px, py), paint);
     }
 
     final textPainter = TextPainter(textDirection: TextDirection.ltr);
@@ -405,17 +425,19 @@ class GraphPainter extends CustomPainter {
     }
 
     // Border and overlay logic (omitted for brevity or copied)
+    /*
     int maxLane = -1;
     for (final v in laneOf.values) {
       if (v > maxLane) maxLane = v;
     }
     if (maxLane < 0) maxLane = 0;
-    final graphWidth = (maxLane + 1) * laneWidth;
-    final graphHeight = allCommits.length * rowHeight; // Use allCommits length
-    final borderPaint = Paint()
-      ..color = const Color(0xFF000000)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
+    // final graphWidth = (maxLane + 1) * laneWidth;
+    // final graphHeight = allCommits.length * rowHeight; // Use allCommits length
+    // final borderPaint = Paint()
+    //   ..color = const Color(0xFF000000)
+    //   ..style = PaintingStyle.stroke
+    //   ..strokeWidth = 1.5;
+    */
 
     if (working?.changed == true) {
       double gx, gy;
@@ -488,7 +510,8 @@ class GraphPainter extends CustomPainter {
       Map<String, int> laneOf,
       Map<String, CommitNode> byId,
       Map<String, int> pairCount,
-      Map<String, int> pairDrawn) {
+      Map<String, int> pairDrawn,
+      Set<String> customEdgeKeys) {
     
     final paintEdge = Paint()
       ..strokeWidth = 2
@@ -499,6 +522,9 @@ class GraphPainter extends CustomPainter {
         final child = ids[i];
         final parent = ids[i + 1];
         if (!rowOf.containsKey(child) || !rowOf.containsKey(parent)) continue;
+
+        // Skip if this is a custom edge
+        if (customEdgeKeys.contains('${child.trim().toLowerCase()}|${parent.trim().toLowerCase()}')) continue;
 
         final childNodeCheck = byId[child];
         if (childNodeCheck != null &&
@@ -526,14 +552,14 @@ class GraphPainter extends CustomPainter {
     }
   }
 
-  void _drawEdge(Canvas canvas, int rowC, int laneC, int rowP, int laneP, Paint paint, {double spread = 0, bool isDashed = false}) {
+  void _drawEdge(Canvas canvas, int rowC, int laneC, int rowP, int laneP, Paint paint, {double spread = 0, bool isDashed = false, bool isMerge = false}) {
       final x = laneC * laneWidth + laneWidth / 2 + spread;
       final y = rowC * rowHeight + rowHeight / 2;
       final px = laneP * laneWidth + laneWidth / 2 + spread;
       final py = rowP * rowHeight + rowHeight / 2;
 
       final path = Path();
-      if (laneC == laneP) {
+      if (laneC == laneP || isMerge) {
         path.moveTo(x, y);
         path.lineTo(px, py);
       } else {
