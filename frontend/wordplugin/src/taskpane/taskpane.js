@@ -10,7 +10,7 @@ const WS_URL = "ws://localhost:8080/ws";
 
 Office.onReady((info) => {
   if (info.host === Office.HostType.Word) {
-    console.log("Office Add-in ready. Hosting localhost:3891 in iframe.");
+    log("Office Add-in ready. Monitoring connection status.");
 
     // Connect to WebSocket Server
     connectWebSocket();
@@ -23,6 +23,7 @@ Office.onReady((info) => {
 
 function connectWebSocket() {
     log(`Connecting to ${WS_URL}...`);
+    updateConnectionStatus(false, "Connecting...");
     ws = new WebSocket(WS_URL);
 
     ws.onopen = () => {
@@ -40,6 +41,7 @@ function connectWebSocket() {
     ws.onerror = (error) => {
         console.error("WebSocket error:", error);
         log("Connection Error");
+        updateConnectionStatus(false, "Error");
     };
 
     ws.onmessage = async (event) => {
@@ -59,7 +61,21 @@ function connectWebSocket() {
     };
 }
 
-function updateConnectionStatus(connected) {
+function updateConnectionStatus(connected, statusText) {
+    const indicator = document.getElementById('status-indicator');
+    const textSpan = document.getElementById('status-text');
+    
+    if (indicator && textSpan) {
+        if (connected) {
+            indicator.className = 'status-indicator connected';
+            textSpan.textContent = 'Connected';
+        } else {
+            indicator.className = 'status-indicator disconnected';
+            textSpan.textContent = statusText || 'Disconnected';
+        }
+    } else {
+        console.error("DOM elements not found in updateConnectionStatus");
+    }
     console.log(connected ? "API: Connected" : "API: Disconnected");
 }
 
@@ -75,7 +91,7 @@ function errorHandler(error) {
     }
 }
 
-export async function saveDocument(id) {
+async function saveDocument(id) {
   return Word.run(async (context) => {
     context.document.save();
     await context.sync();
@@ -90,7 +106,7 @@ export async function saveDocument(id) {
   }).catch(errorHandler);
 }
 
-export async function replaceDocument(payload, id) {
+async function replaceDocument(payload, id) {
   return Word.run(async (context) => {
     const { content, type, options } = payload;
     
