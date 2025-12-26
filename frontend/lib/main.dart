@@ -2020,43 +2020,75 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                                 border: Border(
                                     right: BorderSide(color: Colors.grey)),
                               ),
-                              child: _GraphView(
-                                data: remoteData!,
-                                repoPath: pathCtrl.text.trim(),
-                                projectName: currentProjectName,
-                                token: _token,
-                                readOnly: true,
-                                primaryBranchName: 'origin/master',
-                                customRowMapping: remoteRowMapping,
-                                totalRows: totalRows,
-                                transformationController: _sharedController,
-                                uiScale: _uiScale,
+                              child: Column(
+                                children: [
+                                  Container(
+                                    width: double.infinity,
+                                    padding: const EdgeInsets.all(8.0),
+                                    color: Colors.grey.shade200,
+                                    child: const Text(
+                                      'Remote Repository (远程)',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(fontWeight: FontWeight.bold),
+                                    ),
+                                  ),
+                                  Expanded(
+                                    child: _GraphView(
+                                      data: remoteData!,
+                                      repoPath: pathCtrl.text.trim(),
+                                      projectName: currentProjectName,
+                                      token: _token,
+                                      readOnly: true,
+                                      primaryBranchName: 'origin/master',
+                                      customRowMapping: remoteRowMapping,
+                                      totalRows: totalRows,
+                                      transformationController: _sharedController,
+                                      uiScale: _uiScale,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ),
                           Expanded(
                             flex: 1,
-                            child: _GraphView(
-                              data: data!,
-                              working:
-                                  (data!.commits.isEmpty && working != null)
-                                      ? WorkingState(
-                                          changed: true, baseId: working!.baseId)
-                                      : working,
-                              repoPath: pathCtrl.text.trim(),
-                              projectName: currentProjectName,
-                              token: _token,
-                              onRefresh: _load,
-                              onUpdate: _onUpdateRepoAction,
-                              onMerge: _performMerge,
-                              onFindIdentical: _findIdentical,
-                              identicalCommitIds: identicalCommitIds,
-                              onLoading: (v) => setState(() => loading = v),
-                              transformationController: _sharedController,
-                              uiScale: _uiScale,
-                              customRowMapping: localRowMapping,
-                              totalRows: totalRows,
-                              primaryBranchName: 'master',
+                            child: Column(
+                              children: [
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.all(8.0),
+                                  color: Colors.grey.shade200,
+                                  child: const Text(
+                                    'Local Repository (本地)',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                                Expanded(
+                                  child: _GraphView(
+                                    data: data!,
+                                    working:
+                                        (data!.commits.isEmpty && working != null)
+                                            ? WorkingState(
+                                                changed: true, baseId: working!.baseId)
+                                            : working,
+                                    repoPath: pathCtrl.text.trim(),
+                                    projectName: currentProjectName,
+                                    token: _token,
+                                    onRefresh: _load,
+                                    onUpdate: _onUpdateRepoAction,
+                                    onMerge: _performMerge,
+                                    onFindIdentical: _findIdentical,
+                                    identicalCommitIds: identicalCommitIds,
+                                    onLoading: (v) => setState(() => loading = v),
+                                    transformationController: _sharedController,
+                                    uiScale: _uiScale,
+                                    customRowMapping: localRowMapping,
+                                    totalRows: totalRows,
+                                    primaryBranchName: 'master',
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ],
