@@ -416,7 +416,6 @@ class GraphPainter extends CustomPainter {
       ..color = const Color(0xFF000000)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
-    canvas.drawRect(Rect.fromLTWH(0, 0, graphWidth, graphHeight), borderPaint);
 
     if (working?.changed == true) {
       double gx, gy;
