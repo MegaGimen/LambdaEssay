@@ -1969,41 +1969,6 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                 ],
               ),
             ),
-          Padding(
-            padding: const EdgeInsets.all(8),
-            child: Row(
-              children: [
-                const SizedBox(width: 8),
-                SizedBox(
-                  width: 120,
-                  child: TextField(
-                    controller: limitCtrl,
-                    decoration: const InputDecoration(labelText: '最近提交数'),
-                    keyboardType: TextInputType.number,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                  onPressed: loading ? null : _load,
-                  child: const Text('加载'),
-                ),
-                const SizedBox(width: 8),
-                OutlinedButton(
-                  onPressed: loading
-                      ? null
-                      : () {
-                          setState(() {
-                            showRemotePreview = !showRemotePreview;
-                          });
-                          if (data != null) {
-                            _load(); // Reload to fetch/clear remote data
-                          }
-                        },
-                  child: Text(showRemotePreview ? '隐藏远程' : '显示远程'),
-                ),
-              ],
-            ),
-          ),
           if (error != null)
             Padding(
               padding: const EdgeInsets.all(8),
