@@ -1358,7 +1358,12 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     }
   }
 
+  bool _isUpdatingRepo = false;
+
   Future<void> _onUpdateRepoAction({bool forcePull = false}) async {
+    if (_isUpdatingRepo) return;
+    _isUpdatingRepo = true;
+    try {
     print("Updating repo...");
     String? name = currentProjectName;
     if (name == null || name.isEmpty) {
@@ -1508,6 +1513,9 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     } catch (e) {
       setState(() => error = e.toString());
     }
+    } finally {
+      _isUpdatingRepo = false;
+    }
   }
 
   Future<void> _performMerge(String targetBranch) async {
@@ -1640,7 +1648,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       setState(() => loading = true);
 
       // Step 5: Auto Update Repo (Sync)
-      await _onUpdateRepoAction(forcePull: false);
+      // await _onUpdateRepoAction(forcePull: false);
 
       // Step 6: Complete Merge
       final resp2 = await http.post(
@@ -1669,7 +1677,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         await _onUpdateRepoAction(forcePull: false);
       }
       // Reload graph
-      await _load();
+      // await _load();
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
