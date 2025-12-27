@@ -150,7 +150,7 @@ Future<void> _precacheSnapshots(String repoName, String repoPath) async {
           await d.delete(recursive: true);
         }
 
-        await Process.run('bin/mingw64/bin/git.exe', ['init', '--bare', '.'],
+        await Process.run('mingw64/bin/git.exe', ['init', '--bare', '.'],
             workingDirectory: targetDir.path);
       }
       return;
@@ -287,7 +287,7 @@ Future<List<Map<String, dynamic>>> _getCommitsFromDir(
   }
 
   final result = await Process.run(
-    'bin/mingw64/bin/git.exe',
+    'mingw64/bin/git.exe',
     [
       'log',
       '--pretty=format:%H|%P|%an|%ad|%s',
@@ -432,7 +432,7 @@ Future<GraphResponse> _getGraphFromGitDir(String gitDir, {int? limit}) async {
     logArgs.add('--max-count=$limit');
   }
 
-  final res = await Process.run('bin/mingw64/bin/git.exe', logArgs, stdoutEncoding: utf8);
+  final res = await Process.run('mingw64/bin/git.exe', logArgs, stdoutEncoding: utf8);
   if (res.exitCode != 0) throw Exception('Git log failed: ${res.stderr}');
 
   final lines = LineSplitter.split(res.stdout as String).toList();
@@ -536,7 +536,7 @@ Future<Map<String, List<String>>> _getBranchChainsFromGitDir(
     if (limit != null && limit > 0) {
       args.add('--max-count=$limit');
     }
-    final res = await Process.run('bin/mingw64/bin/git.exe', args);
+    final res = await Process.run('mingw64/bin/git.exe', args);
     final lines = LineSplitter.split(res.stdout as String).toList();
     final ids = <String>[];
     for (final l in lines) {
@@ -553,7 +553,7 @@ Future<String?> _getCurrentBranchFromGitDir(String gitDir) async {
   // For bare repo, HEAD might point to a branch
   try {
     final res = await Process.run(
-        'bin/mingw64/bin/git.exe', ['--git-dir=$gitDir', 'symbolic-ref', '--short', 'HEAD']);
+        'mingw64/bin/git.exe', ['--git-dir=$gitDir', 'symbolic-ref', '--short', 'HEAD']);
     if (res.exitCode == 0) return (res.stdout as String).trim();
   } catch (_) {}
   return null;

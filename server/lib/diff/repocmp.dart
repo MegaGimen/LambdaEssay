@@ -27,13 +27,13 @@ Future<Map<String, dynamic>> compareGitRepos({
   final tempDir = await Directory.systemTemp.createTemp('git_compare_');
   try {
     Directory.current = tempDir.path;
-    await Process.run('bin/mingw64/bin/git.exe', ['init']);
+    await Process.run('mingw64/bin/git.exe', ['init']);
     
     // 添加远程仓库
-    await Process.run('bin/mingw64/bin/git.exe', ['remote', 'add', 'repoA', repoAPath]);
-    await Process.run('bin/mingw64/bin/git.exe', ['remote', 'add', 'repoB', repoBPath]);
+    await Process.run('mingw64/bin/git.exe', ['remote', 'add', 'repoA', repoAPath]);
+    await Process.run('mingw64/bin/git.exe', ['remote', 'add', 'repoB', repoBPath]);
     
-    await Process.run('bin/mingw64/bin/git.exe', ['fetch', '--all']);
+    await Process.run('mingw64/bin/git.exe', ['fetch', '--all']);
     
     // 获取所有分支
     final branchesA = await _getAllBranches('repoA/');
@@ -87,7 +87,7 @@ Future<Map<String, dynamic>> _compareBranchHistory({
   
   // 1. 找到共同祖先（merge base）
   final mergeBaseResult = await Process.run(
-    'bin/mingw64/bin/git.exe',
+    'mingw64/bin/git.exe',
     ['merge-base', 'repoA/$branchName', 'repoB/$branchName'],
   );
   
@@ -101,37 +101,37 @@ Future<Map<String, dynamic>> _compareBranchHistory({
     
     // 2. 比较从共同祖先到A分支的差异（OURS）
     final diffOurs = await Process.run(
-      'bin/mingw64/bin/git.exe',
+      'mingw64/bin/git.exe',
       ['diff', '--stat', mergeBase, 'repoA/$branchName'],
     );
     
     // 3. 比较从共同祖先到B分支的差异（THEIRS）
     final diffTheirs = await Process.run(
-      'bin/mingw64/bin/git.exe',
+      'mingw64/bin/git.exe',
       ['diff', '--stat', mergeBase, 'repoB/$branchName'],
     );
     
     // 4. 获取两个分支的历史差异
     final historyDiff = await Process.run(
-      'bin/mingw64/bin/git.exe',
+      'mingw64/bin/git.exe',
       ['log', '--graph', '--oneline', '--left-right', '--boundary', 
        'repoA/$branchName...repoB/$branchName'],
     );
     
     // 5. 获取冲突的文件列表（即两个分支都修改的文件）
     final conflictFiles = await Process.run(
-      'bin/mingw64/bin/git.exe',
+      'mingw64/bin/git.exe',
       ['diff', '--name-only', 'repoA/$branchName', 'repoB/$branchName'],
     );
     
     // 6. 获取提交数量和列表
     final commitsOurs = await Process.run(
-      'bin/mingw64/bin/git.exe',
+      'mingw64/bin/git.exe',
       ['rev-list', '$mergeBase..repoA/$branchName'],
     );
     
     final commitsTheirs = await Process.run(
-      'bin/mingw64/bin/git.exe',
+      'mingw64/bin/git.exe',
       ['rev-list', '$mergeBase..repoB/$branchName'],
     );
     
@@ -180,13 +180,13 @@ Future<Map<String, dynamic>> _compareBranchHistory({
 Future<String> _getBranchRelationship(String base, String branchA, String branchB) async {
   // 检查A分支是否包含B分支
   final containsB = await Process.run(
-    'bin/mingw64/bin/git.exe',
+    'mingw64/bin/git.exe',
     ['merge-base', '--is-ancestor', branchB, branchA],
   );
   
   // 检查B分支是否包含A分支
   final containsA = await Process.run(
-    'bin/mingw64/bin/git.exe',
+    'mingw64/bin/git.exe',
     ['merge-base', '--is-ancestor', branchA, branchB],
   );
   
@@ -202,7 +202,7 @@ Future<String> _getBranchRelationship(String base, String branchA, String branch
 /// 获取从base到commit之间修改的文件
 Future<List<String>> _getChangedFiles(String base, String commit) async {
   final result = await Process.run(
-    'bin/mingw64/bin/git.exe',
+    'mingw64/bin/git.exe',
     ['diff', '--name-only', base, commit],
   );
   
@@ -215,7 +215,7 @@ Future<List<String>> _getChangedFiles(String base, String commit) async {
 /// 获取分支的完整统计
 Future<String> _getFullBranchStat(String branch) async {
   final result = await Process.run(
-    'bin/mingw64/bin/git.exe',
+    'mingw64/bin/git.exe',
     ['log', '--oneline', '--stat', '--no-merges', branch],
   );
   
@@ -229,8 +229,8 @@ Future<String> _getFullBranchStat(String branch) async {
 
 /// 获取两个独立分支的日志
 Future<String> _getSeparateLogs(String branchA, String branchB) async {
-  final logA = await Process.run('bin/mingw64/bin/git.exe', ['log', '--oneline', '-5', branchA]);
-  final logB = await Process.run('bin/mingw64/bin/git.exe', ['log', '--oneline', '-5', branchB]);
+  final logA = await Process.run('mingw64/bin/git.exe', ['log', '--oneline', '-5', branchA]);
+  final logB = await Process.run('mingw64/bin/git.exe', ['log', '--oneline', '-5', branchB]);
   
   return '仓库A的 $branchA:\n${logA.stdout.toString().trim()}\n\n仓库B的 $branchB:\n${logB.stdout.toString().trim()}';
 }
@@ -241,7 +241,7 @@ Future<Map<String, Map<String, String>>> _getAllBranches(String remotePrefix) as
   
   try {
     final output = await Process.run(
-      'bin/mingw64/bin/git.exe',
+      'mingw64/bin/git.exe',
       ['for-each-ref', '--format=%(refname:short) %(objectname) %(contents:subject)', 
        'refs/remotes/$remotePrefix'],
     );
@@ -265,13 +265,13 @@ Future<Map<String, Map<String, String>>> _getAllBranches(String remotePrefix) as
     }
   } catch (e) {
     // 回退到branch -r
-    final output = await Process.run('bin/mingw64/bin/git.exe', ['branch', '-r']);
+    final output = await Process.run('mingw64/bin/git.exe', ['branch', '-r']);
     for (final line in output.stdout.toString().split('\n')) {
       final trimmed = line.trim();
       if (trimmed.isEmpty || trimmed.contains('->') || !trimmed.startsWith(remotePrefix)) continue;
       
       final branchName = trimmed.substring(remotePrefix.length);
-      final commitResult = await Process.run('bin/mingw64/bin/git.exe', ['rev-parse', trimmed]);
+      final commitResult = await Process.run('mingw64/bin/git.exe', ['rev-parse', trimmed]);
       if (commitResult.exitCode == 0) {
         branches[branchName] = {
           'commit': commitResult.stdout.toString().trim(),
