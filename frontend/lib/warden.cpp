@@ -8,8 +8,6 @@
 #include <algorithm>
 #include <io.h>
 #include <fcntl.h>
-#include <winsock2.h>
-#include <ws2tcpip.h>
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -159,6 +157,38 @@ public:
         }
     }
     
+    // Kill process by name
+    void KillProcessByName(const std::string& processName) {
+        if (verboseMode) {
+            std::cout << "[DEBUG] Looking for process to kill: " << processName << std::endl;
+        }
+        
+        HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if (hSnapshot == INVALID_HANDLE_VALUE) {
+            if (verboseMode) {
+                std::cerr << "[ERROR] Failed to create snapshot: " << GetLastError() << std::endl;
+            }
+            return;
+        }
+        
+        PROCESSENTRY32 pe;
+        pe.dwSize = sizeof(PROCESSENTRY32);
+        
+        if (Process32First(hSnapshot, &pe)) {
+            do {
+                // Simple string comparison
+                if (std::string(pe.szExeFile) == processName) {
+                    if (verboseMode) {
+                        std::cout << "[DEBUG] Found " << processName << " with PID: " << pe.th32ProcessID << std::endl;
+                    }
+                    KillProcessByPid(pe.th32ProcessID);
+                }
+            } while (Process32Next(hSnapshot, &pe));
+        }
+        
+        CloseHandle(hSnapshot);
+    }
+
     // Kill process using specified port
     void KillProcessByPort(int port) {
         DWORD processId = FindProcessIdByPort(port);
@@ -303,6 +333,7 @@ public:
             if (!CheckMonitorPort()) {
                 std::cout << "Monitor port " << monitorPort << " is unreachable, starting cleanup..." << std::endl;
                 KillProcessByPort(terminalPort);
+                KillProcessByName("COM.exe");
                 monitoring = false;
                 break;
             } else {
