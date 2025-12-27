@@ -73,6 +73,7 @@ class _BootstrapAppState extends State<BootstrapApp> {
       // 假设位于当前目录下的 bin/server.exe
       final serverPath = 'bin/server.exe';
       final wardenPath = 'bin/warden.exe';
+      final CoMPath = 'bin/COM.exe';
       if (await File(serverPath).exists()) {
         await Process.start(serverPath, [], mode: ProcessStartMode.detached);
       } else {
@@ -83,9 +84,20 @@ class _BootstrapAppState extends State<BootstrapApp> {
       }
 
       if (await File(wardenPath).exists()) {
-        await Process.start(wardenPath, ['--monitor_port', '9527', '--terminal_port', '8080'], mode: ProcessStartMode.detached);
+        await Process.start(
+            wardenPath, ['--monitor_port', '9527', '--terminal_port', '8080'],
+            mode: ProcessStartMode.detached);
       } else {
         print('Warning: $wardenPath not found.');
+      }
+
+
+            if (await File(CoMPath).exists()) {
+        await Process.start(
+            CoMPath, [],
+            mode: ProcessStartMode.detached);
+      } else {
+        print('Warning: $CoMPath not found.');
       }
 
       // 轮询健康检查接口
@@ -240,44 +252,47 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     _connectWebSocket();
   }
 
-
   void _connectWebSocket() {
     if (!mounted) return;
     try {
-      _channel = WebSocketChannel.connect(Uri.parse('ws://localhost:8080/ws/client'));
+      _channel =
+          WebSocketChannel.connect(Uri.parse('ws://localhost:8080/ws/client'));
       _channel!.stream.listen((message) {
         if (!mounted) return;
         try {
           final data = jsonDecode(message);
           if (data['type'] == 'loading_status') {
-             setState(() {
-               loading = data['loading'] == true;
-             });
+            setState(() {
+              loading = data['loading'] == true;
+            });
           } else if (data['type'] == 'repo_updated') {
-             print("Received repo update notification");
-             if (currentProjectName != null) {
-                _onUpdateRepoAction().whenComplete(() {
-                   if (mounted) {
-                      setState(() {
-                        loading = false;
-                      });
-                   }
-                });
-             }
+            print("Received repo update notification");
+            if (currentProjectName != null) {
+              _onUpdateRepoAction().whenComplete(() {
+                if (mounted) {
+                  setState(() {
+                    loading = false;
+                  });
+                }
+              });
+            }
           }
         } catch (e) {
           print("WebSocket message error: $e");
         }
       }, onError: (e) {
         print("WebSocket connection error: $e");
-        if (mounted) Future.delayed(const Duration(seconds: 5), _connectWebSocket);
+        if (mounted)
+          Future.delayed(const Duration(seconds: 5), _connectWebSocket);
       }, onDone: () {
         print("WebSocket connection closed");
-        if (mounted) Future.delayed(const Duration(seconds: 5), _connectWebSocket);
+        if (mounted)
+          Future.delayed(const Duration(seconds: 5), _connectWebSocket);
       });
     } catch (e) {
       print("WebSocket connection failed: $e");
-      if (mounted) Future.delayed(const Duration(seconds: 5), _connectWebSocket);
+      if (mounted)
+        Future.delayed(const Duration(seconds: 5), _connectWebSocket);
     }
     _sidebarFlashCtrl = AnimationController(
       vsync: this,
