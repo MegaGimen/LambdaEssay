@@ -61,13 +61,30 @@ def normalize_runs(runs):
     # Filter out empty runs that might have been created or existed
     return [r for r in normalized if r['text']]
 
+def has_table_content(table_content):
+    """检查表格是否有实际内容"""
+    for row in table_content:
+        for cell in row:
+            for para in cell:
+                if para['runs']:  # 如果段落有内容
+                    return True
+    return False
+
 def extract_content(docx_path_or_stream):
     doc = Document(docx_path_or_stream)
     content = []
-    for para in doc.paragraphs:
-        content.append(get_para_style(para))
     
-    # Also checking tables
+    # 处理普通段落
+    for para in doc.paragraphs:
+        para_style = get_para_style(para)
+        # 清除空的 runs
+        para_style['runs'] = [run for run in para_style['runs'] if run.get('text', '').strip()]
+        
+        # 只有当段落有内容时才添加
+        if para_style['runs']:
+            content.append(para_style)
+    
+    # 处理表格
     for table in doc.tables:
         table_content = []
         for row in table.rows:
@@ -75,10 +92,24 @@ def extract_content(docx_path_or_stream):
             for cell in row.cells:
                 cell_content = []
                 for para in cell.paragraphs:
-                    cell_content.append(get_para_style(para))
+                    para_style = get_para_style(para)
+                    # 清除空的 runs
+                    para_style['runs'] = [run for run in para_style['runs'] if run.get('text', '').strip()]
+                    
+                    # 只有当单元格段落有内容时才添加
+                    if para_style['runs']:
+                        cell_content.append(para_style)
+                
+                # 如果单元格没有任何内容，添加一个空的 runs 列表以保持表格结构
+                if not cell_content:
+                    cell_content.append({'alignment': 'LEFT (0)', 'style': 'Normal', 'runs': []})
+                
                 row_content.append(cell_content)
             table_content.append(row_content)
-        content.append({'type': 'table', 'data': table_content})
+        
+        # 只有当表格有内容时才添加
+        if has_table_content(table_content):
+            content.append({'type': 'table', 'data': table_content})
         
     return content
 
