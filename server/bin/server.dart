@@ -67,7 +67,7 @@ Future<void> _killPort(int port) async {
 final ProcessManager _processManager = const LocalProcessManager();
 Future<void> main(List<String> args) async {
   final setGlobal = await Process.run(
-      'bin/mingw64/bin/git.exe', ['config', '--global', 'core.autocrlf', 'false']);
+      'mingw64/bin/git.exe', ['config', '--global', 'core.autocrlf', 'false']);
   if (setGlobal.exitCode == 0) {
     print('✓ 已设置全局 core.autocrlf = false');
   } else {
