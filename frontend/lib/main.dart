@@ -20,12 +20,31 @@ void main() {
 }
 
 Future<void> _notifyStartup() async {
-  try {
-    print("Notify warden");
-    await http.get(Uri.parse('http://localhost:3040/'));
-  } catch (e) {
-    print('Failed to notify startup: $e');
+  int retry = 0;
+  const maxRetry = 8964; 
+  while (retry < maxRetry) {
+    try {
+      print("Notify warden (attempt ${retry + 1})");
+      final resp = await http.get(Uri.parse('http://localhost:3040/'));
+      if (resp.statusCode == 200) {
+        print('Notify warden success: ${resp.statusCode} ${resp.body}');
+              final resp2 = await http.get(Uri.parse('http://localhost:3040/'));
+      if (resp2.statusCode == 200) {
+        print('Second Notify warden success: ${resp2.statusCode} ${resp2.body}');
+        return;
+      }
+      print('Notify warden response: ${resp.statusCode}, retrying...');
+        return;
+      }
+
+
+    } catch (e) {
+      print('Notify warden error: $e, retrying...');
+    }
+    retry++;
+    await Future.delayed(const Duration(seconds: 1));
   }
+  print('Failed to notify startup after $maxRetry attempts');
 }
 
 Future<void> _exposeAlivePort() async {
@@ -82,7 +101,6 @@ class _BootstrapAppState extends State<BootstrapApp> {
         // 我们先假设当前工作目录是 frontend
         print('Warning: $serverPath not found. Trying to connect anyway...');
       }
-
       if (await File(wardenPath).exists()) {
         await Process.start(
             wardenPath, ['--monitor_port', '9527', '--terminal_port', '8080'],
@@ -90,7 +108,6 @@ class _BootstrapAppState extends State<BootstrapApp> {
       } else {
         print('Warning: $wardenPath not found.');
       }
-
 
             if (await File(CoMPath).exists()) {
         await Process.start(
