@@ -18,6 +18,15 @@ void main() {
   runApp(const BootstrapApp());
 }
 
+Future<void> _notifyStartup() async {
+  try {
+    print("Notify warden");
+    await http.get(Uri.parse('http://localhost:3040/'));
+  } catch (e) {
+    print('Failed to notify startup: $e');
+  }
+}
+
 Future<void> _exposeAlivePort() async {
   try {
     // 监听端口仅证明前端存活，不处理实际业务
@@ -62,13 +71,20 @@ class _BootstrapAppState extends State<BootstrapApp> {
       // 尝试启动 server.exe
       // 假设位于当前目录下的 bin/server.exe
       final serverPath = 'bin/server.exe';
+      final wardenPath = 'bin/warden.exe';
       if (await File(serverPath).exists()) {
-        await Process.start(serverPath, [], mode: ProcessStartMode.normal);
+        await Process.start(serverPath, [], mode: ProcessStartMode.detached);
       } else {
         // 如果找不到文件，可能已经启动或者路径不对，尝试直接连接
         // 也可以尝试查找绝对路径，但根据指示 "current folder frontend/bin/server.exe"
         // 我们先假设当前工作目录是 frontend
         print('Warning: $serverPath not found. Trying to connect anyway...');
+      }
+
+      if (await File(wardenPath).exists()) {
+        await Process.start(wardenPath, ['--monitor_port', '9527', '--terminal_port', '8080'], mode: ProcessStartMode.detached);
+      } else {
+        print('Warning: $wardenPath not found.');
       }
 
       // 轮询健康检查接口
@@ -79,9 +95,9 @@ class _BootstrapAppState extends State<BootstrapApp> {
       while (!ready) {
         try {
           setState(() {
-             _statusMessage = '正在连接服务器... (尝试 ${retryCount + 1})';
+            _statusMessage = '正在连接服务器... (尝试 ${retryCount + 1})';
           });
-          
+
           final response = await http.get(Uri.parse(healthUrl));
           if (response.statusCode == 200) {
             final body = jsonDecode(response.body);
@@ -103,6 +119,8 @@ class _BootstrapAppState extends State<BootstrapApp> {
         setState(() {
           _serverReady = true;
         });
+        // Server 准备就绪，发送启动通知
+        _notifyStartup();
       }
     } catch (e) {
       if (mounted) {
@@ -191,6 +209,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     verifyCodeCtrl.dispose();
     super.dispose();
   }
+
   bool loading = false;
   String? error;
   String? currentProjectName;
@@ -221,7 +240,6 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   }
 
   // void _onScaleChanged() { ... } // Removed
-
 
   Future<void> _checkLogin() async {
     final prefs = await SharedPreferences.getInstance();
@@ -683,26 +701,36 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           ),
           OutlinedButton(
             onPressed: () async {
-              if (currentProjectName == null || _username == null || _token == null) return;
-              final ok = await Navigator.push(context, MaterialPageRoute(builder: (_) => PullPreviewPage(
-                repoName: currentProjectName!,
-                username: _username!,
-                token: _token!,
-                type: 'fork',
-              )));
+              if (currentProjectName == null ||
+                  _username == null ||
+                  _token == null) return;
+              final ok = await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => PullPreviewPage(
+                            repoName: currentProjectName!,
+                            username: _username!,
+                            token: _token!,
+                            type: 'fork',
+                          )));
               if (ok == true && ctx.mounted) Navigator.pop(ctx, 'fork');
             },
             child: const Text('分叉 (Fork)'),
           ),
           ElevatedButton(
             onPressed: () async {
-              if (currentProjectName == null || _username == null || _token == null) return;
-              final ok = await Navigator.push(context, MaterialPageRoute(builder: (_) => PullPreviewPage(
-                repoName: currentProjectName!,
-                username: _username!,
-                token: _token!,
-                type: 'rebase',
-              )));
+              if (currentProjectName == null ||
+                  _username == null ||
+                  _token == null) return;
+              final ok = await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => PullPreviewPage(
+                            repoName: currentProjectName!,
+                            username: _username!,
+                            token: _token!,
+                            type: 'rebase',
+                          )));
               if (ok == true && ctx.mounted) Navigator.pop(ctx, 'rebase');
             },
             child: const Text('在远程提交后附着 (Rebase)'),
@@ -711,33 +739,43 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
               onPressed: () async {
-                 if (currentProjectName == null || _username == null || _token == null) return;
-                 final ok = await Navigator.push(context, MaterialPageRoute(builder: (_) => PullPreviewPage(
-                    repoName: currentProjectName!,
-                    username: _username!,
-                    token: _token!,
-                    type: 'force',
-                )));
+                if (currentProjectName == null ||
+                    _username == null ||
+                    _token == null) return;
+                final ok = await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => PullPreviewPage(
+                              repoName: currentProjectName!,
+                              username: _username!,
+                              token: _token!,
+                              type: 'force',
+                            )));
                 if (ok == true && ctx.mounted) Navigator.pop(ctx, 'force');
               },
               child: const Text('强制覆盖 (Force Overwrite)'),
             ),
-            const SizedBox(height: 16),
-            TextButton.icon(
-              icon: const Icon(Icons.compare_arrows),
-              label: const Text('预览冲突差异 (Preview Differences)'),
-              onPressed: () async {
-                if (currentProjectName == null || _username == null || _token == null) return;
-                // Use 'force' preview type which shows side-by-side comparison
-                // This is effectively what "preview conflict" means (mine vs theirs)
-                await Navigator.push(context, MaterialPageRoute(builder: (_) => PullPreviewPage(
-                  repoName: currentProjectName!,
-                  username: _username!,
-                  token: _token!,
-                  type: 'force', 
-                )));
-              },
-            ),
+          const SizedBox(height: 16),
+          TextButton.icon(
+            icon: const Icon(Icons.compare_arrows),
+            label: const Text('预览冲突差异 (Preview Differences)'),
+            onPressed: () async {
+              if (currentProjectName == null ||
+                  _username == null ||
+                  _token == null) return;
+              // Use 'force' preview type which shows side-by-side comparison
+              // This is effectively what "preview conflict" means (mine vs theirs)
+              await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => PullPreviewPage(
+                            repoName: currentProjectName!,
+                            username: _username!,
+                            token: _token!,
+                            type: 'force',
+                          )));
+            },
+          ),
         ],
       ),
     );
@@ -910,11 +948,13 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                         icon: const Icon(Icons.insert_drive_file),
                         tooltip: '选择文件',
                         onPressed: () async {
-                          FilePickerResult? result = await FilePicker.platform.pickFiles(
+                          FilePickerResult? result =
+                              await FilePicker.platform.pickFiles(
                             type: FileType.custom,
                             allowedExtensions: ['docx'],
                           );
-                          if (result != null && result.files.single.path != null) {
+                          if (result != null &&
+                              result.files.single.path != null) {
                             docxCtrl.text = result.files.single.path!;
                           }
                         },
@@ -1038,8 +1078,6 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     }
   }
 
-
-
   Future<void> _onUpdateRepo() async {
     final name = currentProjectName;
     if (name == null || name.isEmpty) return;
@@ -1120,7 +1158,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       Uri.parse('http://localhost:8080/remote_graph'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
-        'repoPath': repoPath, 
+        'repoPath': repoPath,
         'limit': limit,
         'remoteNames': [], // Empty list requests all remotes
       }),
@@ -1198,7 +1236,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         remoteData = rd;
         loading = false;
       });
-      
+
       if (rd != null) {
         _calculateRowMappings();
       }
@@ -1212,24 +1250,24 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
   void _calculateRowMappings() {
     if (data == null || remoteData == null) return;
-    
+
     final localIds = data!.commits.map((c) => c.id).toSet();
     final remoteIds = remoteData!.commits.map((c) => c.id).toSet();
-    
+
     final allCommits = <String, CommitNode>{};
     for (final c in data!.commits) allCommits[c.id] = c;
     for (final c in remoteData!.commits) allCommits[c.id] = c;
-    
+
     final sorted = allCommits.values.toList();
     sorted.sort((a, b) {
       final d = b.date.compareTo(a.date);
       if (d != 0) return d;
       return b.id.compareTo(a.id);
     });
-    
+
     final localMap = <String, int>{};
     final remoteMap = <String, int>{};
-    
+
     for (int i = 0; i < sorted.length; i++) {
       final c = sorted[i];
       if (localIds.contains(c.id)) {
@@ -1239,7 +1277,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         remoteMap[c.id] = i;
       }
     }
-    
+
     setState(() {
       localRowMapping = localMap;
       remoteRowMapping = remoteMap;
@@ -1279,11 +1317,13 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                       icon: const Icon(Icons.insert_drive_file),
                       tooltip: '选择文件',
                       onPressed: () async {
-                        FilePickerResult? result = await FilePicker.platform.pickFiles(
+                        FilePickerResult? result =
+                            await FilePicker.platform.pickFiles(
                           type: FileType.custom,
                           allowedExtensions: ['docx'],
                         );
-                        if (result != null && result.files.single.path != null) {
+                        if (result != null &&
+                            result.files.single.path != null) {
                           docxCtrl.text = result.files.single.path!;
                         }
                       },
@@ -1402,10 +1442,10 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     );
     if (ok != true || selected == null) return;
     final name = selected!;
-    
+
     // 立即显示加载遮罩
     setState(() => loading = true);
-    
+
     try {
       final resp = await _postJson('http://localhost:8080/track/open', {
         'name': name,
@@ -1470,176 +1510,178 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     if (_isUpdatingRepo) return;
     _isUpdatingRepo = true;
     try {
-    print("Updating repo...");
-    String? name = currentProjectName;
-    if (name == null || name.isEmpty) {
-      setState(() => loading = true);
-      final projects = await _fetchProjectList();
-      setState(() => loading = false);
+      print("Updating repo...");
+      String? name = currentProjectName;
+      if (name == null || name.isEmpty) {
+        setState(() => loading = true);
+        final projects = await _fetchProjectList();
+        setState(() => loading = false);
 
-      String? selected = projects.isNotEmpty ? projects.first : null;
+        String? selected = projects.isNotEmpty ? projects.first : null;
 
-      final ok = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => StatefulBuilder(
-          builder: (context, setState) => AlertDialog(
-            title: const Text('更新git仓库'),
-            content: SizedBox(
-              width: 360,
-              child: projects.isEmpty
-                  ? const Text('没有找到任何项目')
-                  : DropdownButton<String>(
-                      isExpanded: true,
-                      value: selected,
-                      items: projects
-                          .map((p) => DropdownMenuItem(
-                                value: p,
-                                child: Text(p),
-                              ))
-                          .toList(),
-                      onChanged: (v) {
-                        setState(() => selected = v);
-                      },
-                    ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('取消'),
-              ),
-              ElevatedButton(
-                onPressed: selected == null
-                    ? null
-                    : () => Navigator.pop(context, true),
-                child: const Text('确定'),
-              ),
-            ],
-          ),
-        ),
-      );
-      if (ok == true && selected != null) {
-        name = selected;
-        setState(() => currentProjectName = name);
-      }
-    }
-    if (name == null || name.isEmpty) return;
-
-    // Auto pull logic when opening/updating repo to ensure freshness
-    // Changed to silent fetch only as per user request
-    if (forcePull) {
-      try {
-        // Only fetch if we have username/token
-        if (_username != null &&
-            _token != null &&
-            _username!.isNotEmpty &&
-            _token!.isNotEmpty) {
-          print('Silent fetching for $name...');
-          try {
-            // Check status performs git fetch internally
-            await _postJson('http://localhost:8080/check_pull_status', {
-              'repoName': name,
-              'username': _username,
-              'token': _token,
-            });
-            // Intentionally ignore the result - just fetch silently
-          } catch (e) {
-            print('Silent fetch failed: $e');
-          }
-        }
-      } catch (e) {
-        // Ignore outer errors
-      }
-    }
-
-    try {
-      final resp = await _postJson('http://localhost:8080/track/update', {
-        'name': name,
-      });
-      final needDocx = resp['needDocx'] == true;
-      if (needDocx) {
-        String? docx = docxPathCtrl.text.trim();
-        bool askUser = docx.isEmpty;
-
-        if (askUser) {
-          final docxCtrl = TextEditingController();
-          final ok = await showDialog<bool>(
-            context: context,
-            builder: (_) => StatefulBuilder(
-              builder: (context, setState) => AlertDialog(
-                title: const Text('选择docx文件路径'),
-                content: SizedBox(
-                  width: 500,
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: docxCtrl,
-                          decoration: const InputDecoration(
-                            labelText: 'docx文件路径或解包文件夹',
-                          ),
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.insert_drive_file),
-                        tooltip: '选择文件',
-                        onPressed: () async {
-                          FilePickerResult? result = await FilePicker.platform.pickFiles(
-                            type: FileType.custom,
-                            allowedExtensions: ['docx'],
-                          );
-                          if (result != null && result.files.single.path != null) {
-                            docxCtrl.text = result.files.single.path!;
-                          }
+        final ok = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => StatefulBuilder(
+            builder: (context, setState) => AlertDialog(
+              title: const Text('更新git仓库'),
+              content: SizedBox(
+                width: 360,
+                child: projects.isEmpty
+                    ? const Text('没有找到任何项目')
+                    : DropdownButton<String>(
+                        isExpanded: true,
+                        value: selected,
+                        items: projects
+                            .map((p) => DropdownMenuItem(
+                                  value: p,
+                                  child: Text(p),
+                                ))
+                            .toList(),
+                        onChanged: (v) {
+                          setState(() => selected = v);
                         },
                       ),
-                    ],
-                  ),
-                ),
-                actions: [
+              ),
+              actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context, false),
                   child: const Text('取消'),
                 ),
                 ElevatedButton(
-                  onPressed: () => Navigator.pop(context, true),
+                  onPressed: selected == null
+                      ? null
+                      : () => Navigator.pop(context, true),
                   child: const Text('确定'),
                 ),
               ],
             ),
           ),
         );
-          if (ok == true) {
-            docx = docxCtrl.text.trim();
-          } else {
-            docx = null;
-          }
+        if (ok == true && selected != null) {
+          name = selected;
+          setState(() => currentProjectName = name);
         }
+      }
+      if (name == null || name.isEmpty) return;
 
-        if (docx != null && docx.isNotEmpty) {
-          final up = await _postJson('http://localhost:8080/track/update', {
-            'name': name,
-            'newDocxPath': docx,
-          });
+      // Auto pull logic when opening/updating repo to ensure freshness
+      // Changed to silent fetch only as per user request
+      if (forcePull) {
+        try {
+          // Only fetch if we have username/token
+          if (_username != null &&
+              _token != null &&
+              _username!.isNotEmpty &&
+              _token!.isNotEmpty) {
+            print('Silent fetching for $name...');
+            try {
+              // Check status performs git fetch internally
+              await _postJson('http://localhost:8080/check_pull_status', {
+                'repoName': name,
+                'username': _username,
+                'token': _token,
+              });
+              // Intentionally ignore the result - just fetch silently
+            } catch (e) {
+              print('Silent fetch failed: $e');
+            }
+          }
+        } catch (e) {
+          // Ignore outer errors
+        }
+      }
+
+      try {
+        final resp = await _postJson('http://localhost:8080/track/update', {
+          'name': name,
+        });
+        final needDocx = resp['needDocx'] == true;
+        if (needDocx) {
+          String? docx = docxPathCtrl.text.trim();
+          bool askUser = docx.isEmpty;
+
+          if (askUser) {
+            final docxCtrl = TextEditingController();
+            final ok = await showDialog<bool>(
+              context: context,
+              builder: (_) => StatefulBuilder(
+                builder: (context, setState) => AlertDialog(
+                  title: const Text('选择docx文件路径'),
+                  content: SizedBox(
+                    width: 500,
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: docxCtrl,
+                            decoration: const InputDecoration(
+                              labelText: 'docx文件路径或解包文件夹',
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.insert_drive_file),
+                          tooltip: '选择文件',
+                          onPressed: () async {
+                            FilePickerResult? result =
+                                await FilePicker.platform.pickFiles(
+                              type: FileType.custom,
+                              allowedExtensions: ['docx'],
+                            );
+                            if (result != null &&
+                                result.files.single.path != null) {
+                              docxCtrl.text = result.files.single.path!;
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('取消'),
+                    ),
+                    ElevatedButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      child: const Text('确定'),
+                    ),
+                  ],
+                ),
+              ),
+            );
+            if (ok == true) {
+              docx = docxCtrl.text.trim();
+            } else {
+              docx = null;
+            }
+          }
+
+          if (docx != null && docx.isNotEmpty) {
+            final up = await _postJson('http://localhost:8080/track/update', {
+              'name': name,
+              'newDocxPath': docx,
+            });
+            setState(() {
+              docxPathCtrl.text = docx!;
+              working = WorkingState(
+                changed: up['workingChanged'] == true,
+                baseId: up['head'] as String?,
+              );
+            });
+          }
+        } else {
           setState(() {
-            docxPathCtrl.text = docx!;
             working = WorkingState(
-              changed: up['workingChanged'] == true,
-              baseId: up['head'] as String?,
+              changed: resp['workingChanged'] == true,
+              baseId: resp['head'] as String?,
             );
           });
         }
-      } else {
-        setState(() {
-          working = WorkingState(
-            changed: resp['workingChanged'] == true,
-            baseId: resp['head'] as String?,
-          );
-        });
+        await _load();
+      } catch (e) {
+        setState(() => error = e.toString());
       }
-      await _load();
-    } catch (e) {
-      setState(() => error = e.toString());
-    }
     } finally {
       _isUpdatingRepo = false;
     }
@@ -1844,7 +1886,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                   icon: const Icon(Icons.insert_drive_file),
                   tooltip: '选择文件',
                   onPressed: () async {
-                    FilePickerResult? result = await FilePicker.platform.pickFiles(
+                    FilePickerResult? result =
+                        await FilePicker.platform.pickFiles(
                       type: FileType.custom,
                       allowedExtensions: ['docx'],
                     );
@@ -1857,18 +1900,18 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             ),
           ),
           actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('保存'),
-          ),
-        ],
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('保存'),
+            ),
+          ],
+        ),
       ),
-    ),
-  );
+    );
 
     if (ok == true) {
       final newPath = docxCtrl.text.trim();
@@ -1901,347 +1944,357 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     return Stack(
       children: [
         Scaffold(
-      appBar: AppBar(title: const Text('Git Graph 可视化')),
-      body: Column(
-        children: [
-          MediaQuery(
-            data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(_uiScale)),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (_username == null)
-            Padding(
-              padding: const EdgeInsets.all(8),
-              child: _isRegisterMode
-                  ? Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(children: [
-                          Expanded(
-                              child: TextField(
-                                  controller: emailCtrl,
-                                  decoration:
-                                      const InputDecoration(labelText: '邮箱'))),
-                          const SizedBox(width: 8),
-                          ElevatedButton(
-                              onPressed: loading ? null : _sendCode,
-                              child: const Text('发送验证码')),
-                          const SizedBox(width: 8),
-                          Expanded(
-                              child: TextField(
-                                  controller: verifyCodeCtrl,
-                                  decoration:
-                                      const InputDecoration(labelText: '验证码'))),
-                        ]),
-                        const SizedBox(height: 8),
-                        Row(children: [
-                          Expanded(
-                              child: TextField(
-                                  controller: userCtrl,
-                                  decoration:
-                                      const InputDecoration(labelText: '用户名'))),
-                          const SizedBox(width: 8),
-                          Expanded(
-                              child: TextField(
-                                  controller: passCtrl,
-                                  obscureText: true,
-                                  decoration:
-                                      const InputDecoration(labelText: '密码'))),
-                          const SizedBox(width: 8),
-                          ElevatedButton(
-                              onPressed: loading ? null : _doRegister,
-                              child: const Text('注册')),
-                          const SizedBox(width: 8),
-                          TextButton(
-                              onPressed: () =>
-                                  setState(() => _isRegisterMode = false),
-                              child: const Text('返回登录')),
-                        ]),
-                      ],
-                    )
-                  : Row(
-                      children: [
-                        Expanded(
-                            child: TextField(
-                                controller: userCtrl,
-                                decoration: const InputDecoration(
-                                    labelText: '用户名/邮箱'))),
-                        const SizedBox(width: 8),
-                        Expanded(
-                            child: TextField(
-                                controller: passCtrl,
-                                obscureText: true,
-                                decoration:
-                                    const InputDecoration(labelText: '密码'))),
-                        const SizedBox(width: 8),
-                        ElevatedButton(
-                            onPressed: loading ? null : _doLogin,
-                            child: const Text('登录')),
-                        const SizedBox(width: 8),
-                        TextButton(
-                            onPressed: () =>
-                                setState(() => _isRegisterMode = true),
-                            child: const Text('去注册')),
-                      ],
-                    ),
-            )
-          else
-            Padding(
-              padding: const EdgeInsets.all(8),
-              child: Row(children: [
-                Text('当前用户: $_username'),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                    onPressed: _showShareDialog, child: const Text('分享仓库')),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                    onPressed: loading ? null : _doLogout,
-                    child: const Text('登出'))
-              ]),
-            ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Row(
-              children: [
-                const Text('整体缩放: '),
-                SizedBox(
-                  width: 200,
-                  child: Slider(
-                    value: _uiScale.clamp(0.5, 2.0),
-                    min: 0.5,
-                    max: 2.0,
-                    onChanged: (value) {
-                      setState(() {
-                        _uiScale = value;
-                      });
-                    },
-                  ),
-                ),
-                Text(_uiScale.toStringAsFixed(1)),
-                const SizedBox(width: 16),
-                IconButton(
-                  onPressed: () {
-                    _sharedController.value = Matrix4.identity();
-                  },
-                  tooltip: '重置视图',
-                  icon: const Icon(Icons.center_focus_strong),
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(8),
-            child: Row(
-              children: [
-                ElevatedButton(
-                  onPressed: loading ? null : _onCreateTrackProject,
-                  child: const Text('新建追踪项目'),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                  onPressed: loading ? null : _onOpenTrackProject,
-                  child: const Text('打开追踪项目'),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                  onPressed: loading ? null : _onUpdateRepoAction,
-                  child: const Text('更新git仓库'),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                  onPressed: loading ? null : _onPush,
-                  child: const Text('推送'),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                  onPressed: loading ? null : _onPull,
-                  child: const Text('拉取'),
-                ),
-                const SizedBox(width: 8),
-                OutlinedButton.icon(
-                  onPressed: loading
-                      ? null
-                      : () {
-                          setState(() {
-                            showRemotePreview = !showRemotePreview;
-                          });
-                          if (showRemotePreview) {
-                            _load();
-                          } else {
-                            setState(() {
-                              remoteData = null;
-                              localRowMapping = null;
-                              remoteRowMapping = null;
-                              totalRows = null;
-                            });
-                          }
-                        },
-                  icon: Icon(showRemotePreview
-                      ? Icons.visibility_off
-                      : Icons.visibility),
-                  label: Text(showRemotePreview ? '隐藏远程' : '显示远程'),
-                ),
-                const SizedBox(width: 8),
-                if (currentProjectName != null)
-                  Text(
-                    ' 当前项目: $currentProjectName ',
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          if (currentProjectName != null)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              child: Row(
-                children: [
-                  const Text('追踪文档: '),
-                  Expanded(
-                    child: TextField(
-                      controller: docxPathCtrl,
-                      readOnly: true,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        contentPadding: EdgeInsets.symmetric(horizontal: 8),
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: _onChangeDocxPath,
-                    icon: const Icon(Icons.edit),
-                    tooltip: '修改Docx路径',
-                  ),
-                ],
-              ),
-            ),
-          if (error != null)
-            Padding(
-              padding: const EdgeInsets.all(8),
-              child: Text(error!, style: const TextStyle(color: Colors.red)),
-            ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: data == null
-                ? const Center(child: Text('输入路径并点击加载'))
-                : (showRemotePreview && remoteData != null)
-                    ? Row(
-                        children: [
-                          Expanded(
-                            flex: 1,
-                            child: Container(
-                              decoration: const BoxDecoration(
-                                border: Border(
-                                    right: BorderSide(color: Colors.grey)),
-                              ),
-                              child: Column(
+          appBar: AppBar(title: const Text('Git Graph 可视化')),
+          body: Column(
+            children: [
+              MediaQuery(
+                data: MediaQuery.of(context)
+                    .copyWith(textScaler: TextScaler.linear(_uiScale)),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_username == null)
+                      Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: _isRegisterMode
+                            ? Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Container(
-                                    width: double.infinity,
-                                    padding: const EdgeInsets.all(8.0),
-                                    color: Colors.grey.shade200,
-                                    child: const Text(
-                                      'Remote Repository (远程)',
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(fontWeight: FontWeight.bold),
-                                    ),
-                                  ),
+                                  Row(children: [
+                                    Expanded(
+                                        child: TextField(
+                                            controller: emailCtrl,
+                                            decoration: const InputDecoration(
+                                                labelText: '邮箱'))),
+                                    const SizedBox(width: 8),
+                                    ElevatedButton(
+                                        onPressed: loading ? null : _sendCode,
+                                        child: const Text('发送验证码')),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                        child: TextField(
+                                            controller: verifyCodeCtrl,
+                                            decoration: const InputDecoration(
+                                                labelText: '验证码'))),
+                                  ]),
+                                  const SizedBox(height: 8),
+                                  Row(children: [
+                                    Expanded(
+                                        child: TextField(
+                                            controller: userCtrl,
+                                            decoration: const InputDecoration(
+                                                labelText: '用户名'))),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                        child: TextField(
+                                            controller: passCtrl,
+                                            obscureText: true,
+                                            decoration: const InputDecoration(
+                                                labelText: '密码'))),
+                                    const SizedBox(width: 8),
+                                    ElevatedButton(
+                                        onPressed: loading ? null : _doRegister,
+                                        child: const Text('注册')),
+                                    const SizedBox(width: 8),
+                                    TextButton(
+                                        onPressed: () => setState(
+                                            () => _isRegisterMode = false),
+                                        child: const Text('返回登录')),
+                                  ]),
+                                ],
+                              )
+                            : Row(
+                                children: [
                                   Expanded(
-                                    child: _GraphView(
-                                      data: remoteData!,
-                                      repoPath: pathCtrl.text.trim(),
-                                      projectName: currentProjectName,
-                                      token: _token,
-                                      readOnly: true,
-                                      primaryBranchName: 'origin/master',
-                                      customRowMapping: remoteRowMapping,
-                                      totalRows: totalRows,
-                                      transformationController: _sharedController,
-                                      uiScale: _uiScale,
-                                    ),
-                                  ),
+                                      child: TextField(
+                                          controller: userCtrl,
+                                          decoration: const InputDecoration(
+                                              labelText: '用户名/邮箱'))),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                      child: TextField(
+                                          controller: passCtrl,
+                                          obscureText: true,
+                                          decoration: const InputDecoration(
+                                              labelText: '密码'))),
+                                  const SizedBox(width: 8),
+                                  ElevatedButton(
+                                      onPressed: loading ? null : _doLogin,
+                                      child: const Text('登录')),
+                                  const SizedBox(width: 8),
+                                  TextButton(
+                                      onPressed: () => setState(
+                                          () => _isRegisterMode = true),
+                                      child: const Text('去注册')),
                                 ],
                               ),
+                      )
+                    else
+                      Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: Row(children: [
+                          Text('当前用户: $_username'),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                              onPressed: _showShareDialog,
+                              child: const Text('分享仓库')),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                              onPressed: loading ? null : _doLogout,
+                              child: const Text('登出'))
+                        ]),
+                      ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: Row(
+                        children: [
+                          const Text('整体缩放: '),
+                          SizedBox(
+                            width: 200,
+                            child: Slider(
+                              value: _uiScale.clamp(0.5, 2.0),
+                              min: 0.5,
+                              max: 2.0,
+                              onChanged: (value) {
+                                setState(() {
+                                  _uiScale = value;
+                                });
+                              },
                             ),
                           ),
-                          Expanded(
-                            flex: 1,
-                            child: Column(
-                              children: [
-                                Container(
-                                  width: double.infinity,
-                                  padding: const EdgeInsets.all(8.0),
-                                  color: Colors.grey.shade200,
-                                  child: const Text(
-                                    'Local Repository (本地)',
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(fontWeight: FontWeight.bold),
-                                  ),
-                                ),
-                                Expanded(
-                                  child: _GraphView(
-                                    data: data!,
-                                    working:
-                                        (data!.commits.isEmpty && working != null)
-                                            ? WorkingState(
-                                                changed: true, baseId: working!.baseId)
-                                            : working,
-                                    repoPath: pathCtrl.text.trim(),
-                                    projectName: currentProjectName,
-                                    token: _token,
-                                    onRefresh: _load,
-                                    onUpdate: _onUpdateRepoAction,
-                                    onMerge: _performMerge,
-                                    onFindIdentical: _findIdentical,
-                                    identicalCommitIds: identicalCommitIds,
-                                    onLoading: (v) => setState(() => loading = v),
-                                    transformationController: _sharedController,
-                                    uiScale: _uiScale,
-                                    customRowMapping: localRowMapping,
-                                    totalRows: totalRows,
-                                    primaryBranchName: 'master',
-                                  ),
-                                ),
-                              ],
-                            ),
+                          Text(_uiScale.toStringAsFixed(1)),
+                          const SizedBox(width: 16),
+                          IconButton(
+                            onPressed: () {
+                              _sharedController.value = Matrix4.identity();
+                            },
+                            tooltip: '重置视图',
+                            icon: const Icon(Icons.center_focus_strong),
                           ),
                         ],
-                      )
-                    : _GraphView(
-                        data: data!,
-                        working: (data!.commits.isEmpty && working != null)
-                            ? WorkingState(
-                                changed: true, baseId: working!.baseId)
-                            : working,
-                        repoPath: pathCtrl.text.trim(),
-                        projectName: currentProjectName,
-                        token: _token,
-                        onRefresh: _load,
-                        onUpdate: _onUpdateRepoAction,
-                        onMerge: _performMerge,
-                        onFindIdentical: _findIdentical,
-                        identicalCommitIds: identicalCommitIds,
-                        onLoading: (v) => setState(() => loading = v),
-                        transformationController: _sharedController,
-                        uiScale: _uiScale,
-                        primaryBranchName: 'master',
                       ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.all(8),
+                      child: Row(
+                        children: [
+                          ElevatedButton(
+                            onPressed: loading ? null : _onCreateTrackProject,
+                            child: const Text('新建追踪项目'),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            onPressed: loading ? null : _onOpenTrackProject,
+                            child: const Text('打开追踪项目'),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            onPressed: loading ? null : _onUpdateRepoAction,
+                            child: const Text('更新git仓库'),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            onPressed: loading ? null : _onPush,
+                            child: const Text('推送'),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            onPressed: loading ? null : _onPull,
+                            child: const Text('拉取'),
+                          ),
+                          const SizedBox(width: 8),
+                          OutlinedButton.icon(
+                            onPressed: loading
+                                ? null
+                                : () {
+                                    setState(() {
+                                      showRemotePreview = !showRemotePreview;
+                                    });
+                                    if (showRemotePreview) {
+                                      _load();
+                                    } else {
+                                      setState(() {
+                                        remoteData = null;
+                                        localRowMapping = null;
+                                        remoteRowMapping = null;
+                                        totalRows = null;
+                                      });
+                                    }
+                                  },
+                            icon: Icon(showRemotePreview
+                                ? Icons.visibility_off
+                                : Icons.visibility),
+                            label: Text(showRemotePreview ? '隐藏远程' : '显示远程'),
+                          ),
+                          const SizedBox(width: 8),
+                          if (currentProjectName != null)
+                            Text(
+                              ' 当前项目: $currentProjectName ',
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    if (currentProjectName != null)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        child: Row(
+                          children: [
+                            const Text('追踪文档: '),
+                            Expanded(
+                              child: TextField(
+                                controller: docxPathCtrl,
+                                readOnly: true,
+                                decoration: const InputDecoration(
+                                  border: OutlineInputBorder(),
+                                  contentPadding:
+                                      EdgeInsets.symmetric(horizontal: 8),
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              onPressed: _onChangeDocxPath,
+                              icon: const Icon(Icons.edit),
+                              tooltip: '修改Docx路径',
+                            ),
+                          ],
+                        ),
+                      ),
+                    if (error != null)
+                      Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: Text(error!,
+                            style: const TextStyle(color: Colors.red)),
+                      ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: data == null
+                    ? const Center(child: Text('输入路径并点击加载'))
+                    : (showRemotePreview && remoteData != null)
+                        ? Row(
+                            children: [
+                              Expanded(
+                                flex: 1,
+                                child: Container(
+                                  decoration: const BoxDecoration(
+                                    border: Border(
+                                        right: BorderSide(color: Colors.grey)),
+                                  ),
+                                  child: Column(
+                                    children: [
+                                      Container(
+                                        width: double.infinity,
+                                        padding: const EdgeInsets.all(8.0),
+                                        color: Colors.grey.shade200,
+                                        child: const Text(
+                                          'Remote Repository (远程)',
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                              fontWeight: FontWeight.bold),
+                                        ),
+                                      ),
+                                      Expanded(
+                                        child: _GraphView(
+                                          data: remoteData!,
+                                          repoPath: pathCtrl.text.trim(),
+                                          projectName: currentProjectName,
+                                          token: _token,
+                                          readOnly: true,
+                                          primaryBranchName: 'origin/master',
+                                          customRowMapping: remoteRowMapping,
+                                          totalRows: totalRows,
+                                          transformationController:
+                                              _sharedController,
+                                          uiScale: _uiScale,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              Expanded(
+                                flex: 1,
+                                child: Column(
+                                  children: [
+                                    Container(
+                                      width: double.infinity,
+                                      padding: const EdgeInsets.all(8.0),
+                                      color: Colors.grey.shade200,
+                                      child: const Text(
+                                        'Local Repository (本地)',
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                            fontWeight: FontWeight.bold),
+                                      ),
+                                    ),
+                                    Expanded(
+                                      child: _GraphView(
+                                        data: data!,
+                                        working: (data!.commits.isEmpty &&
+                                                working != null)
+                                            ? WorkingState(
+                                                changed: true,
+                                                baseId: working!.baseId)
+                                            : working,
+                                        repoPath: pathCtrl.text.trim(),
+                                        projectName: currentProjectName,
+                                        token: _token,
+                                        onRefresh: _load,
+                                        onUpdate: _onUpdateRepoAction,
+                                        onMerge: _performMerge,
+                                        onFindIdentical: _findIdentical,
+                                        identicalCommitIds: identicalCommitIds,
+                                        onLoading: (v) =>
+                                            setState(() => loading = v),
+                                        transformationController:
+                                            _sharedController,
+                                        uiScale: _uiScale,
+                                        customRowMapping: localRowMapping,
+                                        totalRows: totalRows,
+                                        primaryBranchName: 'master',
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          )
+                        : _GraphView(
+                            data: data!,
+                            working: (data!.commits.isEmpty && working != null)
+                                ? WorkingState(
+                                    changed: true, baseId: working!.baseId)
+                                : working,
+                            repoPath: pathCtrl.text.trim(),
+                            projectName: currentProjectName,
+                            token: _token,
+                            onRefresh: _load,
+                            onUpdate: _onUpdateRepoAction,
+                            onMerge: _performMerge,
+                            onFindIdentical: _findIdentical,
+                            identicalCommitIds: identicalCommitIds,
+                            onLoading: (v) => setState(() => loading = v),
+                            transformationController: _sharedController,
+                            uiScale: _uiScale,
+                            primaryBranchName: 'master',
+                          ),
+              ),
+            ],
           ),
-        ],
-      ),
-    ),
-    if (loading)
-      const Opacity(
-        opacity: 0.3,
-        child: ModalBarrier(dismissible: false, color: Colors.black),
-      ),
-    if (loading)
-      const Center(child: CircularProgressIndicator()),
-    ],
+        ),
+        if (loading)
+          const Opacity(
+            opacity: 0.3,
+            child: ModalBarrier(dismissible: false, color: Colors.black),
+          ),
+        if (loading) const Center(child: CircularProgressIndicator()),
+      ],
     );
   }
 }
@@ -2288,7 +2341,8 @@ class _GraphView extends StatefulWidget {
   State<_GraphView> createState() => _GraphViewState();
 }
 
-class _GraphViewState extends State<_GraphView> with SingleTickerProviderStateMixin {
+class _GraphViewState extends State<_GraphView>
+    with SingleTickerProviderStateMixin {
   late TransformationController _tc;
   late AnimationController _graphFlashCtrl;
   CommitNode? _hovered;
@@ -2356,11 +2410,11 @@ class _GraphViewState extends State<_GraphView> with SingleTickerProviderStateMi
   Future<void> _onCompare() async {
     if (_selectedNodes.length != 2) return;
     if (_comparing) return;
-    
+
     // Notify parent to lock UI
     widget.onLoading?.call(true);
     setState(() => _comparing = true);
-    
+
     try {
       final nodes = _selectedNodes.toList();
       final commits = widget.data.commits;
@@ -2395,10 +2449,10 @@ class _GraphViewState extends State<_GraphView> with SingleTickerProviderStateMi
       }
       final pdfBytes = resp.bodyBytes;
       if (!mounted) return;
-      
+
       // Unlock UI before navigation
       widget.onLoading?.call(false);
-      
+
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -2426,7 +2480,7 @@ class _GraphViewState extends State<_GraphView> with SingleTickerProviderStateMi
   Future<void> _onCommit() async {
     final authorCtrl = TextEditingController();
     final msgCtrl = TextEditingController();
-    
+
     // Dialog state
     bool isPreviewing = false;
 
@@ -2529,7 +2583,7 @@ class _GraphViewState extends State<_GraphView> with SingleTickerProviderStateMi
       ).showSnackBar(const SnackBar(content: Text('请填写完整信息')));
       return;
     }
-    
+
     widget.onLoading?.call(true);
     try {
       final resp = await http.post(
@@ -2593,13 +2647,16 @@ class _GraphViewState extends State<_GraphView> with SingleTickerProviderStateMi
     if (ok != true) return;
     final name = nameCtrl.text.trim();
     if (name.isEmpty) return;
-    
+
     widget.onLoading?.call(true);
     try {
       final resp = await http.post(
         Uri.parse('http://localhost:8080/branch/create'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'repoPath': widget.repoPath, 'branchName': Branch.encodeName(name)}),
+        body: jsonEncode({
+          'repoPath': widget.repoPath,
+          'branchName': Branch.encodeName(name)
+        }),
       );
       if (resp.statusCode != 200) throw Exception(resp.body);
       if (widget.onUpdate != null) {
@@ -2767,10 +2824,10 @@ class _GraphViewState extends State<_GraphView> with SingleTickerProviderStateMi
 
   Future<void> _previewVersion(CommitNode node) async {
     if (_comparing) return;
-    
+
     widget.onLoading?.call(true);
     setState(() => _comparing = true);
-    
+
     try {
       final resp = await http.post(
         Uri.parse('http://localhost:8080/preview'),
@@ -2786,9 +2843,9 @@ class _GraphViewState extends State<_GraphView> with SingleTickerProviderStateMi
       }
       final bytes = resp.bodyBytes;
       if (!mounted) return;
-      
+
       widget.onLoading?.call(false);
-      
+
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -3177,9 +3234,9 @@ class _GraphViewState extends State<_GraphView> with SingleTickerProviderStateMi
                     ),
                   ),
                 ),
+              ),
+            ),
           ),
-          ),
-        ),
         ),
         Positioned(
           top: 16,
@@ -3264,177 +3321,180 @@ class _GraphViewState extends State<_GraphView> with SingleTickerProviderStateMi
             alignment: Alignment.topRight,
             child: Material(
               elevation: 2,
-            child: Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFDFDFD),
-                borderRadius: BorderRadius.circular(6),
-                boxShadow: const [
-                  BoxShadow(color: Color(0x22000000), blurRadius: 4),
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      ElevatedButton.icon(
-                        onPressed: _resetView,
-                        icon: const Icon(Icons.home),
-                        label: const Text('返回主视角'),
-                      ),
-                      const SizedBox(width: 8),
-                      ElevatedButton.icon(
-                        onPressed: () {
-                          if (widget.projectName == null || widget.repoPath.isEmpty) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('请先打开一个项目')),
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFDFDFD),
+                  borderRadius: BorderRadius.circular(6),
+                  boxShadow: const [
+                    BoxShadow(color: Color(0x22000000), blurRadius: 4),
+                  ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ElevatedButton.icon(
+                          onPressed: _resetView,
+                          icon: const Icon(Icons.home),
+                          label: const Text('返回主视角'),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton.icon(
+                          onPressed: () {
+                            if (widget.projectName == null ||
+                                widget.repoPath.isEmpty) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('请先打开一个项目')),
+                              );
+                              return;
+                            }
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                  builder: (_) => BackupPage(
+                                        projectName: widget.projectName!,
+                                        repoPath: widget.repoPath,
+                                        token: widget.token ??
+                                            'No token there bro.',
+                                      )),
                             );
-                            return;
-                          }
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                                builder: (_) => BackupPage(
-                                      projectName: widget.projectName!,
-                                      repoPath: widget.repoPath,
-                                      token: widget.token ?? 'No token there bro.',
-                                    )),
-                          );
-                        },
-                        icon: const Icon(Icons.history),
-                        label: const Text('历史备份'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    '间距调整',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 6),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text('节点间距'),
-                      const SizedBox(width: 8),
-                      SizedBox(
-                        width: 180,
-                        child: Slider(
-                          min: 40,
-                          max: 160,
-                          divisions: 24,
-                          value: _rowHeight,
-                          label: _rowHeight.round().toString(),
-                          onChanged: (v) {
-                            setState(() {
-                              _rowHeight = v;
-                              _canvasSize = _computeCanvasSize(widget.data);
-                            });
                           },
+                          icon: const Icon(Icons.history),
+                          label: const Text('历史备份'),
                         ),
-                      ),
-                      Text(_rowHeight.round().toString()),
-                    ],
-                  ),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text('分支间距'),
-                      const SizedBox(width: 8),
-                      SizedBox(
-                        width: 180,
-                        child: Slider(
-                          min: 60,
-                          max: 200,
-                          divisions: 28,
-                          value: _laneWidth,
-                          label: _laneWidth.round().toString(),
-                          onChanged: (v) {
-                            setState(() {
-                              _laneWidth = v;
-                              _canvasSize = _computeCanvasSize(widget.data);
-                            });
-                          },
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      '间距调整',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text('节点间距'),
+                        const SizedBox(width: 8),
+                        SizedBox(
+                          width: 180,
+                          child: Slider(
+                            min: 40,
+                            max: 160,
+                            divisions: 24,
+                            value: _rowHeight,
+                            label: _rowHeight.round().toString(),
+                            onChanged: (v) {
+                              setState(() {
+                                _rowHeight = v;
+                                _canvasSize = _computeCanvasSize(widget.data);
+                              });
+                            },
+                          ),
                         ),
-                      ),
-                      Text(_laneWidth.round().toString()),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    '分支图例',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 6),
-                  for (final b in widget.data.branches)
-                    InkWell(
-                      onDoubleTap: () => _doSwitchBranch(b.name),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 4),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Container(
-                              width: 12,
-                              height: 12,
-                              decoration: BoxDecoration(
-                                color: _branchColors![b.name]!,
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              Branch.decodeName(b.name),
-                              style: TextStyle(
-                                fontWeight: b.name == widget.data.currentBranch
-                                    ? FontWeight.bold
-                                    : FontWeight.normal,
-                                color: b.name == widget.data.currentBranch
-                                    ? Colors.blue[900]
-                                    : Colors.black,
-                              ),
-                            ),
-                            if (b.name == widget.data.currentBranch)
-                              const Padding(
-                                padding: EdgeInsets.only(left: 4),
-                                child: Icon(
-                                  Icons.check_circle,
-                                  size: 14,
-                                  color: Colors.green,
+                        Text(_rowHeight.round().toString()),
+                      ],
+                    ),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text('分支间距'),
+                        const SizedBox(width: 8),
+                        SizedBox(
+                          width: 180,
+                          child: Slider(
+                            min: 60,
+                            max: 200,
+                            divisions: 28,
+                            value: _laneWidth,
+                            label: _laneWidth.round().toString(),
+                            onChanged: (v) {
+                              setState(() {
+                                _laneWidth = v;
+                                _canvasSize = _computeCanvasSize(widget.data);
+                              });
+                            },
+                          ),
+                        ),
+                        Text(_laneWidth.round().toString()),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      '分支图例',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 6),
+                    for (final b in widget.data.branches)
+                      InkWell(
+                        onDoubleTap: () => _doSwitchBranch(b.name),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                width: 12,
+                                height: 12,
+                                decoration: BoxDecoration(
+                                  color: _branchColors![b.name]!,
+                                  shape: BoxShape.circle,
                                 ),
                               ),
+                              const SizedBox(width: 6),
+                              Text(
+                                Branch.decodeName(b.name),
+                                style: TextStyle(
+                                  fontWeight:
+                                      b.name == widget.data.currentBranch
+                                          ? FontWeight.bold
+                                          : FontWeight.normal,
+                                  color: b.name == widget.data.currentBranch
+                                      ? Colors.blue[900]
+                                      : Colors.black,
+                                ),
+                              ),
+                              if (b.name == widget.data.currentBranch)
+                                const Padding(
+                                  padding: EdgeInsets.only(left: 4),
+                                  child: Icon(
+                                    Icons.check_circle,
+                                    size: 14,
+                                    color: Colors.green,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    if (_hasUnknownEdges())
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 2),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: const [
+                            SizedBox(
+                              width: 12,
+                              height: 12,
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  color: Color(0xFF9E9E9E),
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                            ),
+                            SizedBox(width: 6),
+                            Text('其它'),
                           ],
                         ),
                       ),
-                    ),
-                  if (_hasUnknownEdges())
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 2),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: const [
-                          SizedBox(
-                            width: 12,
-                            height: 12,
-                            child: DecoratedBox(
-                              decoration: BoxDecoration(
-                                color: Color(0xFF9E9E9E),
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                          ),
-                          SizedBox(width: 6),
-                          Text('其它'),
-                        ],
-                      ),
-                    ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
           ),
         ),
         if (_hovered != null && _hoverPos != null)
@@ -3853,7 +3913,6 @@ class _GraphViewState extends State<_GraphView> with SingleTickerProviderStateMi
 
     // 2. & 3. Explicit merge edges check and First Parent fix check removed
 
-
     if (bestInfo != null && best <= 8.0) return bestInfo;
 
     // 4. Check custom edges
@@ -3865,7 +3924,8 @@ class _GraphViewState extends State<_GraphView> with SingleTickerProviderStateMi
       final laneC = laneOf[child];
       final rowP = rowOf[parent];
       final laneP = laneOf[parent];
-      if (rowC == null || laneC == null || rowP == null || laneP == null) continue;
+      if (rowC == null || laneC == null || rowP == null || laneP == null)
+        continue;
 
       final x = laneC * laneWidth + laneWidth / 2;
       final y = rowC * rowHeight + rowHeight / 2;
@@ -3905,27 +3965,3 @@ class _GraphViewState extends State<_GraphView> with SingleTickerProviderStateMi
     return math.sqrt(dx * dx + dy * dy);
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
