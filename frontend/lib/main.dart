@@ -14,7 +14,24 @@ import 'pull_preview.dart';
 import 'graph_view.dart';
 
 void main() {
+  _exposeAlivePort();
   runApp(const BootstrapApp());
+}
+
+Future<void> _exposeAlivePort() async {
+  try {
+    // 监听端口仅证明前端存活，不处理实际业务
+    final server = await HttpServer.bind(InternetAddress.anyIPv4, 9527);
+    print('Alive check port listening on 9527');
+    server.listen((HttpRequest request) {
+      request.response
+        ..statusCode = 200
+        ..write('Frontend is alive')
+        ..close();
+    });
+  } catch (e) {
+    print('Failed to expose alive port: $e');
+  }
 }
 
 class BootstrapApp extends StatefulWidget {
