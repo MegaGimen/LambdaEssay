@@ -230,7 +230,7 @@ Future<List<String>> _runGit(List<String> args, String repoPath) async {
   ];
   try {
     final res = await Process.run(
-      'bin/mingw64/bin/git.exe',
+      'mingw64/bin/git.exe',
       fullArgs,
       stdoutEncoding: utf8,
       stderrEncoding: utf8,
@@ -248,7 +248,7 @@ Future<List<String>> _runGit(List<String> args, String repoPath) async {
   } on FormatException {
     print("Git format error!!!");
     final res = await Process.run(
-      'bin/mingw64/bin/git.exe',
+      'mingw64/bin/git.exe',
       fullArgs,
       stdoutEncoding: systemEncoding,
       stderrEncoding: systemEncoding,
@@ -349,7 +349,7 @@ Future<List<List<String>>> _collectAllEdges(
   Future<void> fetch(CommitNode c) async {
     try {
       final res = await Process.run(
-        'bin/mingw64/bin/git.exe',
+        'mingw64/bin/git.exe',
         ['show', '${c.id}:edges'],
         workingDirectory: repoPath,
         stdoutEncoding: utf8,
