@@ -1,5 +1,7 @@
 import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:io';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:http/http.dart' as http;
@@ -12,7 +14,120 @@ import 'pull_preview.dart';
 import 'graph_view.dart';
 
 void main() {
-  runApp(const GitGraphApp());
+  runApp(const BootstrapApp());
+}
+
+class BootstrapApp extends StatefulWidget {
+  const BootstrapApp({super.key});
+
+  @override
+  State<BootstrapApp> createState() => _BootstrapAppState();
+}
+
+class _BootstrapAppState extends State<BootstrapApp> {
+  bool _serverReady = false;
+  String _statusMessage = '正在初始化...';
+  bool _hasError = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _startServer();
+  }
+
+  Future<void> _startServer() async {
+    try {
+      setState(() {
+        _statusMessage = '正在启动服务器...';
+        _hasError = false;
+      });
+
+      // 尝试启动 server.exe
+      // 假设位于当前目录下的 bin/server.exe
+      final serverPath = 'bin/server.exe';
+      if (await File(serverPath).exists()) {
+        await Process.start(serverPath, [], mode: ProcessStartMode.normal);
+      } else {
+        // 如果找不到文件，可能已经启动或者路径不对，尝试直接连接
+        // 也可以尝试查找绝对路径，但根据指示 "current folder frontend/bin/server.exe"
+        // 我们先假设当前工作目录是 frontend
+        print('Warning: $serverPath not found. Trying to connect anyway...');
+      }
+
+      // 轮询健康检查接口
+      const healthUrl = 'http://localhost:8080/health';
+      bool ready = false;
+      int retryCount = 0;
+
+      while (!ready) {
+        try {
+          setState(() {
+             _statusMessage = '正在连接服务器... (尝试 ${retryCount + 1})';
+          });
+          
+          final response = await http.get(Uri.parse(healthUrl));
+          if (response.statusCode == 200) {
+            final body = jsonDecode(response.body);
+            if (body['status'] == 'ok') {
+              ready = true;
+            }
+          }
+        } catch (e) {
+          // 连接失败，等待重试
+        }
+
+        if (!ready) {
+          retryCount++;
+          await Future.delayed(const Duration(seconds: 1));
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _serverReady = true;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _statusMessage = '启动失败: $e';
+          _hasError = true;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_serverReady) {
+      return const GitGraphApp();
+    }
+
+    return MaterialApp(
+      title: 'Git Graph Launcher',
+      theme: ThemeData.light(),
+      home: Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (!_hasError) const CircularProgressIndicator(),
+              const SizedBox(height: 20),
+              Text(_statusMessage),
+              if (_hasError)
+                Padding(
+                  padding: const EdgeInsets.only(top: 20),
+                  child: ElevatedButton(
+                    onPressed: _startServer,
+                    child: const Text('重试'),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class GitGraphApp extends StatelessWidget {
