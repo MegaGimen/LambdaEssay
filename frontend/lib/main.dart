@@ -170,7 +170,14 @@ class _BootstrapAppState extends State<BootstrapApp> {
 
     return MaterialApp(
       title: 'LambdaEssay Launcher',
-      theme: ThemeData.light(),
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF000A3F)),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Color(0xFF000A3F),
+          foregroundColor: Colors.white,
+        ),
+        useMaterial3: true,
+      ),
       home: Scaffold(
         body: Center(
           child: Column(
