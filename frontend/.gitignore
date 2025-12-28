@@ -45,3 +45,6 @@ app.*.map.json
 /android/app/release
 
 /bin/mingw64
+
+
+/bin/_internal
