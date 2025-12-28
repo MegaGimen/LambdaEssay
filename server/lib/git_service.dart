@@ -119,9 +119,46 @@ Future<void> _writeExternalDocx(String repoPath, String sourcePath) async {
 
   if (docxPath == null) return;
 
+  bool diskWriteSuccess = false;
+  Object? diskError;
+
+  // 1. Try disk write first
+  print('Updating external docx via disk write: $docxPath');
+  try {
+    if (FileSystemEntity.isDirectorySync(docxPath)) {
+      if (FileSystemEntity.isDirectorySync(sourcePath)) {
+        await _copyDir(sourcePath, docxPath);
+      } else {
+        // Unzip source file to target dir
+        if (Directory(docxPath).existsSync()) {
+          Directory(docxPath).deleteSync(recursive: true);
+        }
+        Directory(docxPath).createSync();
+        await _unzipDocx(sourcePath, docxPath);
+      }
+    } else {
+      if (FileSystemEntity.isDirectorySync(sourcePath)) {
+        // Zip source dir to target file
+        await _zipDir(sourcePath, docxPath);
+      } else {
+        // Safer copy: read bytes and write bytes to avoid 183
+        // File(sourcePath).copySync(docxPath);
+        final bytes = File(sourcePath).readAsBytesSync();
+        File(docxPath).writeAsBytesSync(bytes, flush: true);
+      }
+    }
+    diskWriteSuccess = true;
+  } catch (e) {
+    print('Disk write failed: $e');
+    diskError = e;
+  }
+
+  if (diskWriteSuccess) return;
+
+  // 2. If disk write failed, try plugin if source is a file
   bool handled = false;
-  // Try plugin first if source is a file (plugin expects file/base64)
   if (pluginSender != null && File(sourcePath).existsSync()) {
+    print('Attempting update via plugin due to disk write failure...');
     try {
       final bytes = await File(sourcePath).readAsBytes();
       final base64Content = base64Encode(bytes);
@@ -147,35 +184,9 @@ Future<void> _writeExternalDocx(String repoPath, String sourcePath) async {
   }
 
   if (!handled) {
-    print('Updating external docx via disk write: $docxPath');
-    try {
-      if (FileSystemEntity.isDirectorySync(docxPath)) {
-        if (FileSystemEntity.isDirectorySync(sourcePath)) {
-          await _copyDir(sourcePath, docxPath);
-        } else {
-          // Unzip source file to target dir
-          if (Directory(docxPath).existsSync()) {
-            Directory(docxPath).deleteSync(recursive: true);
-          }
-          Directory(docxPath).createSync();
-          await _unzipDocx(sourcePath, docxPath);
-        }
-      } else {
-        if (FileSystemEntity.isDirectorySync(sourcePath)) {
-          // Zip source dir to target file
-          await _zipDir(sourcePath, docxPath);
-        } else {
-          // Safer copy: read bytes and write bytes to avoid 183
-          // File(sourcePath).copySync(docxPath);
-          final bytes = File(sourcePath).readAsBytesSync();
-          File(docxPath).writeAsBytesSync(bytes, flush: true);
-        }
-      }
-    } catch (e) {
-      print('Disk write failed: $e');
-      // If it was a PathExistsException (183), maybe we can't overwrite?
-      // But writeAsBytesSync should truncate and write.
-      rethrow;
+    if (diskError != null) {
+      // If plugin couldn't handle it, rethrow the disk error
+      throw diskError;
     }
   }
 }
