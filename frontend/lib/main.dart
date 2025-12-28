@@ -576,7 +576,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('分享仓库'),
+        title: const Text('分享追踪项目'),
         content: SizedBox(
           width: 400,
           child: Column(
@@ -1601,7 +1601,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           context: context,
           builder: (ctx) => StatefulBuilder(
             builder: (context, setState) => AlertDialog(
-              title: const Text('更新git仓库'),
+              title: const Text('如果文档没同步就点我'),
               content: SizedBox(
                 width: 360,
                 child: projects.isEmpty
@@ -2168,17 +2168,17 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                           const SizedBox(width: 8),
                           ElevatedButton(
                             onPressed: loading ? null : _onUpdateRepoAction,
-                            child: const Text('更新git仓库'),
+                            child: const Text('如果文档没同步就点我'),
                           ),
                           const SizedBox(width: 8),
                           ElevatedButton(
                             onPressed: loading ? null : _onPush,
-                            child: const Text('推送'),
+                            child: const Text('推送本地追踪项目到远程'),
                           ),
                           const SizedBox(width: 8),
                           ElevatedButton(
                             onPressed: loading ? null : _onPull,
-                            child: const Text('拉取'),
+                            child: const Text('从远程拉取追踪项目到本地'),
                           ),
                           const SizedBox(width: 8),
                           OutlinedButton.icon(
@@ -2222,7 +2222,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                             horizontal: 8, vertical: 4),
                         child: Row(
                           children: [
-                            const Text('追踪文档: '),
+                            const Text('追踪文档的路径: '),
                             Expanded(
                               child: TextField(
                                 controller: docxPathCtrl,
@@ -2271,7 +2271,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                                         padding: const EdgeInsets.all(8.0),
                                         color: Colors.grey.shade200,
                                         child: const Text(
-                                          'Remote Repository (远程)',
+                                          '远程文档跟踪',
                                           textAlign: TextAlign.center,
                                           style: TextStyle(
                                               fontWeight: FontWeight.bold),
@@ -2305,7 +2305,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                                       padding: const EdgeInsets.all(8.0),
                                       color: Colors.grey.shade200,
                                       child: const Text(
-                                        'Local Repository (本地)',
+                                        '本地文档跟踪',
                                         textAlign: TextAlign.center,
                                         style: TextStyle(
                                             fontWeight: FontWeight.bold),
@@ -3381,7 +3381,7 @@ class _GraphViewState extends State<_GraphView>
                               OutlinedButton.icon(
                                 onPressed: widget.onFindIdentical,
                                 icon: const Icon(Icons.find_in_page),
-                                label: const Text('查找相同版本'),
+                                label: const Text('查找与当前本地文档相同的版本'),
                               ),
                             ],
                           ),
