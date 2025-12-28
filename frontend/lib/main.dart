@@ -169,7 +169,7 @@ class _BootstrapAppState extends State<BootstrapApp> {
     }
 
     return MaterialApp(
-      title: 'Git Graph Launcher',
+      title: 'LambdaEssay Launcher',
       theme: ThemeData.light(),
       home: Scaffold(
         body: Center(
@@ -200,7 +200,7 @@ class GitGraphApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Git Graph',
+      title: 'LambdaEssay',
       theme: ThemeData.light(),
       home: const GraphPage(),
     );
@@ -2022,7 +2022,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     return Stack(
       children: [
         Scaffold(
-          appBar: AppBar(title: const Text('Git Graph 可视化')),
+          appBar: AppBar(title: const Text('LambdaEssay')),
           body: Column(
             children: [
               MediaQuery(
