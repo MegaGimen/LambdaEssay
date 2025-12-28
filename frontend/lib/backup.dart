@@ -323,6 +323,8 @@ class _BackupPageState extends State<BackupPage> {
         children: [
           Scaffold(
           appBar: AppBar(
+            backgroundColor: const Color(0xFF000A3F),
+            foregroundColor: Colors.white,
             title: Text('历史备份预览: $repo'),
             actions: [
               SizedBox(
