@@ -1647,6 +1647,10 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       setState(() => error = '请输入项目名称');
       return;
     }
+    if (name == 'cache' || name == 'preview') {
+      setState(() => error = '项目名称不能为 "cache" 或 "preview" (保留名称)');
+      return;
+    }
     try {
       final resp = await _postJson('http://localhost:8080/track/create', {
         'name': name,
@@ -1679,7 +1683,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           await http.get(Uri.parse('http://localhost:8080/track/list'));
       if (resp.statusCode == 200) {
         final body = jsonDecode(resp.body);
-        return (body['projects'] as List).cast<String>();
+        final list = (body['projects'] as List).cast<String>();
+        return list.where((p) => p != 'cache' && p != 'preview').toList();
       }
     } catch (_) {}
     return [];
