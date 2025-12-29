@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:math' as math;
+import 'package:path/path.dart' as p;
 import 'dart:io';
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -16,7 +17,18 @@ import 'graph_view.dart';
 
 void main() {
   _exposeAlivePort();
-  runApp(const BootstrapApp());
+  runApp(MaterialApp(
+    title: 'LambdaEssay Launcher',
+    theme: ThemeData(
+      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF000A3F)),
+      appBarTheme: const AppBarTheme(
+        backgroundColor: Color(0xFF000A3F),
+        foregroundColor: Colors.white,
+      ),
+      useMaterial3: true,
+    ),
+    home: const BootstrapApp(),
+  ));
 }
 
 Future<void> _notifyStartup() async {
@@ -75,6 +87,23 @@ class _BootstrapAppState extends State<BootstrapApp> {
   String _statusMessage = '正在初始化...';
   bool _hasError = false;
 
+  Future<void> _showErrorDialog(String path) async {
+    if (!mounted) return;
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('启动失败'),
+        content: Text('找不到文件:\n$path'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -90,31 +119,30 @@ class _BootstrapAppState extends State<BootstrapApp> {
 
       // 尝试启动 server.exe
       // 假设位于当前目录下的 bin/server.exe
-      final serverPath = 'bin/server.exe';
-      final wardenPath = 'bin/warden.exe';
-      final CoMPath = 'bin/COM.exe';
+      // 获取当前脚本所在目录的绝对路径
+      final scriptDir = p.dirname(Platform.script.toFilePath());
+      final serverPath = '$scriptDir/bin/server.exe';
+      final wardenPath = '$scriptDir/bin/warden.exe';
+      final CoMPath = '$scriptDir/bin/COM.exe';
       if (await File(serverPath).exists()) {
         await Process.start(serverPath, [], mode: ProcessStartMode.detached);
       } else {
-        // 如果找不到文件，可能已经启动或者路径不对，尝试直接连接
-        // 也可以尝试查找绝对路径，但根据指示 "current folder frontend/bin/server.exe"
-        // 我们先假设当前工作目录是 frontend
-        print('Warning: $serverPath not found. Trying to connect anyway...');
+        await _showErrorDialog(serverPath);
       }
       if (await File(wardenPath).exists()) {
         await Process.start(
             wardenPath, ['--monitor_port', '9527', '--terminal_port', '8080'],
             mode: ProcessStartMode.detached);
       } else {
-        print('Warning: $wardenPath not found.');
+        await _showErrorDialog(wardenPath);
       }
 
-            if (await File(CoMPath).exists()) {
+      if (await File(CoMPath).exists()) {
         await Process.start(
             CoMPath, [],
             mode: ProcessStartMode.detached);
       } else {
-        print('Warning: $CoMPath not found.');
+        await _showErrorDialog(CoMPath);
       }
 
       // 轮询健康检查接口
@@ -168,34 +196,23 @@ class _BootstrapAppState extends State<BootstrapApp> {
       return const GitGraphApp();
     }
 
-    return MaterialApp(
-      title: 'LambdaEssay Launcher',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF000A3F)),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFF000A3F),
-          foregroundColor: Colors.white,
-        ),
-        useMaterial3: true,
-      ),
-      home: Scaffold(
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              if (!_hasError) const CircularProgressIndicator(),
-              const SizedBox(height: 20),
-              Text(_statusMessage),
-              if (_hasError)
-                Padding(
-                  padding: const EdgeInsets.only(top: 20),
-                  child: ElevatedButton(
-                    onPressed: _startServer,
-                    child: const Text('重试'),
-                  ),
+    return Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (!_hasError) const CircularProgressIndicator(),
+            const SizedBox(height: 20),
+            Text(_statusMessage),
+            if (_hasError)
+              Padding(
+                padding: const EdgeInsets.only(top: 20),
+                child: ElevatedButton(
+                  onPressed: _startServer,
+                  child: const Text('重试'),
                 ),
-            ],
-          ),
+              ),
+          ],
         ),
       ),
     );
