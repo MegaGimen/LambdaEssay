@@ -18,7 +18,15 @@ import 'backup.dart';
 import 'pull_preview.dart';
 import 'graph_view.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  if (Platform.isWindows) {
+    if (await _checkDuplicateInstance()) {
+      runApp(const DuplicateErrorApp());
+      return;
+    }
+  }
+
   _exposeAlivePort();
   runApp(MaterialApp(
     title: 'LambdaEssay Launcher',
@@ -77,6 +85,101 @@ Future<void> _exposeAlivePort() async {
     print('Failed to expose alive port: $e');
   }
 }
+
+Future<bool> _checkDuplicateInstance() async {
+  try {
+    final result = await Process.run('tasklist', [
+      '/FO', 'CSV',
+      '/NH',
+      '/FI', 'IMAGENAME eq LambdaEssay.exe'
+    ]);
+    
+    if (result.exitCode != 0) return false;
+    
+    final output = result.stdout.toString();
+    if (output.contains('No tasks are running')) return false;
+    
+    final lines = output.trim().split('\n');
+    final currentPid = pid;
+    
+    for (var line in lines) {
+      final parts = line.split(',');
+      if (parts.length >= 2) {
+        final pidStr = parts[1].replaceAll('"', '');
+        final pId = int.tryParse(pidStr);
+        if (pId != null && pId != currentPid) {
+          return true;
+        }
+      }
+    }
+    return false;
+  } catch (e) {
+    print('Error checking process: $e');
+    return false;
+  }
+}
+
+class DuplicateErrorApp extends StatelessWidget {
+  const DuplicateErrorApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        backgroundColor: Colors.white,
+        body: Center(
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            constraints: const BoxConstraints(maxWidth: 400),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.1),
+                  blurRadius: 10,
+                  spreadRadius: 2,
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.error_outline, size: 64, color: Colors.red),
+                const SizedBox(height: 16),
+                const Text(
+                  '已在运行',
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  '检测到 LambdaEssay.exe 正在运行。\n请先关闭已有实例。',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 16),
+                ),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => exit(0),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                    ),
+                    child: const Text('退出'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 
 class BootstrapApp extends StatefulWidget {
   const BootstrapApp({super.key});
