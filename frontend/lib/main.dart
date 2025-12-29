@@ -137,10 +137,28 @@ class _BootstrapAppState extends State<BootstrapApp> {
       final wardenPath = p.join(binDir.path, 'warden.exe');
       final comPath = p.join(binDir.path, 'COM.exe');
 
+      // 验证文件是否存在，如果不存在则强制重试一次
+      bool missingFiles = !await File(serverPath).exists() ||
+          !await File(wardenPath).exists() ||
+          !await File(comPath).exists();
+
+      if (missingFiles) {
+        setState(() {
+          _statusMessage = '检测到文件缺失，正在重新下载...';
+        });
+        // 删除目录以触发重新下载
+        if (await rootDir.exists()) {
+          await rootDir.delete(recursive: true);
+        }
+        // 再次尝试获取资源
+        await _ensureResources(rootDir, binDir);
+      }
+
       if (await File(serverPath).exists()) {
         await Process.start(serverPath, [], mode: ProcessStartMode.detached);
       } else {
         await _showErrorDialog(serverPath);
+        return; // 如果仍然失败，终止后续操作
       }
       if (await File(wardenPath).exists()) {
         await Process.start(
@@ -148,6 +166,7 @@ class _BootstrapAppState extends State<BootstrapApp> {
             mode: ProcessStartMode.detached);
       } else {
         await _showErrorDialog(wardenPath);
+        return;
       }
 
       if (await File(comPath).exists()) {
@@ -156,6 +175,7 @@ class _BootstrapAppState extends State<BootstrapApp> {
             mode: ProcessStartMode.detached);
       } else {
         await _showErrorDialog(comPath);
+        return;
       }
 
       // 轮询健康检查接口
@@ -338,14 +358,15 @@ class _BootstrapAppState extends State<BootstrapApp> {
 
       for (final file in archive) {
         final filename = file.name;
+        final outputPath = p.join(extractDir.path, filename);
         if (file.isFile) {
           final data = file.content as List<int>;
-          File(p.join(extractDir.path, filename))
-            ..createSync(recursive: true)
-            ..writeAsBytesSync(data);
+          final outputFile = File(outputPath);
+          // 确保父目录存在
+          await outputFile.parent.create(recursive: true);
+          await outputFile.writeAsBytes(data, flush: true);
         } else {
-          Directory(p.join(extractDir.path, filename))
-              .createSync(recursive: true);
+          await Directory(outputPath).create(recursive: true);
         }
       }
 
