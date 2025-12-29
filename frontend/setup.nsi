@@ -46,10 +46,6 @@ Section "主程序" SecMain
     ; 复制 Release 文件夹所有内容
     File /r "build\windows\x64\runner\Release\*.*"
     
-    ; 复制 bin 文件夹
-    SetOutPath "$INSTDIR\bin"
-    File /r "bin\*.*"
-    
     ; 创建卸载程序
     WriteUninstaller "$INSTDIR\Uninstall.exe"
     
