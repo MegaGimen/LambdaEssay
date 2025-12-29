@@ -244,7 +244,8 @@ class _BootstrapAppState extends State<BootstrapApp> {
 
       if (needDownload) {
         await rootDir.create(recursive: true);
-        await _downloadAndUnzip(zipUrl, localZip, binDir);
+        // Zip包中已经包含了bin文件夹，所以解压到rootDir即可
+        await _downloadAndUnzip(zipUrl, localZip, rootDir);
       }
     } catch (e) {
       // 这里的错误会由调用者捕获
