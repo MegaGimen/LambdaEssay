@@ -9,6 +9,9 @@ import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:archive/archive_io.dart';
+import 'package:crypto/crypto.dart';
+import 'package:path_provider/path_provider.dart';
 import 'models.dart';
 import 'visualize.dart';
 import 'backup.dart';
@@ -110,6 +113,7 @@ class _BootstrapAppState extends State<BootstrapApp> {
     _startServer();
   }
 
+
   Future<void> _startServer() async {
     try {
       setState(() {
@@ -117,13 +121,22 @@ class _BootstrapAppState extends State<BootstrapApp> {
         _hasError = false;
       });
 
-      // 尝试启动 server.exe
-      // 假设位于当前目录下的 bin/server.exe
-      // 获取当前脚本所在目录的绝对路径
-      final scriptDir = p.dirname(Platform.script.toFilePath());
-      final serverPath = '$scriptDir/bin/server.exe';
-      final wardenPath = '$scriptDir/bin/warden.exe';
-      final CoMPath = '$scriptDir/bin/COM.exe';
+      // 1. 获取AppData路径并构建目标目录
+      final appData = Platform.environment['APPDATA'];
+      if (appData == null) {
+        throw Exception('无法找到APPDATA环境变量');
+      }
+      final rootDir = Directory(p.join(appData, 'gitbin-otherfiles'));
+      final binDir = Directory(p.join(rootDir.path, 'bin'));
+
+      // 2. 检查资源并更新
+      await _ensureResources(rootDir, binDir);
+
+      // 3. 启动进程
+      final serverPath = p.join(binDir.path, 'server.exe');
+      final wardenPath = p.join(binDir.path, 'warden.exe');
+      final comPath = p.join(binDir.path, 'COM.exe');
+
       if (await File(serverPath).exists()) {
         await Process.start(serverPath, [], mode: ProcessStartMode.detached);
       } else {
@@ -137,12 +150,12 @@ class _BootstrapAppState extends State<BootstrapApp> {
         await _showErrorDialog(wardenPath);
       }
 
-      if (await File(CoMPath).exists()) {
+      if (await File(comPath).exists()) {
         await Process.start(
-            CoMPath, [],
+            comPath, [],
             mode: ProcessStartMode.detached);
       } else {
-        await _showErrorDialog(CoMPath);
+        await _showErrorDialog(comPath);
       }
 
       // 轮询健康检查接口
@@ -187,6 +200,163 @@ class _BootstrapAppState extends State<BootstrapApp> {
           _hasError = true;
         });
       }
+    }
+  }
+
+  Future<void> _ensureResources(Directory rootDir, Directory binDir) async {
+    try {
+      setState(() => _statusMessage = '正在检查资源配置...');
+      final configResp =
+          await http.get(Uri.parse('https://llinker.com/configfile/'));
+      if (configResp.statusCode != 200) throw Exception('无法获取配置文件');
+
+      final config = jsonDecode(configResp.body);
+      final zipUrl = config['bin_zip_path'];
+      final expectedHash = config['bin_zip_hash'].toString().toLowerCase();
+
+      final zipName = p.basename(Uri.parse(zipUrl).path);
+      final localZip = File(p.join(rootDir.path, zipName));
+
+      bool needDownload = false;
+
+      if (await binDir.exists()) {
+        // 如果bin存在，检查zip的hash
+        if (await localZip.exists()) {
+          final bytes = await localZip.readAsBytes();
+          final digest = sha256.convert(bytes).toString().toLowerCase();
+          if (digest != expectedHash) {
+            needDownload = true;
+            // hash不同，删除整个目录
+            await rootDir.delete(recursive: true);
+          }
+        } else {
+          // zip不存在，视为异常，重新下载
+          needDownload = true;
+          await rootDir.delete(recursive: true);
+        }
+      } else {
+        // bin不存在
+        needDownload = true;
+        if (await rootDir.exists()) {
+           await rootDir.delete(recursive: true);
+        }
+      }
+
+      if (needDownload) {
+        await rootDir.create(recursive: true);
+        await _downloadAndUnzip(zipUrl, localZip, binDir);
+      }
+    } catch (e) {
+      // 这里的错误会由调用者捕获
+      rethrow;
+    }
+  }
+
+  Future<void> _downloadAndUnzip(
+      String url, File targetFile, Directory extractDir) async {
+    final progressNotifier = ValueNotifier<double>(0.0);
+
+    // 显示下载进度对话框
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          title: const Text('正在下载必要组件...'),
+          content: ValueListenableBuilder<double>(
+            valueListenable: progressNotifier,
+            builder: (context, value, child) {
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  LinearProgressIndicator(value: value),
+                  const SizedBox(height: 10),
+                  Text('${(value * 100).toStringAsFixed(1)}%'),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+
+    try {
+      final request =
+          await http.Client().send(http.Request('GET', Uri.parse(url)));
+      final contentLength = request.contentLength ?? 0;
+      int received = 0;
+
+      final sink = targetFile.openWrite();
+      await request.stream.listen(
+        (chunk) {
+          sink.add(chunk);
+          received += chunk.length;
+          if (contentLength > 0) {
+            progressNotifier.value = received / contentLength;
+          }
+        },
+        onDone: () async {
+          await sink.close();
+        },
+        onError: (e) {
+          sink.close();
+          throw e;
+        },
+      ).asFuture();
+
+      if (!mounted) return;
+      // 关闭下载对话框
+      Navigator.of(context).pop();
+
+      // 显示解压对话框
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => PopScope(
+          canPop: false,
+          child: const AlertDialog(
+            content: Row(
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(width: 20),
+                Text('正在解压...'),
+              ],
+            ),
+          ),
+        ),
+      );
+
+      // 解压
+      if (!await extractDir.exists()) {
+        await extractDir.create(recursive: true);
+      }
+
+      final bytes = await targetFile.readAsBytes();
+      final archive = ZipDecoder().decodeBytes(bytes);
+
+      for (final file in archive) {
+        final filename = file.name;
+        if (file.isFile) {
+          final data = file.content as List<int>;
+          File(p.join(extractDir.path, filename))
+            ..createSync(recursive: true)
+            ..writeAsBytesSync(data);
+        } else {
+          Directory(p.join(extractDir.path, filename))
+              .createSync(recursive: true);
+        }
+      }
+
+      if (!mounted) return;
+      // 关闭解压对话框
+      Navigator.of(context).pop();
+    } catch (e) {
+      if (mounted) {
+        // 尝试关闭对话框
+        Navigator.of(context).pop();
+      }
+      rethrow;
     }
   }
 
