@@ -439,7 +439,6 @@ class GraphPainter extends CustomPainter {
     //   ..strokeWidth = 1.5;
     */
 
-    if (working?.changed == true) {
       double gx, gy;
       bool drawEdge = false;
       double hx = 0, hy = 0;
@@ -484,21 +483,6 @@ class GraphPainter extends CustomPainter {
           ..strokeWidth = 3.0;
         
       canvas.drawCircle(Offset(gx, gy), nodeRadius, nodePaint);
-        
-      final tp = TextPainter(
-        text: TextSpan(
-          text: '文档有新的更改',
-          style: TextStyle(
-            color: ghostColor,
-            fontSize: 10,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        textDirection: TextDirection.ltr,
-      );
-      tp.layout();
-      tp.paint(canvas, Offset(gx + 12, gy - tp.height / 2));
-    }
   }
 
   void _drawChain(
