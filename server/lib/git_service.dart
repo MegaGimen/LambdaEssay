@@ -1054,6 +1054,9 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
   final projDir = _projectDir(name);
   return _withRepoLock(projDir, () async {
     _isUpdating[name] = true;
+    final totalSw = Stopwatch()..start();
+    final sectionSw = Stopwatch()..start();
+    
     try {
       final dir = Directory(projDir);
       if (!dir.existsSync()) {
@@ -1075,6 +1078,9 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
         }
       }
 
+      print('[Perf] Pre-checks & Tracking Read: ${sectionSw.elapsedMilliseconds}ms');
+      sectionSw.reset();
+
       if (!sourceExists) {
         return {'needDocx': true, 'repoPath': projDir};
       }
@@ -1086,6 +1092,9 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
       }
       tracking['repoDocxPath'] = contentDir.path;
       await _writeTracking(name, tracking);
+      
+      print('[Perf] Ensure Content Dir & Write Tracking: ${sectionSw.elapsedMilliseconds}ms');
+      sectionSw.reset();
 
       // Compare Source vs HEAD
       bool restored = false;
@@ -1098,10 +1107,16 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
           await _gitArchiveToDocx(projDir, 'HEAD', headDocx);
           hasHead = true;
         } catch (_) {}
+        
+        print('[Perf] Git Archive HEAD: ${sectionSw.elapsedMilliseconds}ms');
+        sectionSw.reset();
 
         if (hasHead) {
           final isIdentical = await _checkDocxIdentical(sourcePath!, headDocx);
           print("identical? $isIdentical");
+          print('[Perf] Check Identical (Source vs HEAD): ${sectionSw.elapsedMilliseconds}ms');
+          sectionSw.reset();
+
           if (isIdentical) {
             // Restore working copy (repo/doc_content) to HEAD
             // Use reset --hard to ensure NO artifacts remain (e.g. untracked files in doc_content)
@@ -1109,6 +1124,8 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
             //await _forceRegenerateRepoDocx(
             //    projDir); // Sync content.docx from restored folder
             restored = true;
+            print('[Perf] Restore (Git Reset Hard): ${sectionSw.elapsedMilliseconds}ms');
+            sectionSw.reset();
           }
         }
       } finally {
@@ -1125,12 +1142,16 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
         if (File(repoDocx).existsSync()) {
           alreadySynced = await _checkDocxIdentical(sourcePath!, repoDocx);
           print("Already synced with repo? $alreadySynced");
+          print('[Perf] Check Identical (Source vs Repo): ${sectionSw.elapsedMilliseconds}ms');
+          sectionSw.reset();
         }
 
         if (!alreadySynced) {
           // Update repo content from source
           // Do NOT unzip to doc_content yet. Just update content.docx.
           await _updateContentDocx(projDir, sourcePath!);
+          print('[Perf] Update Content Docx: ${sectionSw.elapsedMilliseconds}ms');
+          sectionSw.reset();
 
           // Also force regenerate doc_content (unzip) to make sure working directory matches
           // But wait, if we are going to commit, we need doc_content.
@@ -1139,6 +1160,8 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
           // But we have "WorkingState".
           // We need to unzip content.docx -> doc_content so that `git status` shows changes.
           await _flushDocxToContent(projDir);
+          print('[Perf] Flush Docx To Content: ${sectionSw.elapsedMilliseconds}ms');
+          sectionSw.reset();
         }
       }
 
@@ -1148,12 +1171,19 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
         print("Git Status dirty: $status");
       }
       final changed = status.isNotEmpty;
+      print('[Perf] Git Status: ${sectionSw.elapsedMilliseconds}ms');
+      sectionSw.reset();
 
       String? head;
       try {
         final lines = await _runGit(['rev-parse', 'HEAD'], projDir);
         if (lines.isNotEmpty) head = lines.first.trim();
       } catch (_) {}
+      print('[Perf] Get HEAD: ${sectionSw.elapsedMilliseconds}ms');
+      sectionSw.reset();
+
+      totalSw.stop();
+      print('[Perf] updateTrackingProject Total Time: ${totalSw.elapsedMilliseconds}ms');
 
       return {
         'repoPath': projDir,
