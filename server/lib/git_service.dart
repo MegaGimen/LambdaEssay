@@ -1100,32 +1100,12 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
       final tmpDir = await Directory.systemTemp.createTemp('git_head_check_');
       try {
         final headDocx = p.join(tmpDir.path, 'HEAD.docx');
-        bool hasHead = false;
         try {
           await _gitArchiveToDocx(projDir, 'HEAD', headDocx);
-          hasHead = true;
         } catch (_) {}
         
         print('[Perf] Git Archive HEAD: ${sectionSw.elapsedMilliseconds}ms');
         sectionSw.reset();
-
-        if (hasHead) {
-          final isIdentical = await _checkDocxIdentical(sourcePath!, headDocx);
-          print("identical? $isIdentical");
-          print('[Perf] Check Identical (Source vs HEAD): ${sectionSw.elapsedMilliseconds}ms');
-          sectionSw.reset();
-
-          if (isIdentical) {
-            // Restore working copy (repo/doc_content) to HEAD
-            // Use reset --hard to ensure NO artifacts remain (e.g. untracked files in doc_content)
-            await _runGit(['reset', '--hard', 'HEAD'], projDir);
-            //await _forceRegenerateRepoDocx(
-            //    projDir); // Sync content.docx from restored folder
-            restored = true;
-            print('[Perf] Restore (Git Reset Hard): ${sectionSw.elapsedMilliseconds}ms');
-            sectionSw.reset();
-          }
-        }
       } finally {
         try {
           tmpDir.deleteSync(recursive: true);
