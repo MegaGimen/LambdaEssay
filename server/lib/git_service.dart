@@ -1047,14 +1047,15 @@ Future<Map<String, dynamic>?> getTrackingInfo(String repoPath) async {
   return null;
 }
 
-Future<Map<String, dynamic>> updateTrackingProject(String name,
+Future<Map<String, dynamic>> updateTrackingProject(
+    String name, bool op_identical,
     {String? newDocxPath}) async {
   final projDir = _projectDir(name);
   return _withRepoLock(projDir, () async {
     _isUpdating[name] = true;
     final totalSw = Stopwatch()..start();
     final sectionSw = Stopwatch()..start();
-    
+
     try {
       final dir = Directory(projDir);
       if (!dir.existsSync()) {
@@ -1076,7 +1077,8 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
         }
       }
 
-      print('[Perf] Pre-checks & Tracking Read: ${sectionSw.elapsedMilliseconds}ms');
+      print(
+          '[Perf] Pre-checks & Tracking Read: ${sectionSw.elapsedMilliseconds}ms');
       sectionSw.reset();
 
       if (!sourceExists) {
@@ -1090,8 +1092,9 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
       }
       tracking['repoDocxPath'] = contentDir.path;
       await _writeTracking(name, tracking);
-      
-      print('[Perf] Ensure Content Dir & Write Tracking: ${sectionSw.elapsedMilliseconds}ms');
+
+      print(
+          '[Perf] Ensure Content Dir & Write Tracking: ${sectionSw.elapsedMilliseconds}ms');
       sectionSw.reset();
 
       // Compare Source vs HEAD
@@ -1100,49 +1103,76 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
       final tmpDir = await Directory.systemTemp.createTemp('git_head_check_');
       try {
         final headDocx = p.join(tmpDir.path, 'HEAD.docx');
+        bool hasHead = false;
         try {
           await _gitArchiveToDocx(projDir, 'HEAD', headDocx);
+          hasHead = true;
         } catch (_) {}
-        
+
         print('[Perf] Git Archive HEAD: ${sectionSw.elapsedMilliseconds}ms');
         sectionSw.reset();
+        if (op_identical) {
+          if (hasHead) {
+            final isIdentical =
+                await _checkDocxIdentical(sourcePath!, headDocx);
+            print("identical? $isIdentical");
+            print(
+                '[Perf] Check Identical (Source vs HEAD): ${sectionSw.elapsedMilliseconds}ms');
+            sectionSw.reset();
+
+            if (isIdentical) {
+              // Restore working copy (repo/doc_content) to HEAD
+              // Use reset --hard to ensure NO artifacts remain (e.g. untracked files in doc_content)
+              await _runGit(['reset', '--hard', 'HEAD'], projDir);
+              //await _forceRegenerateRepoDocx(
+              //    projDir); // Sync content.docx from restored folder
+              restored = true;
+              print(
+                  '[Perf] Restore (Git Reset Hard): ${sectionSw.elapsedMilliseconds}ms');
+              sectionSw.reset();
+            }
+          }
+        }
       } finally {
         try {
           tmpDir.deleteSync(recursive: true);
         } catch (_) {}
       }
+      if (op_identical) {
+        print('restored? $restored');
+        if (!restored) {
+          // Check if Repo is already identical to Source (e.g. after a rollback)
+          bool alreadySynced = false;
+          final repoDocx = p.join(projDir, kRepoDocxName);
+          if (File(repoDocx).existsSync()) {
+            alreadySynced = await _checkDocxIdentical(sourcePath!, repoDocx);
+            print("Already synced with repo? $alreadySynced");
+            print(
+                '[Perf] Check Identical (Source vs Repo): ${sectionSw.elapsedMilliseconds}ms');
+            sectionSw.reset();
+          }
 
-      print('restored? $restored');
-      if (!restored) {
-        // Check if Repo is already identical to Source (e.g. after a rollback)
-        bool alreadySynced = false;
-        final repoDocx = p.join(projDir, kRepoDocxName);
-        if (File(repoDocx).existsSync()) {
-          alreadySynced = await _checkDocxIdentical(sourcePath!, repoDocx);
-          print("Already synced with repo? $alreadySynced");
-          print('[Perf] Check Identical (Source vs Repo): ${sectionSw.elapsedMilliseconds}ms');
-          sectionSw.reset();
-        }
+          if (!alreadySynced) {
+            // Update repo content from source
+            // Do NOT unzip to doc_content yet. Just update content.docx.
+            await _updateContentDocx(projDir, sourcePath!);
+            print(
+                '[Perf] Update Content Docx: ${sectionSw.elapsedMilliseconds}ms');
+            sectionSw.reset();
 
-        if (!alreadySynced) {
-          // Update repo content from source
-          // Do NOT unzip to doc_content yet. Just update content.docx.
-          await _updateContentDocx(projDir, sourcePath!);
-          print('[Perf] Update Content Docx: ${sectionSw.elapsedMilliseconds}ms');
-          sectionSw.reset();
-
-          // Also force regenerate doc_content (unzip) to make sure working directory matches
-          // But wait, if we are going to commit, we need doc_content.
-          // And we need to show changes in graph?
-          // GitGraph usually shows committed changes.
-          // But we have "WorkingState".
-          // We need to unzip content.docx -> doc_content so that `git status` shows changes.
-          await _flushDocxToContent(projDir);
-          print('[Perf] Flush Docx To Content: ${sectionSw.elapsedMilliseconds}ms');
-          sectionSw.reset();
+            // Also force regenerate doc_content (unzip) to make sure working directory matches
+            // But wait, if we are going to commit, we need doc_content.
+            // And we need to show changes in graph?
+            // GitGraph usually shows committed changes.
+            // But we have "WorkingState".
+            // We need to unzip content.docx -> doc_content so that `git status` shows changes.
+            await _flushDocxToContent(projDir);
+            print(
+                '[Perf] Flush Docx To Content: ${sectionSw.elapsedMilliseconds}ms');
+            sectionSw.reset();
+          }
         }
       }
-
       // Check status
       final status = await _runGit(['status', '--porcelain'], projDir);
       if (status.isNotEmpty) {
@@ -1161,7 +1191,8 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
       sectionSw.reset();
 
       totalSw.stop();
-      print('[Perf] updateTrackingProject Total Time: ${totalSw.elapsedMilliseconds}ms');
+      print(
+          '[Perf] updateTrackingProject Total Time: ${totalSw.elapsedMilliseconds}ms');
 
       return {
         'repoPath': projDir,
@@ -1193,7 +1224,8 @@ Future<bool> _checkDocxIdentical(
       final zip1 = p.join(tmpDir.path, 'ext.docx');
       await _zipDir(externalPath, zip1);
       path1 = zip1;
-      print('[_checkDocxIdentical_Perf] _checkDocxIdentical Zip Dir: ${sectionSw.elapsedMilliseconds}ms');
+      print(
+          '[_checkDocxIdentical_Perf] _checkDocxIdentical Zip Dir: ${sectionSw.elapsedMilliseconds}ms');
       sectionSw.reset();
     }
 
@@ -1222,7 +1254,8 @@ Future<bool> _checkDocxIdentical(
 
       final b1 = await f1.readAsBytes();
       final b2 = await f2.readAsBytes();
-      print('[_checkDocxIdentical_Perf] _checkDocxIdentical Read Files: ${sectionSw.elapsedMilliseconds}ms');
+      print(
+          '[_checkDocxIdentical_Perf] _checkDocxIdentical Read Files: ${sectionSw.elapsedMilliseconds}ms');
       sectionSw.reset();
 
       writePart('file1', p.basename(path1), b1);
@@ -1230,7 +1263,8 @@ Future<bool> _checkDocxIdentical(
       req.write('--$boundary--\r\n');
 
       final resp = await req.close().timeout(const Duration(seconds: 30));
-      print('[_checkDocxIdentical_Perf] _checkDocxIdentical Request & Response: ${sectionSw.elapsedMilliseconds}ms');
+      print(
+          '[_checkDocxIdentical_Perf] _checkDocxIdentical Request & Response: ${sectionSw.elapsedMilliseconds}ms');
       sectionSw.reset();
 
       if (resp.statusCode != 200) {
@@ -1238,9 +1272,10 @@ Future<bool> _checkDocxIdentical(
       }
       final bodyStr = await utf8.decodeStream(resp);
       final body = jsonDecode(bodyStr) as Map<String, dynamic>;
-      
+
       totalSw.stop();
-      print('[_checkDocxIdentical_Perf] _checkDocxIdentical Total: ${totalSw.elapsedMilliseconds}ms');
+      print(
+          '[_checkDocxIdentical_Perf] _checkDocxIdentical Total: ${totalSw.elapsedMilliseconds}ms');
 
       return body['identical'] == true;
     } catch (e) {
