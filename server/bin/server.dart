@@ -170,7 +170,8 @@ Future<void> main(List<String> args) async {
              } else if (data['type'] == 'event' && data['event'] == 'saved') {
                 final path = data['path'] as String?;
                 if (path != null) {
-                   print('Plugin reported save event for: $path');
+                   print('Plugin reported save event for: $path. But we ignore it. ');
+                   /*
                    // Notify frontend to start loading immediately
                    for (final socket in _activeFrontendSockets) {
                      try {
@@ -194,6 +195,7 @@ Future<void> main(List<String> args) async {
                        print('Failed to notify frontend: $e');
                      }
                    }
+                   */
                 } else {
                    print('Plugin reported save event but path is null');
                 }
