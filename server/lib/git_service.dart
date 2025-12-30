@@ -84,6 +84,7 @@ Future<void> _ensureRepoDocx(String repoPath) async {
 }
 
 Future<void> _forceRegenerateRepoDocx(String repoPath) async {
+  int timestamp1 = DateTime.now().millisecondsSinceEpoch ~/ 1000;
   // Used when Git updates the folder (checkout/pull/reset)
   // We must update content.docx to reflect new state
   final docxPath = p.join(repoPath, kRepoDocxName);
@@ -94,6 +95,8 @@ Future<void> _forceRegenerateRepoDocx(String repoPath) async {
     } catch (_) {}
   }
   await _ensureRepoDocx(repoPath);
+  int timestamp2 = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+  print("[_forceRegenerateRepoDocx] costs ${timestamp2 - timestamp1} sec");
 }
 
 Future<void> _updateContentDocx(String repoPath, String sourceDocxPath) async {
@@ -623,7 +626,7 @@ Future<void> switchBranch(String projectName, String branchName) async {
   final repoPath = _projectDir(projectName);
   return _withRepoLock(repoPath, () async {
     await _runGit(['checkout', '-f', branchName], repoPath);
-    await _forceRegenerateRepoDocx(repoPath);
+    //await _forceRegenerateRepoDocx(repoPath);
 
     clearCache();
   });
@@ -1299,7 +1302,7 @@ Future<void> resetBranch(String projectName, String commitId) async {
   final repoPath = _projectDir(projectName);
   return _withRepoLock(repoPath, () async {
     await _runGit(['reset', '--hard', commitId], repoPath);
-    await _forceRegenerateRepoDocx(repoPath);
+    //await _forceRegenerateRepoDocx(repoPath);
     clearCache();
   });
 }
@@ -1311,8 +1314,8 @@ Future<void> rollbackVersion(String projectName, String commitId) async {
     // git checkout commitId -- doc_content
     await _runGit(['checkout', commitId, '--', kContentDirName], repoPath);
 
-    // Sync to content.docx
-    await _forceRegenerateRepoDocx(repoPath);
+    // No needs to sync to content.docx
+    //await _forceRegenerateRepoDocx(repoPath);
 
     // Sync to external
     final tracking = await _readTracking(projectName);
@@ -1872,7 +1875,7 @@ Future<void> rebasePull(String repoName, String username, String token) async {
   try {
     await _runGit(
         ['pull', '--rebase', '-X', 'theirs', remoteName, current], projDir);
-    await _forceRegenerateRepoDocx(projDir);
+    //await _forceRegenerateRepoDocx(projDir);
   } catch (e) {
     try {
       await _runGit(['rebase', '--abort'], projDir);
