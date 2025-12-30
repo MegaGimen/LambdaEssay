@@ -1,5 +1,65 @@
 [
   {
+    "id": 1767068573064,
+    "text": "切换分支也有些慢",
+    "completed": false,
+    "createdAt": "2025-12-30T04:22:53.064Z"
+  },
+  {
+    "id": 1767068503484,
+    "text": "如果文件较大，更新速度会比较慢，是不是解压太慢导致的？",
+    "completed": false,
+    "createdAt": "2025-12-30T04:21:43.484Z"
+  },
+  {
+    "id": 1767068333077,
+    "text": "增加ps1脚本的目录在分发版本中的引用",
+    "completed": false,
+    "createdAt": "2025-12-30T04:18:53.077Z"
+  },
+  {
+    "id": 1767068300417,
+    "text": "同步速度太慢了，而且点击同步按钮后并没有立刻锁定",
+    "completed": false,
+    "createdAt": "2025-12-30T04:18:20.417Z"
+  },
+  {
+    "id": 1767068043100,
+    "text": "Heidegger未能成功杀死",
+    "completed": false,
+    "createdAt": "2025-12-30T04:14:03.100Z"
+  },
+  {
+    "id": 1767067999172,
+    "text": "增加对COM等组件的监视和恢复",
+    "completed": false,
+    "createdAt": "2025-12-30T04:13:19.173Z"
+  },
+  {
+    "id": 1767064364739,
+    "text": "更新路径之后应该立刻进入loading模式",
+    "completed": false,
+    "createdAt": "2025-12-30T03:12:44.739Z"
+  },
+  {
+    "id": 1767064247247,
+    "text": "增加便捷节点删除的功能，删除后直接让写一个节点与上一个节点连接",
+    "completed": false,
+    "createdAt": "2025-12-30T03:10:47.247Z"
+  },
+  {
+    "id": 1767064153183,
+    "text": "优化backup",
+    "completed": false,
+    "createdAt": "2025-12-30T03:09:13.183Z"
+  },
+  {
+    "id": 1767064129443,
+    "text": "解决书名有中文就会报错的问题",
+    "completed": false,
+    "createdAt": "2025-12-30T03:08:49.443Z"
+  },
+  {
     "id": 1765868175417,
     "text": "或许可以加一个自动根据内容来设置标题的AI？",
     "completed": false,
@@ -158,7 +218,7 @@
   {
     "id": 1765336274357,
     "text": "有可能会创建多个pdf缓存导致混乱",
-    "completed": false,
+    "completed": true,
     "createdAt": "2025-12-10T03:11:14.357Z"
   },
   {
