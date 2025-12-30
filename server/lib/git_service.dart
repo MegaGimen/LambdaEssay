@@ -585,6 +585,13 @@ Future<GraphResponse> _getGraphUnlocked(String repoPath,
 Future<void> commitChanges(
     String repoPath, String author, String message) async {
   return _withRepoLock(repoPath, () async {
+    final repoName = p.basename(repoPath);
+    print("repoName=$repoName");
+    print("repoPath=$repoPath");
+    final tracking = await _readTracking(repoName);
+    final docxPath = tracking['docxPath'] as String?;
+
+    await _updateContentDocx(repoPath, docxPath!);
     // 1. Unzip content.docx -> doc_content
     await _flushDocxToContent(repoPath);
 
