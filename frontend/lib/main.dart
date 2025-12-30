@@ -3309,13 +3309,13 @@ class _GraphViewState extends State<_GraphView>
       if (resp.statusCode != 200) {
         throw Exception('回退失败: ${resp.body}');
       }
-
+/*不需要刷新前端
       if (widget.onUpdate != null) {
         await widget.onUpdate!(forcePull: false);
       } else {
         if (widget.onRefresh != null) widget.onRefresh!();
       }
-
+*/
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('回退成功')),
