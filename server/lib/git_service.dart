@@ -1106,8 +1106,8 @@ Future<Map<String, dynamic>> updateTrackingProject(String name,
             // Restore working copy (repo/doc_content) to HEAD
             // Use reset --hard to ensure NO artifacts remain (e.g. untracked files in doc_content)
             await _runGit(['reset', '--hard', 'HEAD'], projDir);
-            await _forceRegenerateRepoDocx(
-                projDir); // Sync content.docx from restored folder
+            //await _forceRegenerateRepoDocx(
+            //    projDir); // Sync content.docx from restored folder
             restored = true;
           }
         }
