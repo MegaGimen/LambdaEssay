@@ -154,7 +154,6 @@ Future<void> _writeExternalDocx(String repoPath, String sourcePath) async {
   }
 
   if (diskWriteSuccess) return;
-
   // 2. If disk write failed, try plugin if source is a file
   bool handled = false;
   if (pluginSender != null && File(sourcePath).existsSync()) {
@@ -409,19 +408,19 @@ Future<List<List<String>>> _collectAllEdges(
     String repoPath, List<CommitNode> commits) async {
   final uniquePairs = <String>{};
   final commitIds = commits.map((c) => c.id).toSet();
-  
+
   // Regex for SHA1 pairs (40 hex chars), ignoring potential "zeros" line
   final edgeRegex = RegExp(r'([0-9a-fA-F]{40})\s+([0-9a-fA-F]{40})');
   final zeroRegex = RegExp(r'^[0]+$');
 
   void parseContent(String content) {
-     final matches = edgeRegex.allMatches(content);
-     for (final m in matches) {
-       final u = m.group(1)!.toLowerCase();
-       final v = m.group(2)!.toLowerCase();
-       if (zeroRegex.hasMatch(u) || zeroRegex.hasMatch(v)) continue;
-       uniquePairs.add('$u|$v');
-     }
+    final matches = edgeRegex.allMatches(content);
+    for (final m in matches) {
+      final u = m.group(1)!.toLowerCase();
+      final v = m.group(2)!.toLowerCase();
+      if (zeroRegex.hasMatch(u) || zeroRegex.hasMatch(v)) continue;
+      uniquePairs.add('$u|$v');
+    }
   }
 
   // 1. Try to read local 'edges' file in the repo root
@@ -546,7 +545,11 @@ Future<GraphResponse> _getGraphUnlocked(String repoPath,
     final id = parts[0].toLowerCase();
     final rawParents = parts[1].trim().isEmpty
         ? <String>[]
-        : parts[1].trim().split(RegExp(r'\s+')).map((e) => e.toLowerCase()).toList();
+        : parts[1]
+            .trim()
+            .split(RegExp(r'\s+'))
+            .map((e) => e.toLowerCase())
+            .toList();
 
     final parents = rawParents;
     final dec = parts[2];
@@ -614,12 +617,6 @@ Future<void> switchBranch(String projectName, String branchName) async {
   return _withRepoLock(repoPath, () async {
     await _runGit(['checkout', '-f', branchName], repoPath);
     await _forceRegenerateRepoDocx(repoPath);
-
-    // Sync to external docx
-    final localDocx = p.join(repoPath, kRepoDocxName);
-    if (File(localDocx).existsSync()) {
-      await _writeExternalDocx(repoPath, localDocx);
-    }
 
     clearCache();
   });
