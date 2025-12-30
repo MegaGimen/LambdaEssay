@@ -1202,6 +1202,9 @@ Future<bool> _checkDocxIdentical(
   // compareToDocx is a .docx file (e.g. from HEAD archive)
   // externalPath could be .docx or dir
 
+  final totalSw = Stopwatch()..start();
+  final sectionSw = Stopwatch()..start();
+
   final tmpDir = await Directory.systemTemp.createTemp('ident_check_');
   try {
     String path1 = externalPath;
@@ -1212,6 +1215,8 @@ Future<bool> _checkDocxIdentical(
       final zip1 = p.join(tmpDir.path, 'ext.docx');
       await _zipDir(externalPath, zip1);
       path1 = zip1;
+      print('[_checkDocxIdentical_Perf] _checkDocxIdentical Zip Dir: ${sectionSw.elapsedMilliseconds}ms');
+      sectionSw.reset();
     }
 
     final f1 = File(path1);
@@ -1237,16 +1242,28 @@ Future<bool> _checkDocxIdentical(
         req.write('\r\n');
       }
 
-      writePart('file1', p.basename(path1), await f1.readAsBytes());
-      writePart('file2', p.basename(path2), await f2.readAsBytes());
+      final b1 = await f1.readAsBytes();
+      final b2 = await f2.readAsBytes();
+      print('[_checkDocxIdentical_Perf] _checkDocxIdentical Read Files: ${sectionSw.elapsedMilliseconds}ms');
+      sectionSw.reset();
+
+      writePart('file1', p.basename(path1), b1);
+      writePart('file2', p.basename(path2), b2);
       req.write('--$boundary--\r\n');
 
       final resp = await req.close().timeout(const Duration(seconds: 30));
+      print('[_checkDocxIdentical_Perf] _checkDocxIdentical Request & Response: ${sectionSw.elapsedMilliseconds}ms');
+      sectionSw.reset();
+
       if (resp.statusCode != 200) {
         return false;
       }
       final bodyStr = await utf8.decodeStream(resp);
       final body = jsonDecode(bodyStr) as Map<String, dynamic>;
+      
+      totalSw.stop();
+      print('[_checkDocxIdentical_Perf] _checkDocxIdentical Total: ${totalSw.elapsedMilliseconds}ms');
+
       return body['identical'] == true;
     } catch (e) {
       print('Check identical failed (timeout or error): $e');
