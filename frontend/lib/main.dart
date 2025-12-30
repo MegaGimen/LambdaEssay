@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'package:path/path.dart' as p;
@@ -44,23 +45,22 @@ Future<void> main() async {
 
 Future<void> _notifyStartup() async {
   int retry = 0;
-  const maxRetry = 8964; 
+  const maxRetry = 8964;
   while (retry < maxRetry) {
     try {
       print("Notify warden (attempt ${retry + 1})");
       final resp = await http.get(Uri.parse('http://localhost:3040/'));
       if (resp.statusCode == 200) {
         print('Notify warden success: ${resp.statusCode} ${resp.body}');
-              final resp2 = await http.get(Uri.parse('http://localhost:3040/'));
-      if (resp2.statusCode == 200) {
-        print('Second Notify warden success: ${resp2.statusCode} ${resp2.body}');
+        final resp2 = await http.get(Uri.parse('http://localhost:3040/'));
+        if (resp2.statusCode == 200) {
+          print(
+              'Second Notify warden success: ${resp2.statusCode} ${resp2.body}');
+          return;
+        }
+        print('Notify warden response: ${resp.statusCode}, retrying...');
         return;
       }
-      print('Notify warden response: ${resp.statusCode}, retrying...');
-        return;
-      }
-
-
     } catch (e) {
       print('Notify warden error: $e, retrying...');
     }
@@ -88,20 +88,17 @@ Future<void> _exposeAlivePort() async {
 
 Future<bool> _checkDuplicateInstance() async {
   try {
-    final result = await Process.run('tasklist', [
-      '/FO', 'CSV',
-      '/NH',
-      '/FI', 'IMAGENAME eq LambdaEssay.exe'
-    ]);
-    
+    final result = await Process.run('tasklist',
+        ['/FO', 'CSV', '/NH', '/FI', 'IMAGENAME eq LambdaEssay.exe']);
+
     if (result.exitCode != 0) return false;
-    
+
     final output = result.stdout.toString();
     if (output.contains('No tasks are running')) return false;
-    
+
     final lines = output.trim().split('\n');
     final currentPid = pid;
-    
+
     for (var line in lines) {
       final parts = line.split(',');
       if (parts.length >= 2) {
@@ -180,7 +177,6 @@ class DuplicateErrorApp extends StatelessWidget {
   }
 }
 
-
 class BootstrapApp extends StatefulWidget {
   const BootstrapApp({super.key});
 
@@ -216,72 +212,68 @@ class _BootstrapAppState extends State<BootstrapApp> {
     _startServer();
   }
 
-
   Future<void> _startServer() async {
     try {
       setState(() {
         _statusMessage = '正在启动服务器...';
         _hasError = false;
       });
-
-      // 1. 获取AppData路径并构建目标目录
-      final appData = Platform.environment['APPDATA'];
-      if (appData == null) {
-        throw Exception('无法找到APPDATA环境变量');
-      }
-      final rootDir = Directory(p.join(appData, 'gitbin-otherfiles'));
-      final binDir = Directory(p.join(rootDir.path, 'bin'));
-
-      // 2. 检查资源并更新
-      await _ensureResources(rootDir, binDir);
-
-      // 3. 启动进程
-      final serverPath = p.join(binDir.path, 'server.exe');
-      final wardenPath = p.join(binDir.path, 'warden.exe');
-      final comPath = p.join(binDir.path, 'COM.exe');
-
-      // 验证文件是否存在，如果不存在则强制重试一次
-      bool missingFiles = !await File(serverPath).exists() ||
-          !await File(wardenPath).exists() ||
-          !await File(comPath).exists();
-
-      if (missingFiles) {
-        setState(() {
-          _statusMessage = '检测到文件缺失，正在重新下载...';
-        });
-        // 删除目录以触发重新下载
-        if (await rootDir.exists()) {
-          await rootDir.delete(recursive: true);
+      if (!kDebugMode) {
+        // 1. 获取AppData路径并构建目标目录
+        final appData = Platform.environment['APPDATA'];
+        if (appData == null) {
+          throw Exception('无法找到APPDATA环境变量');
         }
-        // 再次尝试获取资源
+        final rootDir = Directory(p.join(appData, 'gitbin-otherfiles'));
+        final binDir = Directory(p.join(rootDir.path, 'bin'));
+
+        // 2. 检查资源并更新
         await _ensureResources(rootDir, binDir);
-      }
 
-      if (await File(serverPath).exists()) {
-        await Process.start(serverPath, [], mode: ProcessStartMode.detached);
-      } else {
-        await _showErrorDialog(serverPath);
-        return; // 如果仍然失败，终止后续操作
-      }
-      if (await File(wardenPath).exists()) {
-        await Process.start(
-            wardenPath, ['--monitor_port', '9527', '--terminal_port', '8080'],
-            mode: ProcessStartMode.detached);
-      } else {
-        await _showErrorDialog(wardenPath);
-        return;
-      }
+        // 3. 启动进程
+        final serverPath = p.join(binDir.path, 'server.exe');
+        final wardenPath = p.join(binDir.path, 'warden.exe');
+        final comPath = p.join(binDir.path, 'COM.exe');
 
-      if (await File(comPath).exists()) {
-        await Process.start(
-            comPath, [],
-            mode: ProcessStartMode.detached);
-      } else {
-        await _showErrorDialog(comPath);
-        return;
-      }
+        // 验证文件是否存在，如果不存在则强制重试一次
+        bool missingFiles = !await File(serverPath).exists() ||
+            !await File(wardenPath).exists() ||
+            !await File(comPath).exists();
 
-      // 轮询健康检查接口
+        if (missingFiles) {
+          setState(() {
+            _statusMessage = '检测到文件缺失，正在重新下载...';
+          });
+          // 删除目录以触发重新下载
+          if (await rootDir.exists()) {
+            await rootDir.delete(recursive: true);
+          }
+          // 再次尝试获取资源
+          await _ensureResources(rootDir, binDir);
+        }
+
+        if (await File(serverPath).exists()) {
+          await Process.start(serverPath, [], mode: ProcessStartMode.detached);
+        } else {
+          await _showErrorDialog(serverPath);
+          return; // 如果仍然失败，终止后续操作
+        }
+        if (await File(wardenPath).exists()) {
+          await Process.start(
+              wardenPath, ['--monitor_port', '9527', '--terminal_port', '8080'],
+              mode: ProcessStartMode.detached);
+        } else {
+          await _showErrorDialog(wardenPath);
+          return;
+        }
+
+        if (await File(comPath).exists()) {
+          await Process.start(comPath, [], mode: ProcessStartMode.detached);
+        } else {
+          await _showErrorDialog(comPath);
+          return;
+        }
+      } // 轮询健康检查接口
       const healthUrl = 'http://localhost:8080/health';
       bool ready = false;
       int retryCount = 0;
@@ -314,7 +306,8 @@ class _BootstrapAppState extends State<BootstrapApp> {
           _serverReady = true;
         });
         // Server 准备就绪，发送启动通知
-        _notifyStartup();
+        if(!kDebugMode)
+          _notifyStartup();
       }
     } catch (e) {
       if (mounted) {
@@ -361,7 +354,7 @@ class _BootstrapAppState extends State<BootstrapApp> {
         // bin不存在
         needDownload = true;
         if (await rootDir.exists()) {
-           await rootDir.delete(recursive: true);
+          await rootDir.delete(recursive: true);
         }
       }
 
@@ -3010,9 +3003,11 @@ class _GraphViewState extends State<_GraphView>
         context,
       ).showSnackBar(const SnackBar(content: Text('提交成功')));
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('提交失败: $e')));
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('提交失败: $e')));
+      }
     } finally {
       widget.onLoading?.call(false);
     }
@@ -3022,7 +3017,7 @@ class _GraphViewState extends State<_GraphView>
     final nameCtrl = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('新建分支'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -3036,16 +3031,17 @@ class _GraphViewState extends State<_GraphView>
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => Navigator.pop(dialogContext, false),
             child: const Text('取消'),
           ),
           ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(dialogContext, true),
             child: const Text('创建'),
           ),
         ],
       ),
     );
+    if (!mounted) return;
     if (ok != true) return;
     final name = nameCtrl.text.trim();
     if (name.isEmpty) return;
@@ -3061,15 +3057,19 @@ class _GraphViewState extends State<_GraphView>
         }),
       );
       if (resp.statusCode != 200) throw Exception(resp.body);
+
+      if (!mounted) return;
       if (widget.onUpdate != null) {
         await widget.onUpdate!(forcePull: false);
       } else {
         if (widget.onRefresh != null) widget.onRefresh!();
       }
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('创建失败: $e')));
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('创建失败: $e')));
+      }
     } finally {
       widget.onLoading?.call(false);
     }
