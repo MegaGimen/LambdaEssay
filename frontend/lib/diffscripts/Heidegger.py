@@ -1,3 +1,4 @@
+import time
 import argparse
 import sys
 import os
@@ -115,13 +116,14 @@ def extract_content(docx_path_or_stream):
 
 def compare_docs(doc1_source, doc2_source):
     try:
+        a=time.time()
         content1 = extract_content(doc1_source)
         content2 = extract_content(doc2_source)
         print(content1)
         print(content2)
 
         print(content1==content2)
-        
+        print(f"Elapsed Time:{time.time()-a}")
         if content1 == content2:
             return True, "No differences found."
         else:
