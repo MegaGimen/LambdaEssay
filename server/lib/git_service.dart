@@ -1005,7 +1005,6 @@ Future<Map<String, dynamic>> createTrackingProject(
   tracking['repoDocxPath'] = p.join(projDir, kContentDirName);
 
   await _writeTracking(name, tracking);
-  await _startWatcher(name);
   return {
     'name': name,
     'repoPath': projDir,
@@ -1019,7 +1018,6 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
     throw Exception('project not found');
   }
   final tracking = await _readTracking(name);
-  await _startWatcher(name);
   return {
     'name': name,
     'repoPath': projDir,
@@ -1409,35 +1407,6 @@ String _sanitizeFsPath(String raw) {
   return p.normalize(t);
 }
 
-Future<void> _startWatcher(String name) async {
-  final tracking = await _readTracking(name);
-  final docx = tracking['docxPath'] as String?;
-  if (docx == null || docx.trim().isEmpty) return;
-
-  final sub = _watchers[name];
-  if (sub != null) return;
-
-  // Watch file or directory
-  final isDir = FileSystemEntity.isDirectorySync(docx);
-  if (!isDir && !File(docx).existsSync()) return;
-
-  final s = isDir
-      ? Directory(docx).watch(events: FileSystemEvent.all, recursive: true)
-      : File(docx).watch(events: FileSystemEvent.modify);
-
-  final subscription = s.listen((_) {
-    _debounceTimers[name]?.cancel();
-    _debounceTimers[name] = Timer(const Duration(milliseconds: 2000), () async {
-      try {
-        await updateTrackingProject(name);
-      } catch (e) {
-        print('Watcher update failed for $name: $e');
-      }
-    });
-  });
-  _watchers[name] = subscription;
-}
-
 Future<void> initTrackingService() async {
   final base = Directory(_baseDir());
   if (!base.existsSync()) return;
@@ -1445,7 +1414,6 @@ Future<void> initTrackingService() async {
   for (final d in ents) {
     final name = p.basename(d.path);
     if (name.startsWith('.')) continue;
-    await _startWatcher(name);
   }
 }
 
@@ -1806,7 +1774,6 @@ Future<Map<String, dynamic>> pullFromRemote(
       }
     }
 */
-    await _startWatcher(repoName);
     clearCache();
     return {
       'status': 'success',
