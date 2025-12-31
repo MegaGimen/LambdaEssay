@@ -3698,7 +3698,6 @@ class _GraphViewState extends State<_GraphView>
                           Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              if (widget.working?.changed == true)
                                 ElevatedButton.icon(
                                   onPressed: _onCommit,
                                   icon: const Icon(Icons.upload),
@@ -3708,7 +3707,6 @@ class _GraphViewState extends State<_GraphView>
                                     foregroundColor: Colors.white,
                                   ),
                                 ),
-                              if (widget.working?.changed == true)
                                 const SizedBox(width: 8),
                               OutlinedButton.icon(
                                 onPressed: _onCreateBranch,
