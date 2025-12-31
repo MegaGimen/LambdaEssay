@@ -1901,7 +1901,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
   bool _isUpdatingRepo = false;
 
-  Future<void> _onUpdateRepoAction({bool forcePull = false, bool op_identical=true}) async {
+  Future<void> _onUpdateRepoAction({bool forcePull = false, bool opIdentical=true}) async {
     if (_isUpdatingRepo) return;
     _isUpdatingRepo = true;
     try {
@@ -1989,7 +1989,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       try {
         final resp = await _postJson('http://localhost:8080/track/update', {
           'name': name,
-          'op_identical':op_identical
+          'opIdentical':opIdentical
         });
         final needDocx = resp['needDocx'] == true;
         if (needDocx) {
@@ -2702,7 +2702,7 @@ class _GraphView extends StatefulWidget {
   final String? projectName;
   final String? token;
   final VoidCallback? onRefresh;
-  final Future<void> Function({bool forcePull})? onUpdate;
+  final Future<void> Function({bool forcePull, bool opIdentical})? onUpdate;
   final Future<void> Function(String)? onMerge;
   final Future<void> Function()? onFindIdentical;
   final List<String>? identicalCommitIds;
@@ -3091,7 +3091,7 @@ class _GraphViewState extends State<_GraphView>
 
       // Force update repo status after switch (to check diff against new branch)
       if (widget.onUpdate != null) {
-        await widget.onUpdate!(forcePull: false);
+        await widget.onUpdate!(forcePull: false,opIdentical: false);
       } else {
         if (widget.onRefresh != null) widget.onRefresh!();
       }
@@ -3310,13 +3310,11 @@ class _GraphViewState extends State<_GraphView>
       if (resp.statusCode != 200) {
         throw Exception('回退失败: ${resp.body}');
       }
-/*不需要刷新前端
       if (widget.onUpdate != null) {
-        await widget.onUpdate!(forcePull: false);
+        await widget.onUpdate!(forcePull: false,opIdentical:false);
       } else {
         if (widget.onRefresh != null) widget.onRefresh!();
       }
-*/
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('回退成功')),

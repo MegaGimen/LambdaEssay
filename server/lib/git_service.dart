@@ -1048,7 +1048,7 @@ Future<Map<String, dynamic>?> getTrackingInfo(String repoPath) async {
 }
 
 Future<Map<String, dynamic>> updateTrackingProject(
-    String name, bool op_identical,
+    String name, bool opIdentical,
     {String? newDocxPath}) async {
   final projDir = _projectDir(name);
   return _withRepoLock(projDir, () async {
@@ -1111,7 +1111,7 @@ Future<Map<String, dynamic>> updateTrackingProject(
 
         print('[Perf] Git Archive HEAD: ${sectionSw.elapsedMilliseconds}ms');
         sectionSw.reset();
-        if (op_identical) {
+        if (opIdentical) {
           if (hasHead) {
             final isIdentical =
                 await _checkDocxIdentical(sourcePath!, headDocx);
@@ -1138,7 +1138,7 @@ Future<Map<String, dynamic>> updateTrackingProject(
           tmpDir.deleteSync(recursive: true);
         } catch (_) {}
       }
-      if (op_identical) {
+      if (opIdentical) {
         print('restored? $restored');
         if (!restored) {
           // Check if Repo is already identical to Source (e.g. after a rollback)
