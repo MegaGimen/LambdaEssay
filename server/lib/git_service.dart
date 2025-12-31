@@ -1184,7 +1184,7 @@ Future<Map<String, dynamic>> updateTrackingProject(
         'head': head,
       };
     } finally {
-      await Future.delayed(const Duration(milliseconds: 1000));
+      // await Future.delayed(const Duration(milliseconds: 1000));
       _isUpdating[name] = false;
     }
   });
