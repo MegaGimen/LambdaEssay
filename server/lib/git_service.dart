@@ -663,6 +663,12 @@ Future<Uint8List> compareWorking(String repoPath) async {
     }
 
     final tmpDir = await Directory.systemTemp.createTemp('gitdocx_cmp_work_');
+    final repoName = p.basename(repoPath);
+    final tracking = await _readTracking(repoName);
+    final docxPath = tracking['docxPath'] as String?;
+
+    await _updateContentDocx(repoPath, docxPath!);//保证外部更新内部。
+
     try {
       // If content.docx doesn't exist, create it from doc_content
       await _ensureRepoDocx(repoPath);
