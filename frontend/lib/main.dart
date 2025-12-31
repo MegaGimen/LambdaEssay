@@ -3414,7 +3414,7 @@ class _GraphViewState extends State<_GraphView>
       }
 
       if (widget.onUpdate != null) {
-        await widget.onUpdate!(forcePull: false);
+        await widget.onUpdate!(forcePull: false,opIdentical: false);
       } else {
         if (widget.onRefresh != null) widget.onRefresh!();
       }
