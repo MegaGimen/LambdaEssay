@@ -1902,6 +1902,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   bool _isUpdatingRepo = false;
 
   Future<void> _onUpdateRepoAction({bool forcePull = false, bool opIdentical=true}) async {
+    final sw = Stopwatch()..start();
     if (_isUpdatingRepo) return;
     _isUpdatingRepo = true;
     setState(() => loading = true);
@@ -1971,6 +1972,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
               _username!.isNotEmpty &&
               _token!.isNotEmpty) {
             print('Silent fetching for $name...');
+            final swFetch = Stopwatch()..start();
             try {
               // Check status performs git fetch internally
               await _postJson('http://localhost:8080/check_pull_status', {
@@ -1982,6 +1984,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             } catch (e) {
               print('Silent fetch failed: $e');
             }
+            print('[Perf][Frontend][UpdateRepo][Fetch] ${swFetch.elapsedMilliseconds}ms');
+            swFetch.stop();
           }
         } catch (e) {
           // Ignore outer errors
@@ -1989,10 +1993,14 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       }
 
       try {
+        final swUpdate = Stopwatch()..start();
         final resp = await _postJson('http://localhost:8080/track/update', {
           'name': name,
           'opIdentical':opIdentical
         });
+        print('[Perf][Frontend][UpdateRepo][TrackUpdate] ${swUpdate.elapsedMilliseconds}ms');
+        swUpdate.reset();
+        
         final needDocx = resp['needDocx'] == true;
         if (needDocx) {
           String? docx = docxPathCtrl.text.trim();
@@ -2076,13 +2084,20 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             );
           });
         }
+        print('[Perf][Frontend][UpdateRepo][SetState] ${swUpdate.elapsedMilliseconds}ms');
+        swUpdate.reset();
+        
         await _load();
+        print('[Perf][Frontend][UpdateRepo][LoadGraph] ${swUpdate.elapsedMilliseconds}ms');
+        swUpdate.stop();
       } catch (e) {
         setState(() => error = e.toString());
       }
     } finally {
       _isUpdatingRepo = false;
       if (mounted) setState(() => loading = false);
+      sw.stop();
+      print('[Perf][Frontend][UpdateRepo][Total] ${sw.elapsedMilliseconds}ms');
     }
   }
 
