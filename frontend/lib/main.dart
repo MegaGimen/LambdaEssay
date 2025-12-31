@@ -1901,7 +1901,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
   bool _isUpdatingRepo = false;
 
-  Future<void> _onUpdateRepoAction({bool forcePull = false}) async {
+  Future<void> _onUpdateRepoAction({bool forcePull = false, bool op_identical=true}) async {
     if (_isUpdatingRepo) return;
     _isUpdatingRepo = true;
     try {
@@ -1989,6 +1989,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       try {
         final resp = await _postJson('http://localhost:8080/track/update', {
           'name': name,
+          'op_identical':op_identical
         });
         final needDocx = resp['needDocx'] == true;
         if (needDocx) {
