@@ -864,7 +864,7 @@ Future<void> main(List<String> args) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
     final name = (data['name'] as String?)?.trim() ?? '';
-    final op_identical = (data['op_identical'] as bool?) ?? true;
+    final opIdentical = (data['opIdentical'] as bool?) ?? true;
     final newDocxPath = data['newDocxPath'] as String?;
     if (name.isEmpty) {
       return _cors(Response(400,
@@ -872,7 +872,7 @@ Future<void> main(List<String> args) async {
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
-      final resp = await updateTrackingProject(name,op_identical, newDocxPath: newDocxPath);
+      final resp = await updateTrackingProject(name,opIdentical, newDocxPath: newDocxPath);
       return _cors(Response.ok(jsonEncode(resp), headers: {
         'Content-Type': 'application/json; charset=utf-8',
       }));
