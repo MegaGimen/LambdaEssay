@@ -1904,13 +1904,15 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   Future<void> _onUpdateRepoAction({bool forcePull = false, bool opIdentical=true}) async {
     if (_isUpdatingRepo) return;
     _isUpdatingRepo = true;
+    setState(() => loading = true);
     try {
       print("Updating repo...");
       String? name = currentProjectName;
       if (name == null || name.isEmpty) {
-        setState(() => loading = true);
+        // We are already loading, so no need to set loading=true again
         final projects = await _fetchProjectList();
-        setState(() => loading = false);
+        // Do not set loading=false here, we want to keep it loading until the end
+        // setState(() => loading = false);
 
         String? selected = projects.isNotEmpty ? projects.first : null;
 
@@ -2080,6 +2082,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       }
     } finally {
       _isUpdatingRepo = false;
+      if (mounted) setState(() => loading = false);
     }
   }
 
