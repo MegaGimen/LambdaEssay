@@ -2488,7 +2488,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                           ),
                           const SizedBox(width: 8),
                           ElevatedButton(
-                            onPressed: loading ? null : _onUpdateRepoAction,
+                            onPressed: loading ? null: () => _onUpdateRepoAction(opIdentical: false),
                             child: const Text('如果文档没同步就点我'),
                           ),
                           const SizedBox(width: 8),
