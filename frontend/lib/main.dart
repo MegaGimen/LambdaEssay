@@ -3080,8 +3080,10 @@ class _GraphViewState extends State<_GraphView>
   }
 
   Future<void> _doSwitchBranch(String name) async {
+    final sw = Stopwatch()..start();
     widget.onLoading?.call(true);
     try {
+      final swStep = Stopwatch()..start();
       final resp = await http.post(
         Uri.parse('http://localhost:8080/branch/switch'),
         headers: {'Content-Type': 'application/json'},
@@ -3090,6 +3092,9 @@ class _GraphViewState extends State<_GraphView>
           'branchName': name,
         }),
       );
+      print('[Perf][Frontend][SwitchBranch][Request] ${swStep.elapsedMilliseconds}ms');
+      swStep.reset();
+      
       if (resp.statusCode != 200) throw Exception(resp.body);
 
       // Force update repo status after switch (to check diff against new branch)
@@ -3098,6 +3103,8 @@ class _GraphViewState extends State<_GraphView>
       } else {
         if (widget.onRefresh != null) widget.onRefresh!();
       }
+      print('[Perf][Frontend][SwitchBranch][UpdateUI] ${swStep.elapsedMilliseconds}ms');
+      swStep.stop();
 
       if (mounted) {
         ScaffoldMessenger.of(
@@ -3112,6 +3119,8 @@ class _GraphViewState extends State<_GraphView>
       }
     } finally {
       widget.onLoading?.call(false);
+      sw.stop();
+      print('[Perf][Frontend][SwitchBranch][Total] ${sw.elapsedMilliseconds}ms');
     }
   }
 

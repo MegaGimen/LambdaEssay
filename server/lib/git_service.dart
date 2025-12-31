@@ -625,11 +625,20 @@ Future<void> createBranch(String repoPath, String branchName) async {
 Future<void> switchBranch(String projectName, String branchName) async {
   final repoPath = _projectDir(projectName);
   return _withRepoLock(repoPath, () async {
+    final sw = Stopwatch()..start();
+    
     await _runGit(['checkout', '-f', branchName], repoPath);
+    print('[Perf][GitService][SwitchBranch][Checkout] ${sw.elapsedMilliseconds}ms');
+    sw.reset();
+
     //await _forceRegenerateRepoDocx(repoPath);
     await _syncToExternal(repoPath);
+    print('[Perf][GitService][SwitchBranch][SyncToExternal] ${sw.elapsedMilliseconds}ms');
+    sw.reset();
 
     clearCache();
+    print('[Perf][GitService][SwitchBranch][ClearCache] ${sw.elapsedMilliseconds}ms');
+    sw.stop();
   });
 }
 

@@ -656,7 +656,10 @@ Future<void> main(List<String> args) async {
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
+      final sw = Stopwatch()..start();
       await switchBranch(projectName, branchName);
+      sw.stop();
+      print('[Perf][Server][SwitchBranch] Total: ${sw.elapsedMilliseconds}ms');
       return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
         'Content-Type': 'application/json; charset=utf-8',
       }));
