@@ -627,6 +627,7 @@ Future<void> switchBranch(String projectName, String branchName) async {
   return _withRepoLock(repoPath, () async {
     await _runGit(['checkout', '-f', branchName], repoPath);
     //await _forceRegenerateRepoDocx(repoPath);
+    await _syncToExternal(repoPath);
 
     clearCache();
   });
@@ -1098,39 +1099,36 @@ Future<Map<String, dynamic>> updateTrackingProject(
       sectionSw.reset();
 
       // Compare Source vs HEAD
-      bool restored = false;
+      bool isIdenticalToHead = true; // Default assumption until proven otherwise
+      bool hasHead = false;
 
       final tmpDir = await Directory.systemTemp.createTemp('git_head_check_');
       try {
-        final headDocx = p.join(tmpDir.path, 'HEAD.docx');
-        bool hasHead = false;
-        try {
-          await _gitArchiveToDocx(projDir, 'HEAD', headDocx);
-          hasHead = true;
-        } catch (_) {}
-
-        print('[Perf] Git Archive HEAD: ${sectionSw.elapsedMilliseconds}ms');
-        sectionSw.reset();
         if (opIdentical) {
-          if (hasHead) {
-            final isIdentical =
-                await _checkDocxIdentical(sourcePath!, headDocx);
-            print("identical? $isIdentical");
+          final headDocx = p.join(tmpDir.path, 'HEAD.docx');
+          try {
+            await _gitArchiveToDocx(projDir, 'HEAD', headDocx);
+            hasHead = true;
+          } catch (_) {}
+
+          print('[Perf] Git Archive HEAD: ${sectionSw.elapsedMilliseconds}ms');
+          sectionSw.reset();
+
+          if (hasHead && sourcePath != null) {
+            // Always check to know if changed
+            isIdenticalToHead = await _checkDocxIdentical(sourcePath, headDocx);
+            print("identical? $isIdenticalToHead");
             print(
                 '[Perf] Check Identical (Source vs HEAD): ${sectionSw.elapsedMilliseconds}ms');
             sectionSw.reset();
+          }
 
-            if (isIdentical) {
-              // Restore working copy (repo/doc_content) to HEAD
-              // Use reset --hard to ensure NO artifacts remain (e.g. untracked files in doc_content)
-              await _runGit(['reset', '--hard', 'HEAD'], projDir);
-              //await _forceRegenerateRepoDocx(
-              //    projDir); // Sync content.docx from restored folder
-              restored = true;
-              print(
-                  '[Perf] Restore (Git Reset Hard): ${sectionSw.elapsedMilliseconds}ms');
-              sectionSw.reset();
-            }
+          if (hasHead && isIdenticalToHead) {
+            // Restore working copy (repo/doc_content) to HEAD
+            await _runGit(['reset', '--hard', 'HEAD'], projDir);
+            print(
+                '[Perf] Restore (Git Reset Hard): ${sectionSw.elapsedMilliseconds}ms');
+            sectionSw.reset();
           }
         }
       } finally {
@@ -1138,47 +1136,24 @@ Future<Map<String, dynamic>> updateTrackingProject(
           tmpDir.deleteSync(recursive: true);
         } catch (_) {}
       }
-      if (opIdentical) {
-        print('restored? $restored');
-        if (!restored) {
-          // Check if Repo is already identical to Source (e.g. after a rollback)
-          bool alreadySynced = false;
-          final repoDocx = p.join(projDir, kRepoDocxName);
-          if (File(repoDocx).existsSync()) {
-            alreadySynced = await _checkDocxIdentical(sourcePath!, repoDocx);
-            print("Already synced with repo? $alreadySynced");
-            print(
-                '[Perf] Check Identical (Source vs Repo): ${sectionSw.elapsedMilliseconds}ms');
-            sectionSw.reset();
-          }
 
-          if (!alreadySynced) {
-            // Update repo content from source
-            // Do NOT unzip to doc_content yet. Just update content.docx.
-            await _updateContentDocx(projDir, sourcePath!);
-            print(
-                '[Perf] Update Content Docx: ${sectionSw.elapsedMilliseconds}ms');
-            sectionSw.reset();
-
-            // Also force regenerate doc_content (unzip) to make sure working directory matches
-            // But wait, if we are going to commit, we need doc_content.
-            // And we need to show changes in graph?
-            // GitGraph usually shows committed changes.
-            // But we have "WorkingState".
-            // We need to unzip content.docx -> doc_content so that `git status` shows changes.
-            await _flushDocxToContent(projDir);
-            print(
-                '[Perf] Flush Docx To Content: ${sectionSw.elapsedMilliseconds}ms');
-            sectionSw.reset();
-          }
-        }
-      }
       // Check status
       final status = await _runGit(['status', '--porcelain'], projDir);
       if (status.isNotEmpty) {
         print("Git Status dirty: $status");
       }
-      final changed = status.isNotEmpty;
+
+      bool changed = status.isNotEmpty;
+      if (opIdentical) {
+        if (hasHead && !isIdenticalToHead) {
+          changed = true;
+        }
+        // If we don't have HEAD (initial commit), and source exists -> changed.
+        if (!hasHead && sourcePath != null) {
+          changed = true;
+        }
+      }
+
       print('[Perf] Git Status: ${sectionSw.elapsedMilliseconds}ms');
       sectionSw.reset();
 
@@ -1204,6 +1179,38 @@ Future<Map<String, dynamic>> updateTrackingProject(
       _isUpdating[name] = false;
     }
   });
+}
+
+Future<void> _syncToExternal(String repoPath) async {
+  // Sync doc_content -> content.docx -> External
+  // This should be called after operations that modify the working tree (pull, merge, reset, checkout)
+  final tracking = await _readTracking(p.basename(repoPath));
+  final docxPath = tracking['docxPath'] as String?;
+  if (docxPath == null) return;
+
+  print('Syncing internal doc_content to external: $docxPath');
+  
+  // 1. Zip doc_content -> content.docx
+  // We use _forceRegenerateRepoDocx which does exactly this:
+  // zips doc_content -> content.docx
+  // But wait, _forceRegenerateRepoDocx calls _ensureRepoDocx which calls _zipDir.
+  // Let's use _ensureRepoDocx logic but forced.
+  
+  final contentDir = p.join(repoPath, kContentDirName);
+  final repoDocx = p.join(repoPath, kRepoDocxName);
+  
+  if (Directory(contentDir).existsSync()) {
+      // Always regenerate content.docx from doc_content to be sure
+      if (File(repoDocx).existsSync()) {
+        try { File(repoDocx).deleteSync(); } catch (_) {}
+      }
+      await _zipDir(contentDir, repoDocx);
+  }
+  
+  // 2. Update External
+  if (File(repoDocx).existsSync()) {
+    await _writeExternalDocx(repoPath, repoDocx);
+  }
 }
 
 Future<bool> _checkDocxIdentical(
@@ -1362,7 +1369,7 @@ Future<void> resetBranch(String projectName, String commitId) async {
   final repoPath = _projectDir(projectName);
   return _withRepoLock(repoPath, () async {
     await _runGit(['reset', '--hard', commitId], repoPath);
-    //await _forceRegenerateRepoDocx(repoPath);
+    await _syncToExternal(repoPath);
     clearCache();
   });
 }
@@ -1373,26 +1380,9 @@ Future<void> rollbackVersion(String projectName, String commitId) async {
     // Checkout doc_content from commitId to working dir
     // git checkout commitId -- doc_content
     await _runGit(['checkout', commitId, '--', kContentDirName], repoPath);
-
-    // No needs to sync to content.docx
-    //await _forceRegenerateRepoDocx(repoPath);
-
+    
     // Sync to external
-    final tracking = await _readTracking(projectName);
-    final docxPath = tracking['docxPath'] as String?;
-
-    if (docxPath != null) {
-      final localDocx = p.join(repoPath, kRepoDocxName);
-      // Ensure we use _writeExternalDocx for robust handling
-      if (File(localDocx).existsSync()) {
-        await _writeExternalDocx(repoPath, localDocx);
-      } else {
-        final contentDir = Directory(p.join(repoPath, kContentDirName));
-        if (contentDir.existsSync()) {
-          await _writeExternalDocx(repoPath, contentDir.path);
-        }
-      }
-    }
+    await _syncToExternal(repoPath);
   });
 }
 
@@ -1763,32 +1753,9 @@ Future<Map<String, dynamic>> pullFromRemote(
         }
       }
     } catch (e) {}
-/*
-    if (savedTracking != null && savedTracking.isNotEmpty) {
-      // Ensure content.docx is up to date (especially if we just cloned or reset)
-      await _forceRegenerateRepoDocx(projDir);
+    // Sync external docx with pulled content
+    await _syncToExternal(projDir);
 
-      final docxPath = savedTracking['docxPath'] as String?;
-
-      if (docxPath != null) {
-        // Sync Repo Content -> External Docx
-        final localDocx = p.join(projDir, kRepoDocxName);
-        if (File(localDocx).existsSync()) {
-            await _writeExternalDocx(projDir, localDocx);
-        } else {
-          if (File(localDocx).existsSync()) {
-            final bytes = await File(localDocx).readAsBytes();
-            await File(docxPath).writeAsBytes(bytes);
-          } else {
-            final contentDir = Directory(p.join(projDir, kContentDirName));
-            if (contentDir.existsSync()) {
-              await _zipDir(contentDir.path, docxPath);
-            }
-          }
-        }
-      }
-    }
-*/
     clearCache();
     return {
       'status': 'success',
