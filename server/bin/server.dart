@@ -864,7 +864,7 @@ Future<void> main(List<String> args) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
     final name = (data['name'] as String?)?.trim() ?? '';
-    final opIdentical = (data['opIdentical'] as bool?) ?? true;
+    final opIdentical = (data['opIdentical'] as bool?) ?? false;
     final newDocxPath = data['newDocxPath'] as String?;
     if (name.isEmpty) {
       return _cors(Response(400,
