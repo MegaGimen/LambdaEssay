@@ -2250,7 +2250,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       //await Future.delayed(const Duration(milliseconds: 1000));
       if (mounted) {
         print("Auto-updating after merge...");
-        await _onUpdateRepoAction(forcePull: false);
+        await _onUpdateRepoAction(forcePull: false,opIdentical: false);
         // Ensure loading is off if _onUpdateRepoAction didn't do it (e.g. early return)
         if (mounted && loading) {
           setState(() => loading = false);
