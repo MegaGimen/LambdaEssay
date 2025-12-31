@@ -1191,6 +1191,7 @@ Future<Map<String, dynamic>> updateTrackingProject(
 }
 
 Future<void> _syncToExternal(String repoPath) async {
+  final sw = Stopwatch()..start();
   // Sync doc_content -> content.docx -> External
   // This should be called after operations that modify the working tree (pull, merge, reset, checkout)
   final tracking = await _readTracking(p.basename(repoPath));
@@ -1214,12 +1215,17 @@ Future<void> _syncToExternal(String repoPath) async {
         try { File(repoDocx).deleteSync(); } catch (_) {}
       }
       await _zipDir(contentDir, repoDocx);
+      print('[Perf][GitService][SyncToExternal][ZipDir] ${sw.elapsedMilliseconds}ms');
+      sw.reset();
   }
   
   // 2. Update External
   if (File(repoDocx).existsSync()) {
     await _writeExternalDocx(repoPath, repoDocx);
+    print('[Perf][GitService][SyncToExternal][WriteExternal] ${sw.elapsedMilliseconds}ms');
+    sw.reset();
   }
+  sw.stop();
 }
 
 Future<bool> _checkDocxIdentical(
