@@ -6,6 +6,7 @@ import 'dart:io';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -2358,9 +2359,24 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        Scaffold(
+    return Listener(
+      onPointerSignal: (event) {
+        if (event is PointerScrollEvent) {
+          final keys = HardwareKeyboard.instance.logicalKeysPressed;
+          if (keys.contains(LogicalKeyboardKey.controlLeft) ||
+              keys.contains(LogicalKeyboardKey.controlRight)) {
+            final dy = event.scrollDelta.dy;
+            final double delta = dy > 0 ? -0.1 : 0.1;
+            final newValue = (_uiScale + delta).clamp(0.5, 2.0);
+            setState(() {
+              _uiScale = newValue;
+            });
+          }
+        }
+      },
+      child: Stack(
+        children: [
+          Scaffold(
           appBar: AppBar(title: const Text('LambdaEssay')),
           body: Column(
             children: [
@@ -2721,7 +2737,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           ),
         if (loading) const Center(child: CircularProgressIndicator()),
       ],
-    );
+    ),);
   }
 }
 
@@ -2785,6 +2801,7 @@ class _GraphViewState extends State<_GraphView>
   static const Duration _rightPanDelay = Duration(milliseconds: 200);
   final Set<String> _selectedNodes = {};
   bool _comparing = false;
+  bool _isCtrlPressed = false;
 
   Offset _branchPanelOffset = const Offset(16, 16);
   Size _branchPanelSize = const Size(420, 96);
@@ -2849,6 +2866,7 @@ class _GraphViewState extends State<_GraphView>
   @override
   void initState() {
     super.initState();
+    HardwareKeyboard.instance.addHandler(_handleKey);
     _tc = widget.transformationController ?? TransformationController();
     _graphFlashCtrl = AnimationController(
       vsync: this,
@@ -2942,11 +2960,23 @@ class _GraphViewState extends State<_GraphView>
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleKey);
     _graphFlashCtrl.dispose();
     if (widget.transformationController == null) {
       _tc.dispose();
     }
     super.dispose();
+  }
+
+  bool _handleKey(KeyEvent event) {
+    final isCtrl = HardwareKeyboard.instance.logicalKeysPressed.any(
+        (k) => k == LogicalKeyboardKey.controlLeft || k == LogicalKeyboardKey.controlRight);
+    if (isCtrl != _isCtrlPressed) {
+      setState(() {
+        _isCtrlPressed = isCtrl;
+      });
+    }
+    return false;
   }
 
   void _resetView() {
@@ -3747,6 +3777,7 @@ class _GraphViewState extends State<_GraphView>
                 }
               },
               child: InteractiveViewer(
+                scaleEnabled: !_isCtrlPressed,
                 transformationController: _tc,
                 minScale: 0.2,
                 maxScale: 4,

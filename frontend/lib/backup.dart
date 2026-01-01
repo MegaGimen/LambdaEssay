@@ -1,5 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'models.dart';
 import 'visualize.dart'; // For VisualizeDocxPage
@@ -317,11 +319,26 @@ class _BackupPageState extends State<BackupPage> {
   Widget build(BuildContext context) {
     final repo = widget.projectName;
     final commits = _filtered();
-    return MediaQuery(
-      data: MediaQuery.of(context).copyWith(textScaleFactor: _uiScale),
-      child: Stack(
-        children: [
-          Scaffold(
+    return Listener(
+      onPointerSignal: (event) {
+        if (event is PointerScrollEvent) {
+          final keys = HardwareKeyboard.instance.logicalKeysPressed;
+          if (keys.contains(LogicalKeyboardKey.controlLeft) ||
+              keys.contains(LogicalKeyboardKey.controlRight)) {
+            final dy = event.scrollDelta.dy;
+            final double delta = dy > 0 ? -0.1 : 0.1;
+            final newValue = (_uiScale + delta).clamp(0.5, 2.0);
+            setState(() {
+              _uiScale = newValue;
+            });
+          }
+        }
+      },
+      child: MediaQuery(
+        data: MediaQuery.of(context).copyWith(textScaleFactor: _uiScale),
+        child: Stack(
+          children: [
+            Scaffold(
           appBar: AppBar(
             backgroundColor: const Color(0xFF000A3F),
             foregroundColor: Colors.white,
@@ -566,7 +583,7 @@ class _BackupPageState extends State<BackupPage> {
         if (_loading)
           const Center(child: CircularProgressIndicator()),
       ],
-    ),);
+    ),),);
   }
 }
 
