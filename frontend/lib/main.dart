@@ -1232,7 +1232,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       } else {
         // Just reload
         await _load();
-        await _onUpdateRepoAction(forcePull: false);
+        await _onUpdateRepoAction(forcePull: false, opIdentical: false);
       }
     } catch (e) {
       setState(() => error = '附着失败: $e');
@@ -1289,7 +1289,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
       // Reload to reflect branch switch
       await _load();
-      await _onUpdateRepoAction(forcePull: false);
+      await _onUpdateRepoAction(forcePull: false,opIdentical: false);
 
       // If Push, push the NEW branch
       if (isPush) {
@@ -1853,7 +1853,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         docxPathCtrl.text = docxPath ?? '';
       });
       // Auto update after opening/selecting repo to sync latest status
-      await _onUpdateRepoAction(forcePull: true);
+      await _onUpdateRepoAction(forcePull: true,opIdentical: false);
     } catch (e) {
       setState(() => error = e.toString());
     } finally {
