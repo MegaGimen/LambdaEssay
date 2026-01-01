@@ -3012,7 +3012,7 @@ class _GraphViewState extends State<_GraphView>
       if (resp.statusCode != 200) throw Exception(resp.body);
       // Use onUpdate which should map to _onUpdateRepo in parent
       if (widget.onUpdate != null) {
-        await widget.onUpdate!();
+        await widget.onUpdate!(opIdentical:false);
       } else {
         // Fallback if onUpdate not provided (should not happen in main usage)
         if (widget.onRefresh != null) widget.onRefresh!();
