@@ -18,6 +18,7 @@ import 'visualize.dart';
 import 'backup.dart';
 import 'pull_preview.dart';
 import 'graph_view.dart';
+import 'movable_panel.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -2773,6 +2774,63 @@ class _GraphViewState extends State<_GraphView>
   final Set<String> _selectedNodes = {};
   bool _comparing = false;
 
+  Offset _branchPanelOffset = const Offset(16, 16);
+  Size _branchPanelSize = const Size(920, 170);
+  Offset _legendPanelOffset = const Offset(0, 80);
+  Size _legendPanelSize = const Size(360, 560);
+  bool _legendPanelInitialized = false;
+
+  Offset _clampPanelOffset(Offset value, Size panelSize, Size parentSize) {
+    final scaledW = panelSize.width * widget.uiScale;
+    final scaledH = panelSize.height * widget.uiScale;
+    final maxDx = math.max(0.0, parentSize.width - scaledW);
+    final maxDy = math.max(0.0, parentSize.height - scaledH);
+    return Offset(
+      value.dx.clamp(0.0, maxDx),
+      value.dy.clamp(0.0, maxDy),
+    );
+  }
+
+  void _ensureOverlayBounds(Size parentSize) {
+    if (!parentSize.width.isFinite || !parentSize.height.isFinite) return;
+
+    Offset legendOffset = _legendPanelOffset;
+    if (!_legendPanelInitialized) {
+      final dx = math.max(
+        0.0,
+        parentSize.width - _legendPanelSize.width * widget.uiScale - 16,
+      );
+      legendOffset = Offset(dx, 80);
+    }
+
+    final nextLegendOffset = _clampPanelOffset(
+      legendOffset,
+      _legendPanelSize,
+      parentSize,
+    );
+    final nextBranchOffset = _clampPanelOffset(
+      _branchPanelOffset,
+      _branchPanelSize,
+      parentSize,
+    );
+
+    final needUpdate =
+        (!_legendPanelInitialized) ||
+        (nextLegendOffset - _legendPanelOffset).distance > 0.5 ||
+        (nextBranchOffset - _branchPanelOffset).distance > 0.5;
+
+    if (!needUpdate) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      setState(() {
+        _branchPanelOffset = nextBranchOffset;
+        _legendPanelOffset = nextLegendOffset;
+        _legendPanelInitialized = true;
+      });
+    });
+  }
+
   @override
   void initState() {
     super.initState();
@@ -3512,8 +3570,12 @@ class _GraphViewState extends State<_GraphView>
     _branchColors ??= _assignBranchColors(widget.data.branches);
     _pairBranches ??= _buildPairBranches(widget.data);
     _canvasSize ??= _computeCanvasSize(widget.data);
-    return Stack(
-      children: [
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final parentSize = constraints.biggest;
+        _ensureOverlayBounds(parentSize);
+        return Stack(
+          children: [
         MouseRegion(
           onHover: (d) {
             final scene = _toScene(d.localPosition);
@@ -3666,260 +3728,254 @@ class _GraphViewState extends State<_GraphView>
             ),
           ),
         ),
-        Positioned(
-          top: 16,
-          left: 16,
-          child: widget.readOnly
-              ? const SizedBox.shrink()
-              : Transform.scale(
-                  scale: widget.uiScale,
-                  alignment: Alignment.topLeft,
-                  child: Material(
-                    elevation: 4,
-                    borderRadius: BorderRadius.circular(8),
-                    child: Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(8),
+        if (!widget.readOnly)
+          MovableResizablePanel(
+            offset: _branchPanelOffset,
+            size: _branchPanelSize,
+            parentSize: parentSize,
+            scale: widget.uiScale,
+            title: '当前分支与操作',
+            minSize: const Size(420, 120),
+            maxSize: const Size(1600, 600),
+            elevation: 4,
+            borderRadius: BorderRadius.circular(8),
+            contentPadding: const EdgeInsets.all(12),
+            backgroundColor: Colors.white,
+            onOffsetChanged: (v) => setState(() => _branchPanelOffset = v),
+            onSizeChanged: (v) => setState(() => _branchPanelSize = v),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '当前分支: ${Branch.decodeName(widget.data.currentBranch ?? "Unknown")}',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ElevatedButton.icon(
+                          onPressed: _onCommit,
+                          icon: const Icon(Icons.upload),
+                          label: const Text('提交更改'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green,
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        OutlinedButton.icon(
+                          onPressed: _onCreateBranch,
+                          icon: const Icon(Icons.add),
+                          label: const Text('新建分支'),
+                        ),
+                        const SizedBox(width: 8),
+                        OutlinedButton.icon(
+                          onPressed: _onSwitchBranch,
+                          icon: const Icon(Icons.swap_horiz),
+                          label: const Text('切换分支'),
+                        ),
+                        const SizedBox(width: 8),
+                        OutlinedButton.icon(
+                          onPressed: _onMergeButton,
+                          icon: const Icon(Icons.call_merge),
+                          label: const Text('合并分支'),
+                        ),
+                        const SizedBox(width: 8),
+                        OutlinedButton.icon(
+                          onPressed: widget.onFindIdentical,
+                          icon: const Icon(Icons.find_in_page),
+                          label: const Text('查找与当前本地文档相同的版本'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        MovableResizablePanel(
+          offset: _legendPanelOffset,
+          size: _legendPanelSize,
+          parentSize: parentSize,
+          scale: widget.uiScale,
+          title: '分支图例与设置',
+          minSize: const Size(260, 260),
+          maxSize: const Size(900, 1200),
+          elevation: 2,
+          borderRadius: BorderRadius.circular(6),
+          contentPadding: const EdgeInsets.all(8),
+          backgroundColor: const Color(0xFFFDFDFD),
+          onOffsetChanged: (v) => setState(() => _legendPanelOffset = v),
+          onSizeChanged: (v) => setState(() => _legendPanelSize = v),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: _resetView,
+                      icon: const Icon(Icons.home),
+                      label: const Text('返回主视角'),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton.icon(
+                      onPressed: () {
+                        if (widget.projectName == null ||
+                            widget.repoPath.isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('请先打开一个项目')),
+                          );
+                          return;
+                        }
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) => BackupPage(
+                                    projectName: widget.projectName!,
+                                    repoPath: widget.repoPath,
+                                    token: widget.token ?? 'No token there bro.',
+                                  )),
+                        );
+                      },
+                      icon: const Icon(Icons.history),
+                      label: const Text('历史备份'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  '间距调整',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('节点间距'),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 180,
+                      child: Slider(
+                        min: 40,
+                        max: 160,
+                        divisions: 24,
+                        value: _rowHeight,
+                        label: _rowHeight.round().toString(),
+                        onChanged: (v) {
+                          setState(() {
+                            _rowHeight = v;
+                            _canvasSize = _computeCanvasSize(widget.data);
+                          });
+                        },
                       ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                    ),
+                    Text(_rowHeight.round().toString()),
+                  ],
+                ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('分支间距'),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 180,
+                      child: Slider(
+                        min: 60,
+                        max: 200,
+                        divisions: 28,
+                        value: _laneWidth,
+                        label: _laneWidth.round().toString(),
+                        onChanged: (v) {
+                          setState(() {
+                            _laneWidth = v;
+                            _canvasSize = _computeCanvasSize(widget.data);
+                          });
+                        },
+                      ),
+                    ),
+                    Text(_laneWidth.round().toString()),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  '分支图例',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 6),
+                for (final b in widget.data.branches)
+                  InkWell(
+                    onDoubleTap: () => _doSwitchBranch(b.name),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text(
-                            '当前分支: ${Branch.decodeName(widget.data.currentBranch ?? "Unknown")}',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
+                          Container(
+                            width: 12,
+                            height: 12,
+                            decoration: BoxDecoration(
+                              color: _branchColors![b.name]!,
+                              shape: BoxShape.circle,
                             ),
                           ),
-                          const SizedBox(height: 8),
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                                ElevatedButton.icon(
-                                  onPressed: _onCommit,
-                                  icon: const Icon(Icons.upload),
-                                  label: const Text('提交更改'),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.green,
-                                    foregroundColor: Colors.white,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                              OutlinedButton.icon(
-                                onPressed: _onCreateBranch,
-                                icon: const Icon(Icons.add),
-                                label: const Text('新建分支'),
-                              ),
-                              const SizedBox(width: 8),
-                              OutlinedButton.icon(
-                                onPressed: _onSwitchBranch,
-                                icon: const Icon(Icons.swap_horiz),
-                                label: const Text('切换分支'),
-                              ),
-                              const SizedBox(width: 8),
-                              OutlinedButton.icon(
-                                onPressed: _onMergeButton,
-                                icon: const Icon(Icons.call_merge),
-                                label: const Text('合并分支'),
-                              ),
-                              const SizedBox(width: 8),
-                              OutlinedButton.icon(
-                                onPressed: widget.onFindIdentical,
-                                icon: const Icon(Icons.find_in_page),
-                                label: const Text('查找与当前本地文档相同的版本'),
-                              ),
-                            ],
+                          const SizedBox(width: 6),
+                          Text(
+                            Branch.decodeName(b.name),
+                            style: TextStyle(
+                              fontWeight: b.name == widget.data.currentBranch
+                                  ? FontWeight.bold
+                                  : FontWeight.normal,
+                              color: b.name == widget.data.currentBranch
+                                  ? Colors.blue[900]
+                                  : Colors.black,
+                            ),
                           ),
+                          if (b.name == widget.data.currentBranch)
+                            const Padding(
+                              padding: EdgeInsets.only(left: 4),
+                              child: Icon(
+                                Icons.check_circle,
+                                size: 14,
+                                color: Colors.green,
+                              ),
+                            ),
                         ],
                       ),
                     ),
                   ),
-                ),
-        ),
-        Positioned(
-          right: 16,
-          top: 80,
-          child: Transform.scale(
-            scale: widget.uiScale,
-            alignment: Alignment.topRight,
-            child: Material(
-              elevation: 2,
-              child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFDFDFD),
-                  borderRadius: BorderRadius.circular(6),
-                  boxShadow: const [
-                    BoxShadow(color: Color(0x22000000), blurRadius: 4),
-                  ],
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
+                if (_hasUnknownEdges())
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Row(
                       mainAxisSize: MainAxisSize.min,
-                      children: [
-                        ElevatedButton.icon(
-                          onPressed: _resetView,
-                          icon: const Icon(Icons.home),
-                          label: const Text('返回主视角'),
-                        ),
-                        const SizedBox(width: 8),
-                        ElevatedButton.icon(
-                          onPressed: () {
-                            if (widget.projectName == null ||
-                                widget.repoPath.isEmpty) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('请先打开一个项目')),
-                              );
-                              return;
-                            }
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (_) => BackupPage(
-                                        projectName: widget.projectName!,
-                                        repoPath: widget.repoPath,
-                                        token: widget.token ??
-                                            'No token there bro.',
-                                      )),
-                            );
-                          },
-                          icon: const Icon(Icons.history),
-                          label: const Text('历史备份'),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      '间距调整',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 6),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Text('节点间距'),
-                        const SizedBox(width: 8),
+                      children: const [
                         SizedBox(
-                          width: 180,
-                          child: Slider(
-                            min: 40,
-                            max: 160,
-                            divisions: 24,
-                            value: _rowHeight,
-                            label: _rowHeight.round().toString(),
-                            onChanged: (v) {
-                              setState(() {
-                                _rowHeight = v;
-                                _canvasSize = _computeCanvasSize(widget.data);
-                              });
-                            },
-                          ),
-                        ),
-                        Text(_rowHeight.round().toString()),
-                      ],
-                    ),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Text('分支间距'),
-                        const SizedBox(width: 8),
-                        SizedBox(
-                          width: 180,
-                          child: Slider(
-                            min: 60,
-                            max: 200,
-                            divisions: 28,
-                            value: _laneWidth,
-                            label: _laneWidth.round().toString(),
-                            onChanged: (v) {
-                              setState(() {
-                                _laneWidth = v;
-                                _canvasSize = _computeCanvasSize(widget.data);
-                              });
-                            },
-                          ),
-                        ),
-                        Text(_laneWidth.round().toString()),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      '分支图例',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 6),
-                    for (final b in widget.data.branches)
-                      InkWell(
-                        onDoubleTap: () => _doSwitchBranch(b.name),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 4),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Container(
-                                width: 12,
-                                height: 12,
-                                decoration: BoxDecoration(
-                                  color: _branchColors![b.name]!,
-                                  shape: BoxShape.circle,
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                Branch.decodeName(b.name),
-                                style: TextStyle(
-                                  fontWeight:
-                                      b.name == widget.data.currentBranch
-                                          ? FontWeight.bold
-                                          : FontWeight.normal,
-                                  color: b.name == widget.data.currentBranch
-                                      ? Colors.blue[900]
-                                      : Colors.black,
-                                ),
-                              ),
-                              if (b.name == widget.data.currentBranch)
-                                const Padding(
-                                  padding: EdgeInsets.only(left: 4),
-                                  child: Icon(
-                                    Icons.check_circle,
-                                    size: 14,
-                                    color: Colors.green,
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    if (_hasUnknownEdges())
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 2),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: const [
-                            SizedBox(
-                              width: 12,
-                              height: 12,
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  color: Color(0xFF9E9E9E),
-                                  shape: BoxShape.circle,
-                                ),
-                              ),
+                          width: 12,
+                          height: 12,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: Color(0xFF9E9E9E),
+                              shape: BoxShape.circle,
                             ),
-                            SizedBox(width: 6),
-                            Text('其它'),
-                          ],
+                          ),
                         ),
-                      ),
-                  ],
-                ),
-              ),
+                        SizedBox(width: 6),
+                        Text('其它'),
+                      ],
+                    ),
+                  ),
+              ],
             ),
           ),
         ),
@@ -4063,7 +4119,9 @@ class _GraphViewState extends State<_GraphView>
               ),
             ),
           ),
-      ],
+          ],
+        );
+      },
     );
   }
 

@@ -1,6 +1,7 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'models.dart';
+import 'movable_panel.dart';
 
 class GraphPainter extends CustomPainter {
   final GraphData data;
@@ -675,6 +676,10 @@ class _SimpleGraphViewState extends State<SimpleGraphView> {
   Size? _canvasSize;
   Map<String, Color>? _branchColors;
   final Set<String> _selectedNodes = {};
+
+  Offset _legendOffset = const Offset(0, 0);
+  Size _legendSize = const Size(220, 300);
+  bool _legendInitialized = false;
   
   Map<String, int>? _cachedLaneOf;
   Map<String, int>? _cachedRowOf;
@@ -808,60 +813,74 @@ class _SimpleGraphViewState extends State<SimpleGraphView> {
     );
 
     if (widget.showLegend && _branchColors != null && _branchColors!.isNotEmpty) {
-      return Stack(
-        children: [
-          content,
-          Positioned(
-            top: 10,
-            right: 10,
-            child: Container(
-              padding: const EdgeInsets.all(8),
-              constraints: const BoxConstraints(maxWidth: 200, maxHeight: 300),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.9),
-                border: Border.all(color: Colors.grey.shade300),
-                borderRadius: BorderRadius.circular(4),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
-                    blurRadius: 4,
-                    offset: const Offset(0, 2),
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          final parentSize = constraints.biggest;
+          if (!_legendInitialized && parentSize.width.isFinite) {
+            final dx = (parentSize.width - _legendSize.width - 10).clamp(0.0, parentSize.width);
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              setState(() {
+                _legendOffset = Offset(dx, 10);
+                _legendInitialized = true;
+              });
+            });
+          }
+
+          return Stack(
+            children: [
+              content,
+              MovableResizablePanel(
+                offset: _legendOffset,
+                size: _legendSize,
+                parentSize: parentSize,
+                title: '分支图例',
+                minSize: const Size(160, 140),
+                maxSize: const Size(520, 640),
+                elevation: 2,
+                borderRadius: BorderRadius.circular(6),
+                contentPadding: const EdgeInsets.all(8),
+                backgroundColor: Colors.white.withOpacity(0.92),
+                onOffsetChanged: (v) => setState(() => _legendOffset = v),
+                onSizeChanged: (v) => setState(() => _legendSize = v),
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: _branchColors!.entries
+                        .map(
+                          (e) => Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 2),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  width: 12,
+                                  height: 12,
+                                  decoration: BoxDecoration(
+                                    color: e.value,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Flexible(
+                                  child: Text(
+                                    Branch.decodeName(e.key),
+                                    style: const TextStyle(fontSize: 12),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                        .toList(),
                   ),
-                ],
-              ),
-              child: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: _branchColors!.entries.map((e) => Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 2),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: 12, 
-                          height: 12, 
-                          decoration: BoxDecoration(
-                            color: e.value,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Flexible(
-                          child: Text(
-                            Branch.decodeName(e.key), 
-                            style: const TextStyle(fontSize: 12),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                  )).toList(),
                 ),
               ),
-            ),
-          ),
-        ],
+            ],
+          );
+        },
       );
     }
 
