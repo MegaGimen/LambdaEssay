@@ -606,6 +606,19 @@ Future<void> main(List<String> args) async {
           body: jsonEncode({'error': 'repoPath, author, message required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
+    
+    // Attempt to save Word document if plugin is connected
+    if (pluginSender != null) {
+      print('Executing Word save before commit...');
+      final saved = await pluginSender!({'action': 'save'});
+      if (!saved) {
+        return _cors(Response(500,
+            body: jsonEncode({'error': 'Word save failed. Commit aborted.'}),
+            headers: {'Content-Type': 'application/json; charset=utf-8'}));
+      }
+      print('Word save verified.');
+    }
+
     try {
       await commitChanges(repoPath, author, message);
       return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
