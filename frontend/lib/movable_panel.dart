@@ -2,7 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-class MovableResizablePanel extends StatelessWidget {
+class MovableResizablePanel extends StatefulWidget {
   final Offset offset;
   final Size size;
   final Size parentSize;
@@ -40,11 +40,22 @@ class MovableResizablePanel extends StatelessWidget {
     this.cornerHandleSize = 20,
   });
 
+  @override
+  State<MovableResizablePanel> createState() => _MovableResizablePanelState();
+}
+
+class _MovableResizablePanelState extends State<MovableResizablePanel> {
+  Offset? _dragStartGlobal;
+  Offset? _dragStartOffset;
+
+  Offset? _resizeStartGlobal;
+  Size? _resizeStartSize;
+
   Offset _clampOffset(Offset value, Size panelSize) {
-    final scaledW = panelSize.width * scale;
-    final scaledH = panelSize.height * scale;
-    final maxDx = math.max(0.0, parentSize.width - scaledW);
-    final maxDy = math.max(0.0, parentSize.height - scaledH);
+    final scaledW = panelSize.width * widget.scale;
+    final scaledH = panelSize.height * widget.scale;
+    final maxDx = math.max(0.0, widget.parentSize.width - scaledW);
+    final maxDy = math.max(0.0, widget.parentSize.height - scaledH);
     return Offset(
       value.dx.clamp(0.0, maxDx),
       value.dy.clamp(0.0, maxDy),
@@ -52,58 +63,104 @@ class MovableResizablePanel extends StatelessWidget {
   }
 
   Size _clampSize(Size value) {
-    final viewportMaxW = parentSize.width.isFinite && parentSize.width > 0
-        ? parentSize.width / scale
-        : maxSize.width;
-    final viewportMaxH = parentSize.height.isFinite && parentSize.height > 0
-        ? parentSize.height / scale
-        : maxSize.height;
+    final viewportMaxW =
+        widget.parentSize.width.isFinite && widget.parentSize.width > 0
+            ? widget.parentSize.width / widget.scale
+            : widget.maxSize.width;
+    final viewportMaxH =
+        widget.parentSize.height.isFinite && widget.parentSize.height > 0
+            ? widget.parentSize.height / widget.scale
+            : widget.maxSize.height;
 
-    final effectiveMaxW = math.max(minSize.width, math.min(maxSize.width, viewportMaxW));
-    final effectiveMaxH = math.max(minSize.height, math.min(maxSize.height, viewportMaxH));
+    final effectiveMaxW =
+        math.max(widget.minSize.width, math.min(widget.maxSize.width, viewportMaxW));
+    final effectiveMaxH =
+        math.max(widget.minSize.height, math.min(widget.maxSize.height, viewportMaxH));
 
     return Size(
-      value.width.clamp(minSize.width, effectiveMaxW),
-      value.height.clamp(minSize.height, effectiveMaxH),
+      value.width.clamp(widget.minSize.width, effectiveMaxW),
+      value.height.clamp(widget.minSize.height, effectiveMaxH),
     );
+  }
+
+  void _startDrag(DragStartDetails d, Offset clampedOffset) {
+    _dragStartGlobal = d.globalPosition;
+    _dragStartOffset = clampedOffset;
+  }
+
+  void _updateDrag(DragUpdateDetails d, Size clampedSize) {
+    final startG = _dragStartGlobal;
+    final startO = _dragStartOffset;
+    if (startG == null || startO == null) return;
+    final nextOffset = _clampOffset(startO + (d.globalPosition - startG), clampedSize);
+    widget.onOffsetChanged(nextOffset);
+  }
+
+  void _endDrag() {
+    _dragStartGlobal = null;
+    _dragStartOffset = null;
+  }
+
+  void _startResize(DragStartDetails d, Size clampedSize) {
+    _resizeStartGlobal = d.globalPosition;
+    _resizeStartSize = clampedSize;
+  }
+
+  void _updateResize(DragUpdateDetails d, Offset clampedOffset, Size clampedSize,
+      {bool x = false, bool y = false}) {
+    final startG = _resizeStartGlobal;
+    final startS = _resizeStartSize;
+    if (startG == null || startS == null) return;
+
+    final s = widget.scale == 0 ? 1.0 : widget.scale;
+    final deltaGlobal = d.globalPosition - startG;
+
+    final nextSize = _clampSize(
+      Size(
+        x ? (startS.width + deltaGlobal.dx / s) : startS.width,
+        y ? (startS.height + deltaGlobal.dy / s) : startS.height,
+      ),
+    );
+
+    widget.onSizeChanged(nextSize);
+    widget.onOffsetChanged(_clampOffset(clampedOffset, nextSize));
+  }
+
+  void _endResize() {
+    _resizeStartGlobal = null;
+    _resizeStartSize = null;
   }
 
   @override
   Widget build(BuildContext context) {
-    final clampedSize = _clampSize(size);
-    final clampedOffset = _clampOffset(offset, clampedSize);
+    final clampedSize = _clampSize(widget.size);
+    final clampedOffset = _clampOffset(widget.offset, clampedSize);
 
     return Transform.translate(
       offset: clampedOffset,
       child: Transform.scale(
-        scale: scale,
+        scale: widget.scale,
         alignment: Alignment.topLeft,
         child: Material(
-          elevation: elevation,
-          borderRadius: borderRadius,
+          elevation: widget.elevation,
+          borderRadius: widget.borderRadius,
           color: Colors.transparent,
           child: ClipRRect(
-            borderRadius: borderRadius,
+            borderRadius: widget.borderRadius,
             child: SizedBox(
               width: clampedSize.width,
               height: clampedSize.height,
               child: DecoratedBox(
-                decoration: BoxDecoration(color: backgroundColor),
+                decoration: BoxDecoration(color: widget.backgroundColor),
                 child: Stack(
                   children: [
                     Column(
                       children: [
                         GestureDetector(
                           behavior: HitTestBehavior.opaque,
-                          onPanUpdate: (d) {
-                            final delta = Offset(
-                              d.delta.dx * scale,
-                              d.delta.dy * scale,
-                            );
-                            onOffsetChanged(
-                              _clampOffset(clampedOffset + delta, clampedSize),
-                            );
-                          },
+                          onPanStart: (d) => _startDrag(d, clampedOffset),
+                          onPanUpdate: (d) => _updateDrag(d, clampedSize),
+                          onPanEnd: (_) => _endDrag(),
                           child: SizedBox(
                             height: 24,
                             child: Padding(
@@ -112,11 +169,11 @@ class MovableResizablePanel extends StatelessWidget {
                                 mainAxisSize: MainAxisSize.max,
                                 children: [
                                   const Icon(Icons.drag_indicator, size: 18),
-                                  if (title != null) ...[
+                                  if (widget.title != null) ...[
                                     const SizedBox(width: 6),
                                     Expanded(
                                       child: Text(
-                                        title!,
+                                        widget.title!,
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
                                         softWrap: false,
@@ -135,8 +192,8 @@ class MovableResizablePanel extends StatelessWidget {
                         ),
                         Expanded(
                           child: Padding(
-                            padding: contentPadding,
-                            child: child,
+                            padding: widget.contentPadding,
+                            child: widget.child,
                           ),
                         ),
                       ],
@@ -144,39 +201,27 @@ class MovableResizablePanel extends StatelessWidget {
                     Positioned(
                       right: 0,
                       top: 24,
-                      bottom: cornerHandleSize,
+                      bottom: widget.cornerHandleSize,
                       child: GestureDetector(
                         behavior: HitTestBehavior.opaque,
-                        onPanUpdate: (d) {
-                          final nextSize = _clampSize(
-                            Size(
-                              clampedSize.width + d.delta.dx,
-                              clampedSize.height,
-                            ),
-                          );
-                          onSizeChanged(nextSize);
-                          onOffsetChanged(_clampOffset(clampedOffset, nextSize));
-                        },
-                        child: SizedBox(width: handleThickness),
+                        onPanStart: (d) => _startResize(d, clampedSize),
+                        onPanUpdate: (d) =>
+                            _updateResize(d, clampedOffset, clampedSize, x: true),
+                        onPanEnd: (_) => _endResize(),
+                        child: SizedBox(width: widget.handleThickness),
                       ),
                     ),
                     Positioned(
                       left: 0,
-                      right: cornerHandleSize,
+                      right: widget.cornerHandleSize,
                       bottom: 0,
                       child: GestureDetector(
                         behavior: HitTestBehavior.opaque,
-                        onPanUpdate: (d) {
-                          final nextSize = _clampSize(
-                            Size(
-                              clampedSize.width,
-                              clampedSize.height + d.delta.dy,
-                            ),
-                          );
-                          onSizeChanged(nextSize);
-                          onOffsetChanged(_clampOffset(clampedOffset, nextSize));
-                        },
-                        child: SizedBox(height: handleThickness),
+                        onPanStart: (d) => _startResize(d, clampedSize),
+                        onPanUpdate: (d) =>
+                            _updateResize(d, clampedOffset, clampedSize, y: true),
+                        onPanEnd: (_) => _endResize(),
+                        child: SizedBox(height: widget.handleThickness),
                       ),
                     ),
                     Positioned(
@@ -184,16 +229,10 @@ class MovableResizablePanel extends StatelessWidget {
                       bottom: 0,
                       child: GestureDetector(
                         behavior: HitTestBehavior.opaque,
-                        onPanUpdate: (d) {
-                          final nextSize = _clampSize(
-                            Size(
-                              clampedSize.width + d.delta.dx,
-                              clampedSize.height + d.delta.dy,
-                            ),
-                          );
-                          onSizeChanged(nextSize);
-                          onOffsetChanged(_clampOffset(clampedOffset, nextSize));
-                        },
+                        onPanStart: (d) => _startResize(d, clampedSize),
+                        onPanUpdate: (d) =>
+                            _updateResize(d, clampedOffset, clampedSize, x: true, y: true),
+                        onPanEnd: (_) => _endResize(),
                         child: const SizedBox(
                           width: 20,
                           height: 20,
