@@ -569,11 +569,11 @@ Future<void> main(List<String> args) async {
       return _cors(Response.ok(jsonEncode(result.toJson()), headers: {
         'Content-Type': 'application/json; charset=utf-8',
       }));
-    } catch (e) {
-      var stackTrace = StackTrace.current;
-      print(stackTrace);
+    } catch (e, s) {
+      print('Error processing /compare_repos: $e');
+      print('Stack trace:\n$s');
       return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
+          body: jsonEncode({'error': e.toString(), 'stack': s.toString()}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
   });
