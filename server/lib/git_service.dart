@@ -6,6 +6,9 @@ import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'models.dart';
 
+bool _debugMode = false;
+void setDebugMode(bool value) => _debugMode = value;
+
 class PullPreviewResult {
   final GraphResponse current;
   final GraphResponse target;
@@ -2103,8 +2106,9 @@ Future<void> prepareMerge(String repoName, String targetBranch) async {
 
       // 3. Compare -> diff.docx
       final diffDocx = p.join(tmpDir.path, 'diff.docx');
-      final psScript =
-          r'c:\Users\m1369\Documents\gitbin\frontend\lib\doccmp.ps1';
+      final psScript = _debugMode
+          ? r'c:\Users\m1369\Documents\gitbin\frontend\lib\doccmp.ps1'
+          : 'doccmp.ps1';
 
       final pRes = await Process.run('powershell', [
         '-ExecutionPolicy',
