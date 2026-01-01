@@ -1,5 +1,6 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'models.dart';
 import 'movable_panel.dart';
 
@@ -763,6 +764,11 @@ class _SimpleGraphViewState extends State<SimpleGraphView> {
     final content = Listener(
       onPointerSignal: (event) {
         if (event is PointerScrollEvent) {
+          final keys = HardwareKeyboard.instance.logicalKeysPressed;
+          if (keys.contains(LogicalKeyboardKey.controlLeft) ||
+              keys.contains(LogicalKeyboardKey.controlRight)) {
+            return;
+          }
           final double scaleChange = event.scrollDelta.dy < 0 ? 1.1 : 0.9;
           final Matrix4 matrix = _tc.value.clone();
           matrix.scale(scaleChange);
