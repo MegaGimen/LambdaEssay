@@ -76,6 +76,11 @@ Future<void> _killPort(int port) async {
 }
 final ProcessManager _processManager = const LocalProcessManager();
 Future<void> main(List<String> args) async {
+  if (args.contains('--debugMode')) {
+    setDebugMode(true);
+    print('Debug mode enabled');
+  }
+
   final setGlobal = await Process.run(
       'mingw64/bin/git.exe', ['config', '--global', 'core.autocrlf', 'false']);
   if (setGlobal.exitCode == 0) {
