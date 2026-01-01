@@ -2775,9 +2775,9 @@ class _GraphViewState extends State<_GraphView>
   bool _comparing = false;
 
   Offset _branchPanelOffset = const Offset(16, 16);
-  Size _branchPanelSize = const Size(680, 120);
+  Size _branchPanelSize = const Size(420, 96);
   Offset _legendPanelOffset = const Offset(0, 80);
-  Size _legendPanelSize = const Size(320, 420);
+  Size _legendPanelSize = const Size(260, 320);
   bool _legendPanelInitialized = false;
 
   Offset _clampPanelOffset(Offset value, Size panelSize, Size parentSize) {
@@ -3735,7 +3735,7 @@ class _GraphViewState extends State<_GraphView>
             parentSize: parentSize,
             scale: widget.uiScale,
             title: '当前分支与操作',
-            minSize: const Size(420, 120),
+            minSize: const Size(320, 88),
             maxSize: const Size(1600, 600),
             elevation: 4,
             borderRadius: BorderRadius.circular(8),
@@ -3835,7 +3835,7 @@ class _GraphViewState extends State<_GraphView>
           parentSize: parentSize,
           scale: widget.uiScale,
           title: '分支图例与设置',
-          minSize: const Size(260, 260),
+          minSize: const Size(220, 220),
           maxSize: const Size(900, 1200),
           elevation: 2,
           borderRadius: BorderRadius.circular(6),

@@ -678,7 +678,7 @@ class _SimpleGraphViewState extends State<SimpleGraphView> {
   final Set<String> _selectedNodes = {};
 
   Offset _legendOffset = const Offset(0, 0);
-  Size _legendSize = const Size(200, 220);
+  Size _legendSize = const Size(170, 170);
   bool _legendInitialized = false;
   
   Map<String, int>? _cachedLaneOf;
