@@ -20,13 +20,13 @@
   {
     "id": 1767068503484,
     "text": "如果文件较大，更新速度会比较慢，是不是解压太慢导致的？",
-    "completed": false,
+    "completed": true,
     "createdAt": "2025-12-30T04:21:43.484Z"
   },
   {
     "id": 1767068333077,
     "text": "增加ps1脚本的目录在分发版本中的引用",
-    "completed": false,
+    "completed": true,
     "createdAt": "2025-12-30T04:18:53.077Z"
   },
   {
