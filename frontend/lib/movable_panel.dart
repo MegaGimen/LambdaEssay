@@ -17,6 +17,8 @@ class MovableResizablePanel extends StatelessWidget {
   final Color backgroundColor;
   final Widget child;
   final String? title;
+  final double handleThickness;
+  final double cornerHandleSize;
 
   const MovableResizablePanel({
     super.key,
@@ -31,9 +33,11 @@ class MovableResizablePanel extends StatelessWidget {
     this.maxSize = const Size(1200, 900),
     this.elevation = 4,
     this.borderRadius = const BorderRadius.all(Radius.circular(8)),
-    this.contentPadding = const EdgeInsets.all(12),
+    this.contentPadding = const EdgeInsets.all(8),
     this.backgroundColor = Colors.white,
     this.title,
+    this.handleThickness = 12,
+    this.cornerHandleSize = 20,
   });
 
   Offset _clampOffset(Offset value, Size panelSize) {
@@ -48,15 +52,26 @@ class MovableResizablePanel extends StatelessWidget {
   }
 
   Size _clampSize(Size value) {
+    final viewportMaxW = parentSize.width.isFinite && parentSize.width > 0
+        ? parentSize.width / scale
+        : maxSize.width;
+    final viewportMaxH = parentSize.height.isFinite && parentSize.height > 0
+        ? parentSize.height / scale
+        : maxSize.height;
+
+    final effectiveMaxW = math.max(minSize.width, math.min(maxSize.width, viewportMaxW));
+    final effectiveMaxH = math.max(minSize.height, math.min(maxSize.height, viewportMaxH));
+
     return Size(
-      value.width.clamp(minSize.width, maxSize.width),
-      value.height.clamp(minSize.height, maxSize.height),
+      value.width.clamp(minSize.width, effectiveMaxW),
+      value.height.clamp(minSize.height, effectiveMaxH),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final clampedOffset = _clampOffset(offset, size);
+    final clampedSize = _clampSize(size);
+    final clampedOffset = _clampOffset(offset, clampedSize);
 
     return Transform.translate(
       offset: clampedOffset,
@@ -70,8 +85,8 @@ class MovableResizablePanel extends StatelessWidget {
           child: ClipRRect(
             borderRadius: borderRadius,
             child: SizedBox(
-              width: size.width,
-              height: size.height,
+              width: clampedSize.width,
+              height: clampedSize.height,
               child: DecoratedBox(
                 decoration: BoxDecoration(color: backgroundColor),
                 child: Stack(
@@ -85,10 +100,12 @@ class MovableResizablePanel extends StatelessWidget {
                               d.delta.dx * scale,
                               d.delta.dy * scale,
                             );
-                            onOffsetChanged(_clampOffset(offset + delta, size));
+                            onOffsetChanged(
+                              _clampOffset(clampedOffset + delta, clampedSize),
+                            );
                           },
                           child: SizedBox(
-                            height: 28,
+                            height: 24,
                             child: Padding(
                               padding: const EdgeInsets.symmetric(horizontal: 8),
                               child: Row(
@@ -100,7 +117,9 @@ class MovableResizablePanel extends StatelessWidget {
                                     Expanded(
                                       child: Text(
                                         title!,
+                                        maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
+                                        softWrap: false,
                                         style: const TextStyle(
                                           fontSize: 12,
                                           fontWeight: FontWeight.w600,
@@ -124,22 +143,60 @@ class MovableResizablePanel extends StatelessWidget {
                     ),
                     Positioned(
                       right: 0,
+                      top: 24,
+                      bottom: cornerHandleSize,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onPanUpdate: (d) {
+                          final nextSize = _clampSize(
+                            Size(
+                              clampedSize.width + d.delta.dx,
+                              clampedSize.height,
+                            ),
+                          );
+                          onSizeChanged(nextSize);
+                          onOffsetChanged(_clampOffset(clampedOffset, nextSize));
+                        },
+                        child: SizedBox(width: handleThickness),
+                      ),
+                    ),
+                    Positioned(
+                      left: 0,
+                      right: cornerHandleSize,
                       bottom: 0,
                       child: GestureDetector(
                         behavior: HitTestBehavior.opaque,
                         onPanUpdate: (d) {
                           final nextSize = _clampSize(
                             Size(
-                              size.width + d.delta.dx,
-                              size.height + d.delta.dy,
+                              clampedSize.width,
+                              clampedSize.height + d.delta.dy,
                             ),
                           );
                           onSizeChanged(nextSize);
-                          onOffsetChanged(_clampOffset(offset, nextSize));
+                          onOffsetChanged(_clampOffset(clampedOffset, nextSize));
+                        },
+                        child: SizedBox(height: handleThickness),
+                      ),
+                    ),
+                    Positioned(
+                      right: 0,
+                      bottom: 0,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onPanUpdate: (d) {
+                          final nextSize = _clampSize(
+                            Size(
+                              clampedSize.width + d.delta.dx,
+                              clampedSize.height + d.delta.dy,
+                            ),
+                          );
+                          onSizeChanged(nextSize);
+                          onOffsetChanged(_clampOffset(clampedOffset, nextSize));
                         },
                         child: const SizedBox(
-                          width: 22,
-                          height: 22,
+                          width: 20,
+                          height: 20,
                           child: Align(
                             alignment: Alignment.bottomRight,
                             child: Padding(
@@ -160,4 +217,3 @@ class MovableResizablePanel extends StatelessWidget {
     );
   }
 }
-
