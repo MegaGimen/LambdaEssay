@@ -1390,7 +1390,7 @@ Future<void> resetBranch(String projectName, String commitId) async {
   final repoPath = _projectDir(projectName);
   return _withRepoLock(repoPath, () async {
     await _runGit(['reset', '--hard', commitId], repoPath);
-    await _syncToExternal(repoPath);
+    //await _syncToExternal(repoPath);
     clearCache();
   });
 }
