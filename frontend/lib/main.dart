@@ -566,6 +566,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   final TextEditingController verifyCodeCtrl = TextEditingController();
   bool _isRegisterMode = false;
 
+  final GlobalKey<_GraphViewState> _localGraphKey = GlobalKey();
+
   String? _username;
   String? _token;
 
@@ -2504,6 +2506,13 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                           ),
                           const SizedBox(width: 8),
                           ElevatedButton(
+                            onPressed: () {
+                              _localGraphKey.currentState?.resetLayout();
+                            },
+                            child: const Text('恢复默认布局'),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
                             onPressed: loading ? null: () => _onUpdateRepoAction(opIdentical: false),
                             child: const Text('如果文档没同步就点我'),
                           ),
@@ -2650,6 +2659,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                                     ),
                                     Expanded(
                                       child: _GraphView(
+                                        key: _localGraphKey,
                                         data: data!,
                                         working: (data!.commits.isEmpty &&
                                                 working != null)
@@ -2681,6 +2691,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                             ],
                           )
                         : _GraphView(
+                            key: _localGraphKey,
                             data: data!,
                             working: (data!.commits.isEmpty && working != null)
                                 ? WorkingState(
@@ -2734,6 +2745,7 @@ class _GraphView extends StatefulWidget {
   final int? totalRows; // New
 
   const _GraphView({
+    super.key,
     required this.data,
     this.working,
     required this.repoPath,
@@ -2779,6 +2791,9 @@ class _GraphViewState extends State<_GraphView>
   Offset _legendPanelOffset = const Offset(0, 80);
   Size _legendPanelSize = const Size(260, 320);
   bool _legendPanelInitialized = false;
+
+  bool _branchPanelCollapsed = false;
+  bool _legendPanelCollapsed = false;
 
   Offset _clampPanelOffset(Offset value, Size panelSize, Size parentSize) {
     final scaledW = panelSize.width * widget.uiScale;
@@ -2839,6 +2854,90 @@ class _GraphViewState extends State<_GraphView>
       vsync: this,
       duration: const Duration(milliseconds: 800),
     )..repeat(reverse: true);
+    _loadLayoutPrefs();
+  }
+
+  Future<void> _loadLayoutPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      if (prefs.containsKey('layout_branch_offset_dx')) {
+        _branchPanelOffset = Offset(
+          prefs.getDouble('layout_branch_offset_dx')!,
+          prefs.getDouble('layout_branch_offset_dy')!,
+        );
+      }
+      if (prefs.containsKey('layout_branch_size_w')) {
+        _branchPanelSize = Size(
+          prefs.getDouble('layout_branch_size_w')!,
+          prefs.getDouble('layout_branch_size_h')!,
+        );
+      }
+      if (prefs.containsKey('layout_branch_collapsed')) {
+        _branchPanelCollapsed = prefs.getBool('layout_branch_collapsed')!;
+      }
+
+      if (prefs.containsKey('layout_legend_offset_dx')) {
+        _legendPanelOffset = Offset(
+          prefs.getDouble('layout_legend_offset_dx')!,
+          prefs.getDouble('layout_legend_offset_dy')!,
+        );
+        _legendPanelInitialized = true; // prevent auto-init overwrite
+      }
+      if (prefs.containsKey('layout_legend_size_w')) {
+        _legendPanelSize = Size(
+          prefs.getDouble('layout_legend_size_w')!,
+          prefs.getDouble('layout_legend_size_h')!,
+        );
+      }
+      if (prefs.containsKey('layout_legend_collapsed')) {
+        _legendPanelCollapsed = prefs.getBool('layout_legend_collapsed')!;
+      }
+    });
+  }
+
+  Future<void> _saveLayoutPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('layout_branch_offset_dx', _branchPanelOffset.dx);
+    await prefs.setDouble('layout_branch_offset_dy', _branchPanelOffset.dy);
+    await prefs.setDouble('layout_branch_size_w', _branchPanelSize.width);
+    await prefs.setDouble('layout_branch_size_h', _branchPanelSize.height);
+    await prefs.setBool('layout_branch_collapsed', _branchPanelCollapsed);
+
+    await prefs.setDouble('layout_legend_offset_dx', _legendPanelOffset.dx);
+    await prefs.setDouble('layout_legend_offset_dy', _legendPanelOffset.dy);
+    await prefs.setDouble('layout_legend_size_w', _legendPanelSize.width);
+    await prefs.setDouble('layout_legend_size_h', _legendPanelSize.height);
+    await prefs.setBool('layout_legend_collapsed', _legendPanelCollapsed);
+  }
+
+  Future<void> resetLayout() async {
+    setState(() {
+      _branchPanelOffset = const Offset(16, 16);
+      _branchPanelSize = const Size(420, 96);
+      _branchPanelCollapsed = false;
+
+      _legendPanelOffset = const Offset(0, 80);
+      _legendPanelSize = const Size(260, 320);
+      _legendPanelCollapsed = false;
+      _legendPanelInitialized = false; // let it re-calc based on width
+    });
+    final prefs = await SharedPreferences.getInstance();
+    // Remove keys to fallback to defaults or save defaults
+    // Saving defaults is safer to persist the "reset" action
+    // But _legendPanelInitialized logic needs to run if window size changed.
+    // Let's just clear the keys so _loadLayoutPrefs would load defaults (if called again),
+    // and layout logic in build will handle position.
+    await prefs.remove('layout_branch_offset_dx');
+    await prefs.remove('layout_branch_offset_dy');
+    await prefs.remove('layout_branch_size_w');
+    await prefs.remove('layout_branch_size_h');
+    await prefs.remove('layout_branch_collapsed');
+
+    await prefs.remove('layout_legend_offset_dx');
+    await prefs.remove('layout_legend_offset_dy');
+    await prefs.remove('layout_legend_size_w');
+    await prefs.remove('layout_legend_size_h');
+    await prefs.remove('layout_legend_collapsed');
   }
 
   @override
@@ -3743,6 +3842,12 @@ class _GraphViewState extends State<_GraphView>
             backgroundColor: Colors.white,
             onOffsetChanged: (v) => setState(() => _branchPanelOffset = v),
             onSizeChanged: (v) => setState(() => _branchPanelSize = v),
+            isCollapsed: _branchPanelCollapsed,
+            onCollapseChanged: (v) {
+              setState(() => _branchPanelCollapsed = v);
+              _saveLayoutPrefs();
+            },
+            onInteractionEnd: _saveLayoutPrefs,
             child: SingleChildScrollView(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -3843,6 +3948,12 @@ class _GraphViewState extends State<_GraphView>
           backgroundColor: const Color(0xFFFDFDFD),
           onOffsetChanged: (v) => setState(() => _legendPanelOffset = v),
           onSizeChanged: (v) => setState(() => _legendPanelSize = v),
+          isCollapsed: _legendPanelCollapsed,
+          onCollapseChanged: (v) {
+            setState(() => _legendPanelCollapsed = v);
+            _saveLayoutPrefs();
+          },
+          onInteractionEnd: _saveLayoutPrefs,
           child: LayoutBuilder(
             builder: (context, constraints) {
               final w = constraints.maxWidth;

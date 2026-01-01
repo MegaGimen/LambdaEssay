@@ -19,6 +19,9 @@ class MovableResizablePanel extends StatefulWidget {
   final String? title;
   final double handleThickness;
   final double cornerHandleSize;
+  final bool isCollapsed;
+  final ValueChanged<bool>? onCollapseChanged;
+  final VoidCallback? onInteractionEnd;
 
   const MovableResizablePanel({
     super.key,
@@ -38,6 +41,9 @@ class MovableResizablePanel extends StatefulWidget {
     this.title,
     this.handleThickness = 12,
     this.cornerHandleSize = 20,
+    this.isCollapsed = false,
+    this.onCollapseChanged,
+    this.onInteractionEnd,
   });
 
   @override
@@ -99,6 +105,7 @@ class _MovableResizablePanelState extends State<MovableResizablePanel> {
   void _endDrag() {
     _dragStartGlobal = null;
     _dragStartOffset = null;
+    widget.onInteractionEnd?.call();
   }
 
   void _startResize(DragStartDetails d, Size clampedSize) {
@@ -129,13 +136,28 @@ class _MovableResizablePanelState extends State<MovableResizablePanel> {
   void _endResize() {
     _resizeStartGlobal = null;
     _resizeStartSize = null;
+    widget.onInteractionEnd?.call();
   }
 
   @override
   Widget build(BuildContext context) {
     final clampedSize = _clampSize(widget.size);
     final clampedOffset = _clampOffset(widget.offset, clampedSize);
-
+    
+    // Calculate effective height based on collapse state
+    // Header height (24) + vertical padding (if we want any when collapsed)
+    // Here we assume when collapsed, we only show the header container.
+    // The original layout has a SizedBox(height: 24) inside a Column.
+    // We'll wrap the Column in a Container/SizedBox that constrains height if collapsed.
+    
+    final double effectiveHeight = widget.isCollapsed 
+        ? 24.0 + (widget.contentPadding.vertical / 2) // A bit of padding for visual comfort? Or just 24?
+        : clampedSize.height;
+    
+    // If collapsed, we force height to be small.
+    // But we should probably rely on the child to hide and container to shrink.
+    // Let's use the explicit height control.
+    
     return Transform.translate(
       offset: clampedOffset,
       child: Transform.scale(
@@ -149,18 +171,24 @@ class _MovableResizablePanelState extends State<MovableResizablePanel> {
             borderRadius: widget.borderRadius,
             child: SizedBox(
               width: clampedSize.width,
-              height: clampedSize.height,
+              height: effectiveHeight,
               child: DecoratedBox(
                 decoration: BoxDecoration(color: widget.backgroundColor),
                 child: Stack(
                   children: [
                     Column(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
                         GestureDetector(
                           behavior: HitTestBehavior.opaque,
                           onPanStart: (d) => _startDrag(d, clampedOffset),
                           onPanUpdate: (d) => _updateDrag(d, clampedSize),
                           onPanEnd: (_) => _endDrag(),
+                          onSecondaryTap: () {
+                            if (widget.onCollapseChanged != null) {
+                              widget.onCollapseChanged!(!widget.isCollapsed);
+                            }
+                          },
                           child: SizedBox(
                             height: 24,
                             child: Padding(
@@ -185,67 +213,81 @@ class _MovableResizablePanelState extends State<MovableResizablePanel> {
                                     ),
                                   ] else
                                     const Spacer(),
+                                  if (widget.onCollapseChanged != null)
+                                    Padding(
+                                      padding: const EdgeInsets.only(left: 4),
+                                      child: Icon(
+                                        widget.isCollapsed
+                                            ? Icons.keyboard_arrow_down
+                                            : Icons.keyboard_arrow_up,
+                                        size: 16,
+                                        color: Colors.grey[600],
+                                      ),
+                                    ),
                                 ],
                               ),
                             ),
                           ),
                         ),
-                        Expanded(
-                          child: Padding(
-                            padding: widget.contentPadding,
-                            child: widget.child,
+                        if (!widget.isCollapsed)
+                          Expanded(
+                            child: Padding(
+                              padding: widget.contentPadding,
+                              child: widget.child,
+                            ),
                           ),
-                        ),
                       ],
                     ),
-                    Positioned(
-                      right: 0,
-                      top: 24,
-                      bottom: widget.cornerHandleSize,
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onPanStart: (d) => _startResize(d, clampedSize),
-                        onPanUpdate: (d) =>
-                            _updateResize(d, clampedOffset, clampedSize, x: true),
-                        onPanEnd: (_) => _endResize(),
-                        child: SizedBox(width: widget.handleThickness),
+                    if (!widget.isCollapsed) ...[
+                      Positioned(
+                        right: 0,
+                        top: 24,
+                        bottom: widget.cornerHandleSize,
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onPanStart: (d) => _startResize(d, clampedSize),
+                          onPanUpdate: (d) =>
+                              _updateResize(d, clampedOffset, clampedSize, x: true),
+                          onPanEnd: (_) => _endResize(),
+                          child: SizedBox(width: widget.handleThickness),
+                        ),
                       ),
-                    ),
-                    Positioned(
-                      left: 0,
-                      right: widget.cornerHandleSize,
-                      bottom: 0,
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onPanStart: (d) => _startResize(d, clampedSize),
-                        onPanUpdate: (d) =>
-                            _updateResize(d, clampedOffset, clampedSize, y: true),
-                        onPanEnd: (_) => _endResize(),
-                        child: SizedBox(height: widget.handleThickness),
+                      Positioned(
+                        left: 0,
+                        right: widget.cornerHandleSize,
+                        bottom: 0,
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onPanStart: (d) => _startResize(d, clampedSize),
+                          onPanUpdate: (d) =>
+                              _updateResize(d, clampedOffset, clampedSize, y: true),
+                          onPanEnd: (_) => _endResize(),
+                          child: SizedBox(height: widget.handleThickness),
+                        ),
                       ),
-                    ),
-                    Positioned(
-                      right: 0,
-                      bottom: 0,
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onPanStart: (d) => _startResize(d, clampedSize),
-                        onPanUpdate: (d) =>
-                            _updateResize(d, clampedOffset, clampedSize, x: true, y: true),
-                        onPanEnd: (_) => _endResize(),
-                        child: const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: Align(
-                            alignment: Alignment.bottomRight,
-                            child: Padding(
-                              padding: EdgeInsets.all(2),
-                              child: Icon(Icons.open_in_full, size: 14),
+                      Positioned(
+                        right: 0,
+                        bottom: 0,
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onPanStart: (d) => _startResize(d, clampedSize),
+                          onPanUpdate: (d) =>
+                              _updateResize(d, clampedOffset, clampedSize, x: true, y: true),
+                          onPanEnd: (_) => _endResize(),
+                          child: const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: Align(
+                              alignment: Alignment.bottomRight,
+                              child: Padding(
+                                padding: EdgeInsets.all(2),
+                                child: Icon(Icons.open_in_full, size: 14),
+                              ),
                             ),
                           ),
                         ),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),
