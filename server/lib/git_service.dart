@@ -633,6 +633,12 @@ Future<void> commitChanges(
     final safeAuthor = author.trim().isEmpty ? 'Unknown' : author.trim();
     final authorArg = '$safeAuthor <$safeAuthor@gitdocx.local>';
     await _runGit(['commit', '--author=$authorArg', '-m', message], repoPath);
+
+    final headLines = await _runGit(['rev-parse', 'HEAD'], repoPath);
+    final head = headLines.isNotEmpty ? headLines.first.trim().toLowerCase() : '';
+    if (head.isNotEmpty) {
+      await _ensureCommitPreviewAssetsUnlocked(repoPath, head);
+    }
     clearCache();
   });
 }
@@ -925,6 +931,131 @@ String _baseDir() {
   return p.join(Directory.systemTemp.path, 'gitdocx');
 }
 
+Directory _globalPreviewCacheDir() {
+  final app = Platform.environment['APPDATA'];
+  if (app != null && app.isNotEmpty) {
+    return Directory(p.join(app, 'cache'));
+  }
+  return Directory(p.join(_baseDir(), 'cache'));
+}
+
+String _globalCachedPdfPath(String commitId) {
+  return p.join(_globalPreviewCacheDir().path, '$commitId.pdf');
+}
+
+String _globalCachedThumbPath(String commitId) {
+  return p.join(_globalPreviewCacheDir().path, '$commitId.png');
+}
+
+String _repoRootDir() {
+  final scriptPath = p.fromUri(Platform.script);
+  return p.dirname(p.dirname(p.dirname(scriptPath)));
+}
+
+String _sofficeExePath() {
+  return p.join(
+    _repoRootDir(),
+    'frontend',
+    'LibreOfficePortable',
+    'App',
+    'libreoffice',
+    'program',
+    'soffice.exe',
+  );
+}
+
+Future<void> _ensureCommitPreviewAssetsUnlocked(
+  String repoPath,
+  String commitId,
+) async {
+  final cacheDir = _globalPreviewCacheDir();
+  if (!cacheDir.existsSync()) {
+    cacheDir.createSync(recursive: true);
+  }
+
+  final pdfPath = _globalCachedPdfPath(commitId);
+  final thumbPath = _globalCachedThumbPath(commitId);
+
+  final pdfFile = File(pdfPath);
+  final thumbFile = File(thumbPath);
+  if (pdfFile.existsSync() && thumbFile.existsSync()) {
+    return;
+  }
+
+  final tmpDir = await Directory.systemTemp.createTemp('gitdocx_prev_asset_');
+  try {
+    final docxPath = p.join(tmpDir.path, '$commitId.docx');
+    await _gitArchiveToDocx(repoPath, commitId, docxPath);
+
+    final soffice = _sofficeExePath();
+    if (!File(soffice).existsSync()) {
+      throw Exception('soffice.exe not found at $soffice');
+    }
+
+    if (!pdfFile.existsSync()) {
+      final res = await Process.run(soffice, [
+        '--headless',
+        '--convert-to',
+        'pdf',
+        '--outdir',
+        tmpDir.path,
+        docxPath,
+      ]);
+      final outName = p.setExtension(p.basename(docxPath), '.pdf');
+      final outPath = p.join(tmpDir.path, outName);
+      if (res.exitCode != 0 || !File(outPath).existsSync()) {
+        throw Exception('docx->pdf failed: ${res.stderr}');
+      }
+      await File(outPath).copy(pdfPath);
+    }
+
+    if (!thumbFile.existsSync()) {
+      final res = await Process.run(soffice, [
+        '--headless',
+        '--convert-to',
+        'png',
+        '--outdir',
+        tmpDir.path,
+        docxPath,
+      ]);
+
+      if (res.exitCode != 0) {
+        throw Exception('docx->png failed: ${res.stderr}');
+      }
+
+      final pngs = tmpDir
+          .listSync()
+          .whereType<File>()
+          .where((f) => p.extension(f.path).toLowerCase() == '.png')
+          .toList();
+      pngs.sort((a, b) => a.path.compareTo(b.path));
+      if (pngs.isEmpty) {
+        throw Exception('docx->png produced no output');
+      }
+      await pngs.first.copy(thumbPath);
+    }
+  } finally {
+    try {
+      if (tmpDir.existsSync()) {
+        tmpDir.deleteSync(recursive: true);
+      }
+    } catch (_) {}
+  }
+}
+
+Future<Map<String, bool>> ensureCommitPreviewAssets(
+  String repoPath,
+  String commitId,
+) async {
+  return _withRepoLock(repoPath, () async {
+    await _ensureCommitPreviewAssetsUnlocked(repoPath, commitId);
+    return {
+      'pdf': File(_globalCachedPdfPath(commitId)).existsSync(),
+      'thumb': File(_globalCachedThumbPath(commitId)).existsSync(),
+    };
+  });
+}
+
 File _trackingFile(String name) {
   final dir = _projectDir(name);
   return File(p.join(dir, 'tracking.json'));
@@ -963,8 +1094,6 @@ String _getPreviewDir(String name) {
 // Deprecated: _findRepoDocx (we use kContentDirName now)
 // We still need to find external file/dir sometimes
 
-final Map<String, StreamSubscription<FileSystemEvent>> _watchers = {};
-final Map<String, Timer> _debounceTimers = {};
 final Map<String, bool> _isUpdating = {};
 
 Future<Uint8List> compareCommits(
@@ -1394,57 +1523,19 @@ void main() async {
 
 Future<Uint8List> previewVersion(String repoPath, String commitId) async {
   return _withRepoLock(repoPath, () async {
-    final cacheDir = Directory(p.join(_baseDir(), 'cache'));
-    if (!cacheDir.existsSync()) {
-      cacheDir.createSync(recursive: true);
-    }
-    final cacheName = '$commitId.pdf';
-    final cachePath = p.join(cacheDir.path, cacheName);
-    final cacheFile = File(cachePath);
-    if (cacheFile.existsSync()) {
-      return await cacheFile.readAsBytes();
+    final pdfPath = _globalCachedPdfPath(commitId);
+    final f = File(pdfPath);
+    if (f.existsSync()) {
+      return await f.readAsBytes();
     }
 
-    final tmpDir = await Directory.systemTemp.createTemp('gitdocx_prev_');
-    try {
-      final p1 = p.join(tmpDir.path, 'preview.docx');
-      final pdf = p.join(tmpDir.path, 'preview.pdf');
+    await _ensureCommitPreviewAssetsUnlocked(repoPath, commitId);
 
-      await _gitArchiveToDocx(repoPath, commitId, p1);
-
-      final scriptPath = p.fromUri(Platform.script);
-      final repoRoot = p.dirname(p.dirname(p.dirname(scriptPath)));
-      final ps1Path = p.join(repoRoot, 'frontend', 'lib', 'docx2pdf.ps1');
-
-      if (!File(ps1Path).existsSync()) {
-        throw Exception('docx2pdf.ps1 not found at $ps1Path');
-      }
-
-      final res = await Process.run('powershell', [
-        '-ExecutionPolicy',
-        'Bypass',
-        '-File',
-        ps1Path,
-        '-InputPath',
-        p1,
-        '-OutputPath',
-        pdf
-      ]);
-
-      if (res.exitCode != 0 || !File(pdf).existsSync()) {
-        throw Exception(
-            'Preview generation failed: ${res.stdout}\n${res.stderr}');
-      }
-
-      await File(pdf).copy(cachePath);
-      return await File(pdf).readAsBytes();
-    } finally {
-      try {
-        if (tmpDir.existsSync()) {
-          tmpDir.deleteSync(recursive: true);
-        }
-      } catch (_) {}
+    final f2 = File(pdfPath);
+    if (f2.existsSync()) {
+      return await f2.readAsBytes();
     }
+    throw Exception('Preview generation failed');
   });
 }
 

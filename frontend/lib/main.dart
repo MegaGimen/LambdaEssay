@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'dart:math' as math;
 import 'package:path/path.dart' as p;
 import 'dart:io';
@@ -13,7 +14,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:archive/archive_io.dart';
 import 'package:crypto/crypto.dart';
-import 'package:path_provider/path_provider.dart';
 import 'models.dart';
 import 'visualize.dart';
 import 'backup.dart';
@@ -2856,6 +2856,24 @@ class _GraphViewState extends State<_GraphView>
   bool _branchPanelCollapsed = false;
   bool _legendPanelCollapsed = false;
 
+  Offset _previewPanelOffset = const Offset(0, 140);
+  Size _previewPanelSize = const Size(520, 760);
+  bool _previewPanelCollapsed = false;
+  bool _previewPanelInitialized = false;
+
+  String? _hoverPreviewCommitId;
+  Uint8List? _hoverPreviewThumb;
+  bool _hoverPreviewThumbLoading = false;
+  Timer? _hoverPreviewDebounce;
+  Timer? _hoverPreviewPoll;
+
+  String? _pinnedPreviewCommitId;
+  String? _pinnedPreviewTitle;
+  String? _pinnedPreviewPdfPath;
+  Uint8List? _pinnedPreviewPdfBytes;
+  bool _pinnedPreviewPdfLoading = false;
+  Timer? _pinnedPreviewPoll;
+
   Offset _clampPanelOffset(Offset value, Size panelSize, Size parentSize) {
     final scaledW = panelSize.width * widget.uiScale;
     final scaledH = panelSize.height * widget.uiScale;
@@ -2879,9 +2897,23 @@ class _GraphViewState extends State<_GraphView>
       legendOffset = Offset(dx, 80);
     }
 
+    Offset previewOffset = _previewPanelOffset;
+    if (!_previewPanelInitialized) {
+      final dx = math.max(
+        0.0,
+        parentSize.width - _previewPanelSize.width * widget.uiScale - 16,
+      );
+      previewOffset = Offset(dx, 140);
+    }
+
     final nextLegendOffset = _clampPanelOffset(
       legendOffset,
       _legendPanelSize,
+      parentSize,
+    );
+    final nextPreviewOffset = _clampPanelOffset(
+      previewOffset,
+      _previewPanelSize,
       parentSize,
     );
     final nextBranchOffset = _clampPanelOffset(
@@ -2893,7 +2925,9 @@ class _GraphViewState extends State<_GraphView>
     final needUpdate =
         (!_legendPanelInitialized) ||
         (nextLegendOffset - _legendPanelOffset).distance > 0.5 ||
-        (nextBranchOffset - _branchPanelOffset).distance > 0.5;
+        (nextBranchOffset - _branchPanelOffset).distance > 0.5 ||
+        (!_previewPanelInitialized) ||
+        (nextPreviewOffset - _previewPanelOffset).distance > 0.5;
 
     if (!needUpdate) return;
 
@@ -2903,7 +2937,161 @@ class _GraphViewState extends State<_GraphView>
         _branchPanelOffset = nextBranchOffset;
         _legendPanelOffset = nextLegendOffset;
         _legendPanelInitialized = true;
+        _previewPanelOffset = nextPreviewOffset;
+        _previewPanelInitialized = true;
       });
+    });
+  }
+
+  Future<void> _requestPreviewCache(String commitId) async {
+    try {
+      await http.post(
+        Uri.parse('http://localhost:8080/preview_cache'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'repoPath': widget.repoPath, 'commitId': commitId}),
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _startHoverThumbnail(String commitId) async {
+    _hoverPreviewDebounce?.cancel();
+    _hoverPreviewDebounce = Timer(const Duration(milliseconds: 120), () async {
+      if (!mounted) return;
+      if (_hoverPreviewCommitId != commitId) return;
+
+      await ensureAppDataCacheDir();
+      final thumbPath = cacheThumbPathForSha(commitId);
+      final f = File(thumbPath);
+      if (f.existsSync()) {
+        try {
+          final bytes = await f.readAsBytes();
+          if (!mounted) return;
+          if (_hoverPreviewCommitId != commitId) return;
+          setState(() {
+            _hoverPreviewThumb = bytes;
+            _hoverPreviewThumbLoading = false;
+          });
+          return;
+        } catch (_) {}
+      }
+
+      setState(() {
+        _hoverPreviewThumbLoading = true;
+        _hoverPreviewThumb = null;
+      });
+
+      await _requestPreviewCache(commitId);
+
+      _hoverPreviewPoll?.cancel();
+      var tries = 0;
+      _hoverPreviewPoll = Timer.periodic(const Duration(milliseconds: 300),
+          (t) async {
+        tries++;
+        if (!mounted) {
+          t.cancel();
+          return;
+        }
+        if (_hoverPreviewCommitId != commitId) {
+          t.cancel();
+          return;
+        }
+        final ff = File(thumbPath);
+        if (ff.existsSync()) {
+          try {
+            final bytes = await ff.readAsBytes();
+            if (!mounted) {
+              t.cancel();
+              return;
+            }
+            if (_hoverPreviewCommitId != commitId) {
+              t.cancel();
+              return;
+            }
+            setState(() {
+              _hoverPreviewThumb = bytes;
+              _hoverPreviewThumbLoading = false;
+            });
+            t.cancel();
+            return;
+          } catch (_) {}
+        }
+        if (tries >= 80) {
+          t.cancel();
+          if (!mounted) return;
+          if (_hoverPreviewCommitId != commitId) return;
+          setState(() {
+            _hoverPreviewThumbLoading = false;
+          });
+        }
+      });
+    });
+  }
+
+  Future<void> _pinCommitPreview(String commitId, {String? title}) async {
+    setState(() {
+      _previewPanelCollapsed = false;
+      _pinnedPreviewCommitId = commitId;
+      _pinnedPreviewTitle = title ?? '预览: ${commitId.substring(0, 7)}';
+      _pinnedPreviewPdfBytes = null;
+      _pinnedPreviewPdfPath = null;
+      _pinnedPreviewPdfLoading = true;
+    });
+
+    await ensureAppDataCacheDir();
+    final pdfPath = cachePdfPathForSha(commitId);
+    final pdfFile = File(pdfPath);
+    if (pdfFile.existsSync()) {
+      if (!mounted) return;
+      if (_pinnedPreviewCommitId != commitId) return;
+      setState(() {
+        _pinnedPreviewPdfPath = pdfPath;
+        _pinnedPreviewPdfLoading = false;
+      });
+      return;
+    }
+
+    await _requestPreviewCache(commitId);
+
+    _pinnedPreviewPoll?.cancel();
+    var tries = 0;
+    _pinnedPreviewPoll = Timer.periodic(const Duration(milliseconds: 350),
+        (t) async {
+      tries++;
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
+      if (_pinnedPreviewCommitId != commitId) {
+        t.cancel();
+        return;
+      }
+      if (File(pdfPath).existsSync()) {
+        setState(() {
+          _pinnedPreviewPdfPath = pdfPath;
+          _pinnedPreviewPdfLoading = false;
+        });
+        t.cancel();
+        return;
+      }
+      if (tries >= 120) {
+        t.cancel();
+        if (!mounted) return;
+        if (_pinnedPreviewCommitId != commitId) return;
+        setState(() {
+          _pinnedPreviewPdfLoading = false;
+        });
+      }
+    });
+  }
+
+  void _pinPdfBytesPreview(Uint8List bytes, {required String title}) {
+    setState(() {
+      _previewPanelCollapsed = false;
+      _pinnedPreviewCommitId = null;
+      _pinnedPreviewTitle = title;
+      _pinnedPreviewPdfBytes = bytes;
+      _pinnedPreviewPdfPath = null;
+      _pinnedPreviewPdfLoading = false;
     });
   }
 
@@ -3005,6 +3193,9 @@ class _GraphViewState extends State<_GraphView>
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_handleKey);
+    _hoverPreviewDebounce?.cancel();
+    _hoverPreviewPoll?.cancel();
+    _pinnedPreviewPoll?.cancel();
     _graphFlashCtrl.dispose();
     if (widget.transformationController == null) {
       _tc.dispose();
@@ -3098,15 +3289,9 @@ class _GraphViewState extends State<_GraphView>
       // Unlock UI before navigation
       widget.onLoading?.call(false);
 
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => VisualizeDocxPage(
-            initialBytes: pdfBytes,
-            title: '${newC.substring(0, 7)} vs ${oldC.substring(0, 7)}',
-            onBack: () => Navigator.pop(context),
-          ),
-        ),
+      _pinPdfBytesPreview(
+        pdfBytes,
+        title: '${newC.substring(0, 7)} vs ${oldC.substring(0, 7)}',
       );
     } catch (e) {
       widget.onLoading?.call(false);
@@ -3175,16 +3360,9 @@ class _GraphViewState extends State<_GraphView>
                           }
                           if (!mounted) return;
 
-                          // Push and wait for return to keep buttons disabled
-                          await Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => VisualizeDocxPage(
-                                initialBytes: resp.bodyBytes,
-                                title: 'Working Copy Diff',
-                                onBack: () => Navigator.pop(context),
-                              ),
-                            ),
+                          _pinPdfBytesPreview(
+                            resp.bodyBytes,
+                            title: 'Working Copy Diff',
                           );
                         } catch (e) {
                           ScaffoldMessenger.of(
@@ -3412,6 +3590,7 @@ class _GraphViewState extends State<_GraphView>
   }
 
   void _showNodeActionDialog(CommitNode node) {
+    _pinCommitPreview(node.id, title: '预览: ${node.id.substring(0, 7)}');
     final allBranches = widget.data.branches.map((b) => b.name).toSet();
     final targets = node.refs.where((r) => allBranches.contains(r)).toList();
 
@@ -3448,13 +3627,6 @@ class _GraphViewState extends State<_GraphView>
           TextButton(
             onPressed: () {
               Navigator.pop(ctx);
-              _previewVersion(node);
-            },
-            child: const Text('预览这个版本'),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(ctx);
               _mergeToCurrent(node);
             },
             child: const Text('合并到当前分支 (Word)'),
@@ -3481,51 +3653,6 @@ class _GraphViewState extends State<_GraphView>
         ],
       ),
     );
-  }
-
-  Future<void> _previewVersion(CommitNode node) async {
-    if (_comparing) return;
-
-    widget.onLoading?.call(true);
-    setState(() => _comparing = true);
-
-    try {
-      final resp = await http.post(
-        Uri.parse('http://localhost:8080/preview'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'repoPath': widget.repoPath,
-          'commitId': node.id,
-        }),
-      );
-
-      if (resp.statusCode != 200) {
-        throw Exception('预览失败: ${resp.body}');
-      }
-      final bytes = resp.bodyBytes;
-      if (!mounted) return;
-
-      widget.onLoading?.call(false);
-
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => VisualizeDocxPage(
-            initialBytes: bytes,
-            title: '预览: ${node.id.substring(0, 7)}',
-          ),
-        ),
-      );
-    } catch (e) {
-      widget.onLoading?.call(false);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e')),
-      );
-    } finally {
-      if (mounted) setState(() => _comparing = false);
-      widget.onLoading?.call(false);
-    }
   }
 
   Future<void> _rollbackVersion(CommitNode node) async {
@@ -3757,17 +3884,35 @@ class _GraphViewState extends State<_GraphView>
             if (hit == null) {
               ehit = _hitEdge(scene, widget.data);
             }
-            setState(() {
-              _hovered = hit;
-              _hoverPos = d.localPosition;
-              _hoverEdge = ehit;
-            });
+            final nextId = hit?.id;
+            if (nextId != null && nextId != _hoverPreviewCommitId) {
+              setState(() {
+                _hovered = hit;
+                _hoverPos = d.localPosition;
+                _hoverEdge = ehit;
+                _hoverPreviewCommitId = nextId;
+                _hoverPreviewThumb = null;
+                _hoverPreviewThumbLoading = false;
+              });
+              _startHoverThumbnail(nextId);
+            } else {
+              setState(() {
+                _hovered = hit;
+                _hoverPos = d.localPosition;
+                _hoverEdge = ehit;
+              });
+            }
           },
           onExit: (_) {
+            _hoverPreviewDebounce?.cancel();
+            _hoverPreviewPoll?.cancel();
             setState(() {
               _hovered = null;
               _hoverPos = null;
               _hoverEdge = null;
+              _hoverPreviewCommitId = null;
+              _hoverPreviewThumb = null;
+              _hoverPreviewThumbLoading = false;
             });
           },
           child: Listener(
@@ -4009,6 +4154,109 @@ class _GraphViewState extends State<_GraphView>
               ),
             ),
           ),
+        MovableResizablePanel(
+          offset: _previewPanelOffset,
+          size: _previewPanelSize,
+          parentSize: parentSize,
+          scale: widget.uiScale,
+          title: _pinnedPreviewTitle ?? '预览侧栏',
+          minSize: const Size(360, 260),
+          maxSize: const Size(1400, 1400),
+          elevation: 4,
+          borderRadius: BorderRadius.circular(8),
+          contentPadding: const EdgeInsets.all(8),
+          backgroundColor: Colors.white,
+          onOffsetChanged: (v) => setState(() => _previewPanelOffset = v),
+          onSizeChanged: (v) => setState(() => _previewPanelSize = v),
+          isCollapsed: _previewPanelCollapsed,
+          onCollapseChanged: (v) => setState(() => _previewPanelCollapsed = v),
+          child: Column(
+            children: [
+              SizedBox(
+                height: 190,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF7F7F7),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _hoverPreviewCommitId == null
+                              ? '悬停节点显示缩略图'
+                              : '缩略图: ${_hoverPreviewCommitId!.substring(0, 7)}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          softWrap: false,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Expanded(
+                          child: Center(
+                            child: _hoverPreviewThumbLoading
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                : (_hoverPreviewThumb != null
+                                    ? InteractiveViewer(
+                                        minScale: 0.8,
+                                        maxScale: 5,
+                                        child: Image.memory(
+                                          _hoverPreviewThumb!,
+                                          fit: BoxFit.contain,
+                                        ),
+                                      )
+                                    : const Text('暂无缩略图')),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Expanded(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFDFDFD),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: const Color(0xFFE6E6E6)),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(6),
+                    child: _pinnedPreviewPdfLoading
+                        ? const Center(
+                            child: SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        : (_pinnedPreviewPdfBytes != null
+                            ? PdfPreviewPane(
+                                bytes: _pinnedPreviewPdfBytes,
+                                initialZoom: 0.8,
+                              )
+                            : (_pinnedPreviewPdfPath != null
+                                ? PdfPreviewPane(
+                                    filePath: _pinnedPreviewPdfPath,
+                                    initialZoom: 0.75,
+                                  )
+                                : const Center(child: Text('双击节点自动加载该版本 PDF')))),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
         MovableResizablePanel(
           offset: _legendPanelOffset,
           size: _legendPanelSize,
