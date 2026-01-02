@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Git Graph</title>
+    
+    <!-- Load the Office JavaScript APIs -->
+    <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js" type="text/javascript"></script>
+
+    <!-- Flutter Config -->
+    <base href="/" />
+    <script src="//cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.min.js"></script>
+    <script type="text/javascript">
+      pdfjsLib.GlobalWorkerOptions.workerSrc = "//cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.worker.min.js";
+    </script>
+    <script>var serviceWorkerVersion=null;</script>
+    <script>
+      (function() {
+        var script = document.createElement('script');
+        script.src = "flutter.js";
+        script.defer = true;
+        document.head.appendChild(script);
+      })();
+    </script>
+  </head>
+  <body>
+    <script>
+      window.addEventListener('load', function() {
+        // Wait for flutter.js to define FlutterLoader or _flutter
+        function waitForFlutter() {
+            if (typeof FlutterLoader !== 'undefined') {
+                var loader = new FlutterLoader();
+                loader.load({
+                    serviceWorker: { serviceWorkerVersion: serviceWorkerVersion }
+                }).then(function(engineInitializer) {
+                    return engineInitializer.initializeEngine();
+                }).then(function(appRunner) {
+                    appRunner.runApp();
+                });
+            } else if (window._flutter && _flutter.loader) {
+                _flutter.loader.loadEntrypoint({
+                    serviceWorker: { serviceWorkerVersion: serviceWorkerVersion },
+                    onEntrypointLoaded: function(engineInitializer) {
+                        engineInitializer.initializeEngine().then(function(appRunner) {
+                            appRunner.runApp();
+                        });
+                    }
+                });
+            } else {
+                setTimeout(waitForFlutter, 100);
+            }
+        }
+        waitForFlutter();
+      });
+    </script>
+  </body>
+</html>
