@@ -1,0 +1,30 @@
+{
+    "cmake.ignoreCMakeListsMissing": true,
+        "workbench.colorCustomizations": {
+    "terminal.background": "#0A0A0A",  // 深灰色背景（比纯黑更护眼）
+    "terminal.foreground": "#00FF00",  // 亮绿色文字
+    "terminalCursor.foreground": "#00FF00",  // 绿色光标
+    "terminalCursor.background": "#00FF00",  // 光标背景
+    
+    // 更精细的颜色控制
+    "terminal.selectionBackground": "#00800033",  // 选中文本背景
+    "terminal.inactiveSelectionBackground": "#00330033",  // 非活动选中
+    
+    // 所有 ANSI 颜色都设为绿色系
+    "terminal.ansiBlack": "#001100",
+    "terminal.ansiRed": "#007700",  // 红色改为暗绿
+    "terminal.ansiGreen": "#00FF00",  // 主绿色
+    "terminal.ansiYellow": "#00AA00",  // 黄色改为中绿
+    "terminal.ansiBlue": "#004400",  // 蓝色改为深绿
+    "terminal.ansiMagenta": "#00CC00",  // 洋红改为亮绿
+    "terminal.ansiCyan": "#008800",  // 青色改为绿
+    "terminal.ansiWhite": "#00FF00",  // 白色改为亮绿
+  },
+  
+  // 修改字体为终端风格
+  "terminal.integrated.fontFamily": "'Cascadia Code', Consolas, 'Courier New', monospace",
+  "terminal.integrated.fontSize": 13,
+  "terminal.integrated.cursorStyle": "underline",  // 光标样式
+  "terminal.integrated.cursorBlinking": true,  // 光标闪烁
+  "terminal.integrated.cursorWidth": 2
+}
