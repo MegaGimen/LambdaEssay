@@ -732,6 +732,25 @@ Future<void> main(List<String> args) async {
     }
   });
 
+  router.post('/preview_cache', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoPath = _sanitizePath(data['repoPath'] as String?);
+    final commitId = data['commitId'] as String?;
+
+    if (repoPath.isEmpty || commitId == null || commitId.trim().isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoPath, commitId required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+
+    unawaited(ensureCommitPreviewAssets(repoPath, commitId.trim()));
+
+    return _cors(Response.ok(jsonEncode({'status': 'scheduled'}), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  });
+
   router.post('/rollback', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
