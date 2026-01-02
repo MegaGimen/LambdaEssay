@@ -9,9 +9,24 @@ import 'models.dart';
 bool _debugMode = false;
 void setDebugMode(bool value) => _debugMode = value;
 final scriptDir = p.dirname(Platform.script.toFilePath());
-String get _psScriptPath => _debugMode
-    ? r'c:\Users\m1369\Documents\gitbin\frontend\lib\doccmp.ps1'
-    : p.join(scriptDir, 'doccmp.ps1');
+
+String get _psScriptPath {
+  final candidates = <String>[
+    if (_debugMode)
+      r'c:\Users\m1369\Documents\gitbin\frontend\lib\doccmp.ps1',
+    p.join(scriptDir, 'doccmp.ps1'),
+    p.normalize(p.join(scriptDir, '..', '..', 'frontend', 'bin', 'doccmp.ps1')),
+    p.normalize(p.join(scriptDir, '..', '..', 'frontend', 'lib', 'doccmp.ps1')),
+    p.join(Directory.current.path, 'frontend', 'bin', 'doccmp.ps1'),
+    p.join(Directory.current.path, 'frontend', 'lib', 'doccmp.ps1'),
+  ];
+
+  for (final candidate in candidates) {
+    if (candidate.trim().isEmpty) continue;
+    if (File(candidate).existsSync()) return candidate;
+  }
+  return candidates.first;
+}
 
 class PullPreviewResult {
   final GraphResponse current;
@@ -696,7 +711,10 @@ Future<Uint8List> compareWorking(String repoPath) async {
 
       final ps1Path = _psScriptPath;
 
-      final res = await Process.run('powershell', [
+      final res = await Process.run(
+          'powershell', [
+        '-NoProfile',
+        '-NonInteractive',
         '-ExecutionPolicy',
         'Bypass',
         '-File',
@@ -707,10 +725,28 @@ Future<Uint8List> compareWorking(String repoPath) async {
         p2,
         '-PdfPath',
         pdf
-      ]);
+      ],
+          workingDirectory: p.dirname(ps1Path));
 
-      if (res.exitCode != 0 || !File(pdf).existsSync()) {
-        throw Exception('Compare failed: ${res.stdout}\n${res.stderr}');
+      final pdfFile = File(pdf);
+      if (!pdfFile.existsSync()) {
+        final until = DateTime.now().add(const Duration(seconds: 2));
+        while (DateTime.now().isBefore(until)) {
+          await Future.delayed(const Duration(milliseconds: 100));
+          if (pdfFile.existsSync()) break;
+        }
+      }
+
+      final pdfExists = pdfFile.existsSync();
+      final pdfLen = pdfExists ? pdfFile.lengthSync() : 0;
+      if (!pdfExists || pdfLen <= 0) {
+        throw Exception(
+            'Compare failed (exitCode=${res.exitCode}, pdfExists=$pdfExists, pdfLen=$pdfLen, cwd=${Directory.current.path}, ps1=$ps1Path): ${res.stdout}\n${res.stderr}');
+      }
+
+      if (res.exitCode != 0) {
+        print(
+            '[doccmp] warning: powershell exitCode=${res.exitCode} but pdf exists ($pdfLen bytes).');
       }
 
       return await File(pdf).readAsBytes();
@@ -953,16 +989,16 @@ Future<Uint8List> compareCommits(
 
       await _gitArchiveToDocx(repoPath, commit1, p1);
       await _gitArchiveToDocx(repoPath, commit2, p2);
-
-      final scriptPath = p.fromUri(Platform.script);
-      final repoRoot = p.dirname(p.dirname(p.dirname(scriptPath)));
       final ps1Path = _psScriptPath;
 
       if (!File(ps1Path).existsSync()) {
         throw Exception('doccmp.ps1 not found at $ps1Path and _debugMode=$_debugMode');
       }
 
-      final res = await Process.run('powershell', [
+      final res = await Process.run(
+          'powershell', [
+        '-NoProfile',
+        '-NonInteractive',
         '-ExecutionPolicy',
         'Bypass',
         '-File',
@@ -973,10 +1009,28 @@ Future<Uint8List> compareCommits(
         p2,
         '-PdfPath',
         pdf
-      ]);
+      ],
+          workingDirectory: p.dirname(ps1Path));
 
-      if (res.exitCode != 0 || !File(pdf).existsSync()) {
-        throw Exception('Compare failed: ${res.stdout}\n${res.stderr}');
+      final pdfFile = File(pdf);
+      if (!pdfFile.existsSync()) {
+        final until = DateTime.now().add(const Duration(seconds: 2));
+        while (DateTime.now().isBefore(until)) {
+          await Future.delayed(const Duration(milliseconds: 100));
+          if (pdfFile.existsSync()) break;
+        }
+      }
+
+      final pdfExists = pdfFile.existsSync();
+      final pdfLen = pdfExists ? pdfFile.lengthSync() : 0;
+      if (!pdfExists || pdfLen <= 0) {
+        throw Exception(
+            'Compare failed (exitCode=${res.exitCode}, pdfExists=$pdfExists, pdfLen=$pdfLen, cwd=${Directory.current.path}, ps1=$ps1Path): ${res.stdout}\n${res.stderr}');
+      }
+
+      if (res.exitCode != 0) {
+        print(
+            '[doccmp] warning: powershell exitCode=${res.exitCode} but pdf exists ($pdfLen bytes).');
       }
 
       await File(pdf).copy(cachePath);
