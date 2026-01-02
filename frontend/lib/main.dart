@@ -20,6 +20,7 @@ import 'backup.dart';
 import 'pull_preview.dart';
 import 'graph_view.dart';
 import 'movable_panel.dart';
+import 'version.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -329,8 +330,14 @@ class _BootstrapAppState extends State<BootstrapApp> {
       if (configResp.statusCode != 200) throw Exception('无法获取配置文件');
 
       final config = jsonDecode(configResp.body);
-      final zipUrl = config['bin_zip_path'];
-      final expectedHash = config['bin_zip_hash'].toString().toLowerCase();
+
+      final versionConfig = config['bin_zip'][appVersion];
+      if (versionConfig == null) {
+        throw Exception('当前版本 $appVersion 无法找到对应的资源配置');
+      }
+
+      final zipUrl = versionConfig['bin_zip_path'];
+      final expectedHash = versionConfig['bin_zip_hash'].toString().toLowerCase();
 
       final zipName = p.basename(Uri.parse(zipUrl).path);
       final localZip = File(p.join(rootDir.path, zipName));
