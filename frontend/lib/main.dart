@@ -20,6 +20,7 @@ import 'backup.dart';
 import 'pull_preview.dart';
 import 'graph_view.dart';
 import 'movable_panel.dart';
+import 'version.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -247,9 +248,7 @@ class _BootstrapAppState extends State<BootstrapApp> {
             _statusMessage = '检测到文件缺失，正在重新下载...';
           });
           // 删除目录以触发重新下载
-          if (await rootDir.exists()) {
-            await rootDir.delete(recursive: true);
-          }
+          await _forceDeleteDirectory(rootDir);
           // 再次尝试获取资源
           await _ensureResources(rootDir, binDir);
         }
@@ -314,9 +313,50 @@ class _BootstrapAppState extends State<BootstrapApp> {
     } catch (e) {
       if (mounted) {
         setState(() {
-          _statusMessage = '启动失败: $e';
+          _statusMessage = '启动失败，我靠: $e';
           _hasError = true;
         });
+      }
+    }
+  }
+
+  Future<void> _forceDeleteDirectory(Directory dir) async {
+    int maxRetries = 5;
+    for (int i = 0; i < maxRetries; i++) {
+      try {
+        if (!await dir.exists()) return;
+        await dir.delete(recursive: true);
+        return; // 删除成功
+      } catch (e) {
+        print('Attempt ${i + 1} delete failed: $e');
+        if (i == maxRetries - 1) {
+          // 最后一次尝试也失败，抛出异常
+          rethrow;
+        }
+      }
+
+      // 尝试杀死进程
+      final processes = ['server.exe', 'warden.exe', 'COM.exe', 'Heidegger.exe'];
+      for (final pName in processes) {
+        try {
+          await Process.run('taskkill', ['/F', '/IM', pName]);
+        } catch (_) {}
+      }
+
+      // 等待释放
+      await Future.delayed(Duration(milliseconds: 1000 * (i + 1)));
+
+      // 尝试使用系统命令强删
+      try {
+        if (Platform.isWindows) {
+          final result = await Process.run('cmd', ['/c', 'rmdir', '/s', '/q', dir.path]);
+          if (result.exitCode == 0 && !await dir.exists()) {
+            return; // cmd 删除成功
+          }
+          print('CMD rmdir output: ${result.stdout} ${result.stderr}');
+        }
+      } catch (e) {
+        print('CMD rmdir failed: $e');
       }
     }
   }
@@ -329,8 +369,14 @@ class _BootstrapAppState extends State<BootstrapApp> {
       if (configResp.statusCode != 200) throw Exception('无法获取配置文件');
 
       final config = jsonDecode(configResp.body);
-      final zipUrl = config['bin_zip_path'];
-      final expectedHash = config['bin_zip_hash'].toString().toLowerCase();
+
+      final versionConfig = config['bin_zip'][appVersion];
+      if (versionConfig == null) {
+        throw Exception('当前版本 $appVersion 无法找到对应的资源配置');
+      }
+
+      final zipUrl = versionConfig['bin_zip_path'];
+      final expectedHash = versionConfig['bin_zip_hash'].toString().toLowerCase();
 
       final zipName = p.basename(Uri.parse(zipUrl).path);
       final localZip = File(p.join(rootDir.path, zipName));
@@ -345,19 +391,17 @@ class _BootstrapAppState extends State<BootstrapApp> {
           if (digest != expectedHash) {
             needDownload = true;
             // hash不同，删除整个目录
-            await rootDir.delete(recursive: true);
+            await _forceDeleteDirectory(rootDir);
           }
         } else {
           // zip不存在，视为异常，重新下载
           needDownload = true;
-          await rootDir.delete(recursive: true);
+          await _forceDeleteDirectory(rootDir);
         }
       } else {
         // bin不存在
         needDownload = true;
-        if (await rootDir.exists()) {
-          await rootDir.delete(recursive: true);
-        }
+        await _forceDeleteDirectory(rootDir);
       }
 
       if (needDownload) {
