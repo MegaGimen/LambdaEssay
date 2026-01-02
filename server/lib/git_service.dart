@@ -8,6 +8,10 @@ import 'models.dart';
 
 bool _debugMode = false;
 void setDebugMode(bool value) => _debugMode = value;
+final scriptDir = p.dirname(Platform.script.toFilePath());
+String get _psScriptPath => _debugMode
+    ? r'c:\Users\m1369\Documents\gitbin\frontend\lib\doccmp.ps1'
+    : p.join(scriptDir, 'doccmp.ps1');
 
 class PullPreviewResult {
   final GraphResponse current;
@@ -629,9 +633,10 @@ Future<void> switchBranch(String projectName, String branchName) async {
   final repoPath = _projectDir(projectName);
   return _withRepoLock(repoPath, () async {
     final sw = Stopwatch()..start();
-    
+
     await _runGit(['checkout', '-f', branchName], repoPath);
-    print('[Perf][GitService][SwitchBranch][Checkout] ${sw.elapsedMilliseconds}ms');
+    print(
+        '[Perf][GitService][SwitchBranch][Checkout] ${sw.elapsedMilliseconds}ms');
     sw.reset();
 /*
     //await _forceRegenerateRepoDocx(repoPath);
@@ -640,7 +645,8 @@ Future<void> switchBranch(String projectName, String branchName) async {
     sw.reset();
 */
     clearCache();
-    print('[Perf][GitService][SwitchBranch][ClearCache] ${sw.elapsedMilliseconds}ms');
+    print(
+        '[Perf][GitService][SwitchBranch][ClearCache] ${sw.elapsedMilliseconds}ms');
     sw.stop();
   });
 }
@@ -670,7 +676,7 @@ Future<Uint8List> compareWorking(String repoPath) async {
     final tracking = await _readTracking(repoName);
     final docxPath = tracking['docxPath'] as String?;
 
-    await _updateContentDocx(repoPath, docxPath!);//保证外部更新内部。
+    await _updateContentDocx(repoPath, docxPath!); //保证外部更新内部。
 
     try {
       // If content.docx doesn't exist, create it from doc_content
@@ -688,13 +694,7 @@ Future<Uint8List> compareWorking(String repoPath) async {
         throw Exception('Could not get HEAD content: $e');
       }
 
-      final scriptPath = p.fromUri(Platform.script);
-      final repoRoot = p.dirname(p.dirname(p.dirname(scriptPath)));
-      final ps1Path = p.join(repoRoot, 'frontend', 'lib', 'doccmp.ps1');
-
-      if (!File(ps1Path).existsSync()) {
-        throw Exception('doccmp.ps1 not found at $ps1Path');
-      }
+      final ps1Path = _psScriptPath;
 
       final res = await Process.run('powershell', [
         '-ExecutionPolicy',
@@ -956,10 +956,10 @@ Future<Uint8List> compareCommits(
 
       final scriptPath = p.fromUri(Platform.script);
       final repoRoot = p.dirname(p.dirname(p.dirname(scriptPath)));
-      final ps1Path = p.join(repoRoot, 'frontend', 'lib', 'doccmp.ps1');
+      final ps1Path = _psScriptPath;
 
       if (!File(ps1Path).existsSync()) {
-        throw Exception('doccmp.ps1 not found at $ps1Path');
+        throw Exception('doccmp.ps1 not found at $ps1Path and _debugMode=$_debugMode');
       }
 
       final res = await Process.run('powershell', [
@@ -1117,7 +1117,8 @@ Future<Map<String, dynamic>> updateTrackingProject(
       sectionSw.reset();
 
       // Compare Source vs HEAD
-      bool isIdenticalToHead = true; // Default assumption until proven otherwise
+      bool isIdenticalToHead =
+          true; // Default assumption until proven otherwise
       bool hasHead = false;
 
       final tmpDir = await Directory.systemTemp.createTemp('git_head_check_');
@@ -1208,30 +1209,34 @@ Future<void> _syncToExternal(String repoPath) async {
   if (docxPath == null) return;
 
   print('Syncing internal doc_content to external: $docxPath');
-  
+
   // 1. Zip doc_content -> content.docx
   // We use _forceRegenerateRepoDocx which does exactly this:
   // zips doc_content -> content.docx
   // But wait, _forceRegenerateRepoDocx calls _ensureRepoDocx which calls _zipDir.
   // Let's use _ensureRepoDocx logic but forced.
-  
+
   final contentDir = p.join(repoPath, kContentDirName);
   final repoDocx = p.join(repoPath, kRepoDocxName);
-  
+
   if (Directory(contentDir).existsSync()) {
-      // Always regenerate content.docx from doc_content to be sure
-      if (File(repoDocx).existsSync()) {
-        try { File(repoDocx).deleteSync(); } catch (_) {}
-      }
-      await _zipDir(contentDir, repoDocx);
-      print('[Perf][GitService][SyncToExternal][ZipDir] ${sw.elapsedMilliseconds}ms');
-      sw.reset();
+    // Always regenerate content.docx from doc_content to be sure
+    if (File(repoDocx).existsSync()) {
+      try {
+        File(repoDocx).deleteSync();
+      } catch (_) {}
+    }
+    await _zipDir(contentDir, repoDocx);
+    print(
+        '[Perf][GitService][SyncToExternal][ZipDir] ${sw.elapsedMilliseconds}ms');
+    sw.reset();
   }
-  
+
   // 2. Update External
   if (File(repoDocx).existsSync()) {
     await _writeExternalDocx(repoPath, repoDocx);
-    print('[Perf][GitService][SyncToExternal][WriteExternal] ${sw.elapsedMilliseconds}ms');
+    print(
+        '[Perf][GitService][SyncToExternal][WriteExternal] ${sw.elapsedMilliseconds}ms');
     sw.reset();
   }
   sw.stop();
@@ -1404,7 +1409,7 @@ Future<void> rollbackVersion(String projectName, String commitId) async {
     // Checkout doc_content from commitId to working dir
     // git checkout commitId -- doc_content
     await _runGit(['checkout', commitId, '--', kContentDirName], repoPath);
-    
+
     // Sync to external
     await _syncToExternal(repoPath);
   });
@@ -2106,9 +2111,7 @@ Future<void> prepareMerge(String repoName, String targetBranch) async {
 
       // 3. Compare -> diff.docx
       final diffDocx = p.join(tmpDir.path, 'diff.docx');
-      final psScript = _debugMode
-          ? r'c:\Users\m1369\Documents\gitbin\frontend\lib\doccmp.ps1'
-          : 'doccmp.ps1';
+      final psScript = _psScriptPath;
 
       final pRes = await Process.run('powershell', [
         '-ExecutionPolicy',
