@@ -2887,7 +2887,7 @@ class _GraphViewState extends State<_GraphView>
       }
       if (widget.data.commits.isEmpty) return;
 
-      print('正在轮询检查PDF预览...');
+      //print('正在轮询检查PDF预览...');
 
       await ensureAppDataCacheDir();
 
