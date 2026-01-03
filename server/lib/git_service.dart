@@ -637,7 +637,7 @@ Future<void> commitChanges(
     final headLines = await _runGit(['rev-parse', 'HEAD'], repoPath);
     final head = headLines.isNotEmpty ? headLines.first.trim().toLowerCase() : '';
     if (head.isNotEmpty) {
-      await _ensureCommitPreviewAssetsUnlocked(repoPath, head);
+      unawaited(ensureCommitPreviewAssets(repoPath, head));
     }
     clearCache();
   });
@@ -952,16 +952,101 @@ String _repoRootDir() {
   return p.dirname(p.dirname(p.dirname(scriptPath)));
 }
 
-String _sofficeExePath() {
-  return p.join(
-    _repoRootDir(),
-    'frontend',
-    'LibreOfficePortable',
-    'App',
-    'libreoffice',
-    'program',
-    'soffice.exe',
-  );
+String _docx2pdfPs1Path() {
+  return p.join(_repoRootDir(), 'frontend', 'lib', 'docx2pdf.ps1');
+}
+
+String _psQuote(String value) {
+  return "'${value.replaceAll("'", "''")}'";
+}
+
+Future<void> _docxToPdf(String docxPath, String pdfPath) async {
+  final psScript = _docx2pdfPs1Path();
+  if (!File(psScript).existsSync()) {
+    throw Exception('docx2pdf.ps1 not found at $psScript');
+  }
+  final res = await Process.run('powershell', [
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    psScript,
+    '-InputPath',
+    docxPath,
+    '-OutputPath',
+    pdfPath,
+  ]);
+  if (res.exitCode != 0 || !File(pdfPath).existsSync()) {
+    throw Exception('docx->pdf failed: ${res.stderr}');
+  }
+}
+
+Future<void> _docxToFirstPageThumbnailPng(String docxPath, String pngPath) async {
+  final tmpDir = await Directory.systemTemp.createTemp('gitdocx_thumb_');
+  try {
+    final xpsPath = p.join(tmpDir.path, 'first_page.xps');
+    final cmd = [
+      r"$inputPath = "+_psQuote(docxPath)+r";",
+      r"$xpsPath = "+_psQuote(xpsPath)+r";",
+      r"$pngPath = "+_psQuote(pngPath)+r";",
+      r"$wdDoNotSaveChanges = 0;",
+      r"$wdExportFormatXPS = 18;",
+      r"$wdExportFromTo = 3;",
+      r"$word = New-Object -ComObject Word.Application;",
+      r"$word.Visible = $false;",
+      r"$word.DisplayAlerts = 0;",
+      r"try {",
+      r"  $doc = $word.Documents.Open($inputPath, $false, $true);",
+      r"  $doc.ExportAsFixedFormat($xpsPath, $wdExportFormatXPS, $false, 0, $wdExportFromTo, 1, 1, 0, $true, $true, 0, $true, $true, $false);",
+      r"  $doc.Close($wdDoNotSaveChanges);",
+      r"} finally {",
+      r"  $word.Quit();",
+      r"  [System.Runtime.Interopservices.Marshal]::ReleaseComObject($word) | Out-Null;",
+      r"  Remove-Variable word -ErrorAction SilentlyContinue;",
+      r"  [GC]::Collect();",
+      r"  [GC]::WaitForPendingFinalizers();",
+      r"}",
+      r"Add-Type -AssemblyName ReachFramework;",
+      r"Add-Type -AssemblyName PresentationCore;",
+      r"Add-Type -AssemblyName WindowsBase;",
+      r"$xps = New-Object System.Windows.Xps.Packaging.XpsDocument($xpsPath, [System.IO.FileAccess]::Read);",
+      r"$seq = $xps.GetFixedDocumentSequence();",
+      r"$fixedDoc = $seq.References[0].GetDocument($false);",
+      r"$page = $fixedDoc.Pages[0].GetPageRoot($false);",
+      r"$w = [double]$page.Width;",
+      r"$h = [double]$page.Height;",
+      r"$targetW = 320.0;",
+      r"$scale = $targetW / $w;",
+      r"if ($scale -le 0) { $scale = 1.0 }",
+      r"$rtb = New-Object System.Windows.Media.Imaging.RenderTargetBitmap([int]($w*$scale), [int]($h*$scale), 96*$scale, 96*$scale, [System.Windows.Media.PixelFormats]::Pbgra32);",
+      r"$rtb.Render($page);",
+      r"$encoder = New-Object System.Windows.Media.Imaging.PngBitmapEncoder;",
+      r"$encoder.Frames.Add([System.Windows.Media.Imaging.BitmapFrame]::Create($rtb));",
+      r"$fs = New-Object System.IO.FileStream($pngPath, [System.IO.FileMode]::Create);",
+      r"$encoder.Save($fs);",
+      r"$fs.Close();",
+      r"$xps.Close();",
+    ].join(' ');
+
+    final res = await Process.run('powershell', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-Command',
+      cmd,
+    ]);
+    if (res.exitCode != 0 || !File(pngPath).existsSync()) {
+      throw Exception('docx->png failed: ${res.stderr}');
+    }
+  } finally {
+    try {
+      if (tmpDir.existsSync()) {
+        tmpDir.deleteSync(recursive: true);
+      }
+    } catch (_) {}
+  }
 }
 
 Future<void> _ensureCommitPreviewAssetsUnlocked(
@@ -987,52 +1072,16 @@ Future<void> _ensureCommitPreviewAssetsUnlocked(
     final docxPath = p.join(tmpDir.path, '$commitId.docx');
     await _gitArchiveToDocx(repoPath, commitId, docxPath);
 
-    final soffice = _sofficeExePath();
-    if (!File(soffice).existsSync()) {
-      throw Exception('soffice.exe not found at $soffice');
-    }
-
     if (!pdfFile.existsSync()) {
-      final res = await Process.run(soffice, [
-        '--headless',
-        '--convert-to',
-        'pdf',
-        '--outdir',
-        tmpDir.path,
-        docxPath,
-      ]);
-      final outName = p.setExtension(p.basename(docxPath), '.pdf');
-      final outPath = p.join(tmpDir.path, outName);
-      if (res.exitCode != 0 || !File(outPath).existsSync()) {
-        throw Exception('docx->pdf failed: ${res.stderr}');
-      }
-      await File(outPath).copy(pdfPath);
+      final tmpPdfPath = p.join(tmpDir.path, '$commitId.pdf');
+      await _docxToPdf(docxPath, tmpPdfPath);
+      await File(tmpPdfPath).copy(pdfPath);
     }
 
     if (!thumbFile.existsSync()) {
-      final res = await Process.run(soffice, [
-        '--headless',
-        '--convert-to',
-        'png',
-        '--outdir',
-        tmpDir.path,
-        docxPath,
-      ]);
-
-      if (res.exitCode != 0) {
-        throw Exception('docx->png failed: ${res.stderr}');
-      }
-
-      final pngs = tmpDir
-          .listSync()
-          .whereType<File>()
-          .where((f) => p.extension(f.path).toLowerCase() == '.png')
-          .toList();
-      pngs.sort((a, b) => a.path.compareTo(b.path));
-      if (pngs.isEmpty) {
-        throw Exception('docx->png produced no output');
-      }
-      await pngs.first.copy(thumbPath);
+      final tmpPngPath = p.join(tmpDir.path, '$commitId.png');
+      await _docxToFirstPageThumbnailPng(docxPath, tmpPngPath);
+      await File(tmpPngPath).copy(thumbPath);
     }
   } finally {
     try {
