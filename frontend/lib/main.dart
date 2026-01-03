@@ -2856,23 +2856,11 @@ class _GraphViewState extends State<_GraphView>
   bool _branchPanelCollapsed = false;
   bool _legendPanelCollapsed = false;
 
-  Offset _previewPanelOffset = const Offset(0, 140);
-  Size _previewPanelSize = const Size(520, 760);
-  bool _previewPanelCollapsed = false;
-  bool _previewPanelInitialized = false;
-
   String? _hoverPreviewCommitId;
   Uint8List? _hoverPreviewThumb;
   bool _hoverPreviewThumbLoading = false;
   Timer? _hoverPreviewDebounce;
   Timer? _hoverPreviewPoll;
-
-  String? _pinnedPreviewCommitId;
-  String? _pinnedPreviewTitle;
-  String? _pinnedPreviewPdfPath;
-  Uint8List? _pinnedPreviewPdfBytes;
-  bool _pinnedPreviewPdfLoading = false;
-  Timer? _pinnedPreviewPoll;
 
   Offset _clampPanelOffset(Offset value, Size panelSize, Size parentSize) {
     final scaledW = panelSize.width * widget.uiScale;
@@ -2897,23 +2885,9 @@ class _GraphViewState extends State<_GraphView>
       legendOffset = Offset(dx, 80);
     }
 
-    Offset previewOffset = _previewPanelOffset;
-    if (!_previewPanelInitialized) {
-      final dx = math.max(
-        0.0,
-        parentSize.width - _previewPanelSize.width * widget.uiScale - 16,
-      );
-      previewOffset = Offset(dx, 140);
-    }
-
     final nextLegendOffset = _clampPanelOffset(
       legendOffset,
       _legendPanelSize,
-      parentSize,
-    );
-    final nextPreviewOffset = _clampPanelOffset(
-      previewOffset,
-      _previewPanelSize,
       parentSize,
     );
     final nextBranchOffset = _clampPanelOffset(
@@ -2925,9 +2899,7 @@ class _GraphViewState extends State<_GraphView>
     final needUpdate =
         (!_legendPanelInitialized) ||
         (nextLegendOffset - _legendPanelOffset).distance > 0.5 ||
-        (nextBranchOffset - _branchPanelOffset).distance > 0.5 ||
-        (!_previewPanelInitialized) ||
-        (nextPreviewOffset - _previewPanelOffset).distance > 0.5;
+        (nextBranchOffset - _branchPanelOffset).distance > 0.5;
 
     if (!needUpdate) return;
 
@@ -2937,8 +2909,6 @@ class _GraphViewState extends State<_GraphView>
         _branchPanelOffset = nextBranchOffset;
         _legendPanelOffset = nextLegendOffset;
         _legendPanelInitialized = true;
-        _previewPanelOffset = nextPreviewOffset;
-        _previewPanelInitialized = true;
       });
     });
   }
@@ -3027,72 +2997,30 @@ class _GraphViewState extends State<_GraphView>
     });
   }
 
-  Future<void> _pinCommitPreview(String commitId, {String? title}) async {
-    setState(() {
-      _previewPanelCollapsed = false;
-      _pinnedPreviewCommitId = commitId;
-      _pinnedPreviewTitle = title ?? '预览: ${commitId.substring(0, 7)}';
-      _pinnedPreviewPdfBytes = null;
-      _pinnedPreviewPdfPath = null;
-      _pinnedPreviewPdfLoading = true;
-    });
 
-    await ensureAppDataCacheDir();
-    final pdfPath = cachePdfPathForSha(commitId);
-    final pdfFile = File(pdfPath);
-    if (pdfFile.existsSync()) {
-      if (!mounted) return;
-      if (_pinnedPreviewCommitId != commitId) return;
-      setState(() {
-        _pinnedPreviewPdfPath = pdfPath;
-        _pinnedPreviewPdfLoading = false;
-      });
-      return;
-    }
-
-    await _requestPreviewCache(commitId);
-
-    _pinnedPreviewPoll?.cancel();
-    var tries = 0;
-    _pinnedPreviewPoll = Timer.periodic(const Duration(milliseconds: 350),
-        (t) async {
-      tries++;
-      if (!mounted) {
-        t.cancel();
-        return;
-      }
-      if (_pinnedPreviewCommitId != commitId) {
-        t.cancel();
-        return;
-      }
-      if (File(pdfPath).existsSync()) {
-        setState(() {
-          _pinnedPreviewPdfPath = pdfPath;
-          _pinnedPreviewPdfLoading = false;
-        });
-        t.cancel();
-        return;
-      }
-      if (tries >= 120) {
-        t.cancel();
-        if (!mounted) return;
-        if (_pinnedPreviewCommitId != commitId) return;
-        setState(() {
-          _pinnedPreviewPdfLoading = false;
-        });
-      }
-    });
-  }
-
-  void _pinPdfBytesPreview(Uint8List bytes, {required String title}) {
-    setState(() {
-      _previewPanelCollapsed = false;
-      _pinnedPreviewCommitId = null;
-      _pinnedPreviewTitle = title;
-      _pinnedPreviewPdfBytes = bytes;
-      _pinnedPreviewPdfPath = null;
-      _pinnedPreviewPdfLoading = false;
-    });
+  Future<void> _showPdfBytesDialog(Uint8List bytes, {required String title}) async {
+    await showDialog<void>(
+      context: context,
+      builder: (_) {
+        return AlertDialog(
+          title: Text(title),
+          content: SizedBox(
+            width: 980,
+            height: 680,
+            child: PdfPreviewPane(
+              bytes: bytes,
+              initialZoom: 0.75,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('关闭'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   @override
@@ -3195,7 +3123,6 @@ class _GraphViewState extends State<_GraphView>
     HardwareKeyboard.instance.removeHandler(_handleKey);
     _hoverPreviewDebounce?.cancel();
     _hoverPreviewPoll?.cancel();
-    _pinnedPreviewPoll?.cancel();
     _graphFlashCtrl.dispose();
     if (widget.transformationController == null) {
       _tc.dispose();
@@ -3289,7 +3216,7 @@ class _GraphViewState extends State<_GraphView>
       // Unlock UI before navigation
       widget.onLoading?.call(false);
 
-      _pinPdfBytesPreview(
+      await _showPdfBytesDialog(
         pdfBytes,
         title: '${newC.substring(0, 7)} vs ${oldC.substring(0, 7)}',
       );
@@ -3360,7 +3287,7 @@ class _GraphViewState extends State<_GraphView>
                           }
                           if (!mounted) return;
 
-                          _pinPdfBytesPreview(
+                          await _showPdfBytesDialog(
                             resp.bodyBytes,
                             title: 'Working Copy Diff',
                           );
@@ -3590,69 +3517,176 @@ class _GraphViewState extends State<_GraphView>
   }
 
   void _showNodeActionDialog(CommitNode node) {
-    _pinCommitPreview(node.id, title: '预览: ${node.id.substring(0, 7)}');
     final allBranches = widget.data.branches.map((b) => b.name).toSet();
     final targets = node.refs.where((r) => allBranches.contains(r)).toList();
 
-    showDialog(
+    Timer? poll;
+    showDialog<void>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('操作: ${node.id.substring(0, 7)}'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('提交信息: ${node.subject}'),
-            if (targets.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              const Text('以此提交为头的分支:',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              Wrap(
-                spacing: 8,
-                children: targets
-                    .map((b) => ActionChip(
-                          label: Text(b),
-                          onPressed: () {
-                            Navigator.pop(ctx);
-                            _doSwitchBranch(b);
-                          },
-                          avatar: const Icon(Icons.swap_horiz, size: 16),
-                        ))
-                    .toList(),
+      builder: (ctx) {
+        bool started = false;
+        bool pdfLoading = true;
+        String? pdfPath;
+
+        return StatefulBuilder(
+          builder: (ctx, setState) {
+            if (!started) {
+              started = true;
+              WidgetsBinding.instance.addPostFrameCallback((_) async {
+                try {
+                  await ensureAppDataCacheDir();
+                  final path = cachePdfPathForSha(node.id);
+                  if (File(path).existsSync()) {
+                    if (!ctx.mounted) return;
+                    setState(() {
+                      pdfPath = path;
+                      pdfLoading = false;
+                    });
+                    return;
+                  }
+
+                  await _requestPreviewCache(node.id);
+
+                  var tries = 0;
+                  poll?.cancel();
+                  poll = Timer.periodic(const Duration(milliseconds: 300), (t) {
+                    tries++;
+                    if (!ctx.mounted) {
+                      t.cancel();
+                      return;
+                    }
+                    if (File(path).existsSync()) {
+                      setState(() {
+                        pdfPath = path;
+                        pdfLoading = false;
+                      });
+                      t.cancel();
+                      return;
+                    }
+                    if (tries >= 80) {
+                      setState(() {
+                        pdfLoading = false;
+                      });
+                      t.cancel();
+                    }
+                  });
+                } catch (_) {
+                  if (!ctx.mounted) return;
+                  setState(() {
+                    pdfLoading = false;
+                  });
+                }
+              });
+            }
+
+            return AlertDialog(
+              title: Text('操作: ${node.id.substring(0, 7)}'),
+              content: SizedBox(
+                width: 980,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('提交信息: ${node.subject}'),
+                          const SizedBox(height: 6),
+                          Text('作者: ${node.author}'),
+                          Text('时间: ${node.date}'),
+                          const SizedBox(height: 8),
+                          if (targets.isNotEmpty) ...[
+                            const Text(
+                              '以此提交为头的分支:',
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 6),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 6,
+                              children: targets
+                                  .map((b) => ActionChip(
+                                        label: Text(b),
+                                        onPressed: () {
+                                          Navigator.pop(ctx);
+                                          _doSwitchBranch(b);
+                                        },
+                                        avatar: const Icon(Icons.swap_horiz, size: 16),
+                                      ))
+                                  .toList(),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    SizedBox(
+                      width: 480,
+                      height: 640,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFDFDFD),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0xFFE6E6E6)),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(6),
+                          child: pdfLoading
+                              ? const Center(
+                                  child: SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  ),
+                                )
+                              : (pdfPath != null
+                                  ? PdfPreviewPane(
+                                      filePath: pdfPath,
+                                      initialZoom: 0.75,
+                                    )
+                                  : const Center(child: Text('暂无 PDF 预览'))),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ],
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(ctx);
-              _mergeToCurrent(node);
-            },
-            child: const Text('合并到当前分支 (Word)'),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(ctx);
-              _rollbackVersion(node);
-            },
-            child: const Text('回退到这个版本 (仅文件)'),
-          ),
-          TextButton(
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            onPressed: () {
-              Navigator.pop(ctx);
-              _resetBranch(node);
-            },
-            child: const Text('回退分支到此 (危险)'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('关闭'),
-          ),
-        ],
-      ),
-    );
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _mergeToCurrent(node);
+                  },
+                  child: const Text('合并到当前分支 (Word)'),
+                ),
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _rollbackVersion(node);
+                  },
+                  child: const Text('回退到这个版本 (仅文件)'),
+                ),
+                TextButton(
+                  style: TextButton.styleFrom(foregroundColor: Colors.red),
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _resetBranch(node);
+                  },
+                  child: const Text('回退分支到此 (危险)'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('关闭'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    ).whenComplete(() {
+      poll?.cancel();
+    });
   }
 
   Future<void> _rollbackVersion(CommitNode node) async {
@@ -4155,109 +4189,6 @@ class _GraphViewState extends State<_GraphView>
             ),
           ),
         MovableResizablePanel(
-          offset: _previewPanelOffset,
-          size: _previewPanelSize,
-          parentSize: parentSize,
-          scale: widget.uiScale,
-          title: _pinnedPreviewTitle ?? '预览侧栏',
-          minSize: const Size(360, 260),
-          maxSize: const Size(1400, 1400),
-          elevation: 4,
-          borderRadius: BorderRadius.circular(8),
-          contentPadding: const EdgeInsets.all(8),
-          backgroundColor: Colors.white,
-          onOffsetChanged: (v) => setState(() => _previewPanelOffset = v),
-          onSizeChanged: (v) => setState(() => _previewPanelSize = v),
-          isCollapsed: _previewPanelCollapsed,
-          onCollapseChanged: (v) => setState(() => _previewPanelCollapsed = v),
-          child: Column(
-            children: [
-              SizedBox(
-                height: 190,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF7F7F7),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(8),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _hoverPreviewCommitId == null
-                              ? '悬停节点显示缩略图'
-                              : '缩略图: ${_hoverPreviewCommitId!.substring(0, 7)}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          softWrap: false,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Expanded(
-                          child: Center(
-                            child: _hoverPreviewThumbLoading
-                                ? const SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(strokeWidth: 2),
-                                  )
-                                : (_hoverPreviewThumb != null
-                                    ? InteractiveViewer(
-                                        minScale: 0.8,
-                                        maxScale: 5,
-                                        child: Image.memory(
-                                          _hoverPreviewThumb!,
-                                          fit: BoxFit.contain,
-                                        ),
-                                      )
-                                    : const Text('暂无缩略图')),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Expanded(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFDFDFD),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: const Color(0xFFE6E6E6)),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(6),
-                    child: _pinnedPreviewPdfLoading
-                        ? const Center(
-                            child: SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                          )
-                        : (_pinnedPreviewPdfBytes != null
-                            ? PdfPreviewPane(
-                                bytes: _pinnedPreviewPdfBytes,
-                                initialZoom: 0.8,
-                              )
-                            : (_pinnedPreviewPdfPath != null
-                                ? PdfPreviewPane(
-                                    filePath: _pinnedPreviewPdfPath,
-                                    initialZoom: 0.75,
-                                  )
-                                : const Center(child: Text('双击节点自动加载该版本 PDF')))),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        MovableResizablePanel(
           offset: _legendPanelOffset,
           size: _legendPanelSize,
           parentSize: parentSize,
@@ -4521,7 +4452,7 @@ class _GraphViewState extends State<_GraphView>
               elevation: 2,
               color: Colors.transparent,
               child: Container(
-                constraints: const BoxConstraints(maxWidth: 400),
+                constraints: const BoxConstraints(maxWidth: 720),
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
                   color: const Color(0xFFFAFAFA),
@@ -4532,17 +4463,54 @@ class _GraphViewState extends State<_GraphView>
                 ),
                 child: DefaultTextStyle(
                   style: const TextStyle(color: Colors.black, fontSize: 12),
-                  child: Column(
+                  child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text('提交信息: ${_hovered!.subject}'),
-                      const SizedBox(height: 4),
-                      Text('作者: ${_hovered!.author}'),
-                      Text('时间: ${_hovered!.date}'),
-                      const SizedBox(height: 4),
-                      Text('父节点的提交的 ID: ${_hovered!.parents.join(', ')}'),
-                      Text('提交的 ID: ${_hovered!.id}'),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text('提交信息: ${_hovered!.subject}'),
+                            const SizedBox(height: 4),
+                            Text('作者: ${_hovered!.author}'),
+                            Text('时间: ${_hovered!.date}'),
+                            const SizedBox(height: 4),
+                            Text('父节点的提交的 ID: ${_hovered!.parents.join(', ')}'),
+                            Text('提交的 ID: ${_hovered!.id}'),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      SizedBox(
+                        width: 180,
+                        height: 120,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: const Color(0xFFE6E6E6)),
+                          ),
+                          child: Center(
+                            child: _hoverPreviewThumbLoading
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                : (_hoverPreviewThumb != null
+                                    ? ClipRRect(
+                                        borderRadius: BorderRadius.circular(6),
+                                        child: Image.memory(
+                                          _hoverPreviewThumb!,
+                                          fit: BoxFit.contain,
+                                        ),
+                                      )
+                                    : const Text('暂无缩略图')),
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                 ),
