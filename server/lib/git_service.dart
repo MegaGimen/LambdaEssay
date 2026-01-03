@@ -1060,34 +1060,33 @@ Future<Map<String, bool>> ensureCommitPreviewAssets(
      return {'pdf': true, 'thumb': false};
   }
 
-  await _previewSemaphore.acquire();
+  // Mark as working immediately to block other requests
+  workingIds.add(commitId);
+
   try {
-     if (workingIds.contains(commitId)) {
+     await _previewSemaphore.acquire();
+     try {
+        // Double check existence (optimization)
+        if (File(_globalCachedPdfPath(commitId)).existsSync()) {
+           return {'pdf': true, 'thumb': false};
+        }
+        
+        try {
+          await _generatePreviewInternal(repoPath, commitId);
+        } catch (e) {
+          print('Preview generation failed for $commitId: $e');
+        }
+        
         return {
           'pdf': File(_globalCachedPdfPath(commitId)).existsSync(),
           'thumb': false,
         };
-     }
-     
-     if (File(_globalCachedPdfPath(commitId)).existsSync()) {
-        return {'pdf': true, 'thumb': false};
-     }
-     
-     workingIds.add(commitId);
-     try {
-       await _generatePreviewInternal(repoPath, commitId);
-     } catch (e) {
-       print('Preview generation failed for $commitId: $e');
      } finally {
-       workingIds.remove(commitId);
+        _previewSemaphore.release();
      }
-     
-     return {
-       'pdf': File(_globalCachedPdfPath(commitId)).existsSync(),
-       'thumb': false,
-     };
   } finally {
-     _previewSemaphore.release();
+     // Remove from workingIds only after we are completely done (or failed)
+     workingIds.remove(commitId);
   }
 }
 
