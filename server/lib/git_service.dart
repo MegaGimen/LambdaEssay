@@ -72,6 +72,33 @@ class Mutex {
   }
 }
 
+class Semaphore {
+  final int max;
+  int _current = 0;
+  final List<Completer<void>> _waiters = [];
+
+  Semaphore(this.max);
+
+  Future<void> acquire() async {
+    if (_current < max) {
+      _current++;
+      return;
+    }
+    final completer = Completer<void>();
+    _waiters.add(completer);
+    await completer.future;
+  }
+
+  void release() {
+    if (_waiters.isNotEmpty) {
+      _waiters.removeAt(0).complete();
+    } else {
+      _current--;
+    }
+  }
+}
+
+final _previewSemaphore = Semaphore(20);
 final Map<String, Mutex> _repoLocks = {};
 
 Future<T> _withRepoLock<T>(String repoPath, Future<T> Function() block) async {
@@ -971,18 +998,15 @@ Future<void> _docxToPdf(
     '-OutputPath',
     pdfPath,
   ]);
-  workingIds.remove(commitId);
   if (res.exitCode != 0 || !File(pdfPath).existsSync()) {
     throw Exception('docx->pdf failed: ${res.stderr}');
   }
 }
 
-Future<void> _ensureCommitPreviewAssetsUnlocked(
+Future<void> _generatePreviewInternal(
   String repoPath,
   String commitId,
 ) async {
-  if (workingIds.contains(commitId)) return;
-  workingIds.add(commitId);
   final cacheDir = _globalPreviewCacheDir();
   if (!cacheDir.existsSync()) {
     cacheDir.createSync(recursive: true);
@@ -997,10 +1021,15 @@ Future<void> _ensureCommitPreviewAssetsUnlocked(
   final tmpDir = await Directory.systemTemp.createTemp('gitdocx_prev_asset_');
   try {
     final docxPath = p.join(tmpDir.path, '$commitId.docx');
-    await _gitArchiveToDocx(repoPath, commitId, docxPath);
+    
+    // Only lock for git archive
+    await _withRepoLock(repoPath, () async {
+       await _gitArchiveToDocx(repoPath, commitId, docxPath);
+    });
 
     if (!pdfFile.existsSync()) {
       final tmpPdfPath = p.join(tmpDir.path, '$commitId.pdf');
+      // No lock for PDF conversion
       await _docxToPdf(docxPath, tmpPdfPath, commitId);
       await File(tmpPdfPath).copy(pdfPath);
     }
@@ -1018,13 +1047,48 @@ Future<Map<String, bool>> ensureCommitPreviewAssets(
   String commitId,
 ) async {
   print(workingIds);
-  return _withRepoLock(repoPath, () async {
-    await _ensureCommitPreviewAssetsUnlocked(repoPath, commitId);
-    return {
-      'pdf': File(_globalCachedPdfPath(commitId)).existsSync(),
-      'thumb': false, // No longer generating thumbs
-    };
-  });
+  
+  if (workingIds.contains(commitId)) {
+     return {
+       'pdf': File(_globalCachedPdfPath(commitId)).existsSync(),
+       'thumb': false,
+     };
+  }
+
+  // Fast check
+  if (File(_globalCachedPdfPath(commitId)).existsSync()) {
+     return {'pdf': true, 'thumb': false};
+  }
+
+  await _previewSemaphore.acquire();
+  try {
+     if (workingIds.contains(commitId)) {
+        return {
+          'pdf': File(_globalCachedPdfPath(commitId)).existsSync(),
+          'thumb': false,
+        };
+     }
+     
+     if (File(_globalCachedPdfPath(commitId)).existsSync()) {
+        return {'pdf': true, 'thumb': false};
+     }
+     
+     workingIds.add(commitId);
+     try {
+       await _generatePreviewInternal(repoPath, commitId);
+     } catch (e) {
+       print('Preview generation failed for $commitId: $e');
+     } finally {
+       workingIds.remove(commitId);
+     }
+     
+     return {
+       'pdf': File(_globalCachedPdfPath(commitId)).existsSync(),
+       'thumb': false,
+     };
+  } finally {
+     _previewSemaphore.release();
+  }
 }
 
 File _trackingFile(String name) {
@@ -1495,21 +1559,13 @@ void main() async {
 }
 
 Future<Uint8List> previewVersion(String repoPath, String commitId) async {
-  return _withRepoLock(repoPath, () async {
-    final pdfPath = _globalCachedPdfPath(commitId);
-    final f = File(pdfPath);
-    if (f.existsSync()) {
-      return await f.readAsBytes();
-    }
-
-    await _ensureCommitPreviewAssetsUnlocked(repoPath, commitId);
-
-    final f2 = File(pdfPath);
-    if (f2.existsSync()) {
-      return await f2.readAsBytes();
-    }
-    throw Exception('Preview generation failed');
-  });
+  await ensureCommitPreviewAssets(repoPath, commitId);
+  final pdfPath = _globalCachedPdfPath(commitId);
+  final f = File(pdfPath);
+  if (f.existsSync()) {
+    return await f.readAsBytes();
+  }
+  throw Exception('Preview generation failed');
 }
 
 Future<void> resetBranch(String projectName, String commitId) async {
