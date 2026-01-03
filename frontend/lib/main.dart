@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:archive/archive_io.dart';
 import 'package:crypto/crypto.dart';
@@ -307,8 +308,7 @@ class _BootstrapAppState extends State<BootstrapApp> {
           _serverReady = true;
         });
         // Server 准备就绪，发送启动通知
-        if(!kDebugMode)
-          _notifyStartup();
+        if (!kDebugMode) _notifyStartup();
       }
     } catch (e) {
       if (mounted) {
@@ -336,7 +336,12 @@ class _BootstrapAppState extends State<BootstrapApp> {
       }
 
       // 尝试杀死进程
-      final processes = ['server.exe', 'warden.exe', 'COM.exe', 'Heidegger.exe'];
+      final processes = [
+        'server.exe',
+        'warden.exe',
+        'COM.exe',
+        'Heidegger.exe'
+      ];
       for (final pName in processes) {
         try {
           await Process.run('taskkill', ['/F', '/IM', pName]);
@@ -349,7 +354,8 @@ class _BootstrapAppState extends State<BootstrapApp> {
       // 尝试使用系统命令强删
       try {
         if (Platform.isWindows) {
-          final result = await Process.run('cmd', ['/c', 'rmdir', '/s', '/q', dir.path]);
+          final result =
+              await Process.run('cmd', ['/c', 'rmdir', '/s', '/q', dir.path]);
           if (result.exitCode == 0 && !await dir.exists()) {
             return; // cmd 删除成功
           }
@@ -376,7 +382,8 @@ class _BootstrapAppState extends State<BootstrapApp> {
       }
 
       final zipUrl = versionConfig['bin_zip_path'];
-      final expectedHash = versionConfig['bin_zip_hash'].toString().toLowerCase();
+      final expectedHash =
+          versionConfig['bin_zip_hash'].toString().toLowerCase();
 
       final zipName = p.basename(Uri.parse(zipUrl).path);
       final localZip = File(p.join(rootDir.path, zipName));
@@ -1337,7 +1344,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
       // Reload to reflect branch switch
       await _load();
-      await _onUpdateRepoAction(forcePull: false,opIdentical: false);
+      await _onUpdateRepoAction(forcePull: false, opIdentical: false);
 
       // If Push, push the NEW branch
       if (isPush) {
@@ -1901,7 +1908,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         docxPathCtrl.text = docxPath ?? '';
       });
       // Auto update after opening/selecting repo to sync latest status
-      await _onUpdateRepoAction(forcePull: true,opIdentical: false);
+      await _onUpdateRepoAction(forcePull: true, opIdentical: false);
     } catch (e) {
       setState(() => error = e.toString());
     } finally {
@@ -1949,7 +1956,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
   bool _isUpdatingRepo = false;
 
-  Future<void> _onUpdateRepoAction({bool forcePull = false, bool opIdentical=true}) async {
+  Future<void> _onUpdateRepoAction(
+      {bool forcePull = false, bool opIdentical = true}) async {
     final sw = Stopwatch()..start();
     if (_isUpdatingRepo) return;
     _isUpdatingRepo = true;
@@ -2032,7 +2040,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             } catch (e) {
               print('Silent fetch failed: $e');
             }
-            print('[Perf][Frontend][UpdateRepo][Fetch] ${swFetch.elapsedMilliseconds}ms');
+            print(
+                '[Perf][Frontend][UpdateRepo][Fetch] ${swFetch.elapsedMilliseconds}ms');
             swFetch.stop();
           }
         } catch (e) {
@@ -2042,13 +2051,12 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
       try {
         final swUpdate = Stopwatch()..start();
-        final resp = await _postJson('http://localhost:8080/track/update', {
-          'name': name,
-          'opIdentical':opIdentical
-        });
-        print('[Perf][Frontend][UpdateRepo][TrackUpdate] ${swUpdate.elapsedMilliseconds}ms');
+        final resp = await _postJson('http://localhost:8080/track/update',
+            {'name': name, 'opIdentical': opIdentical});
+        print(
+            '[Perf][Frontend][UpdateRepo][TrackUpdate] ${swUpdate.elapsedMilliseconds}ms');
         swUpdate.reset();
-        
+
         final needDocx = resp['needDocx'] == true;
         if (needDocx) {
           String? docx = docxPathCtrl.text.trim();
@@ -2132,11 +2140,13 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             );
           });
         }
-        print('[Perf][Frontend][UpdateRepo][SetState] ${swUpdate.elapsedMilliseconds}ms');
+        print(
+            '[Perf][Frontend][UpdateRepo][SetState] ${swUpdate.elapsedMilliseconds}ms');
         swUpdate.reset();
-        
+
         await _load();
-        print('[Perf][Frontend][UpdateRepo][LoadGraph] ${swUpdate.elapsedMilliseconds}ms');
+        print(
+            '[Perf][Frontend][UpdateRepo][LoadGraph] ${swUpdate.elapsedMilliseconds}ms');
         swUpdate.stop();
       } catch (e) {
         setState(() => error = e.toString());
@@ -2298,7 +2308,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       //await Future.delayed(const Duration(milliseconds: 1000));
       if (mounted) {
         print("Auto-updating after merge...");
-        await _onUpdateRepoAction(forcePull: false,opIdentical: false);
+        await _onUpdateRepoAction(forcePull: false, opIdentical: false);
         // Ensure loading is off if _onUpdateRepoAction didn't do it (e.g. early return)
         if (mounted && loading) {
           setState(() => loading = false);
@@ -2421,46 +2431,73 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       child: Stack(
         children: [
           Scaffold(
-          appBar: AppBar(title: const Text('LambdaEssay')),
-          body: Column(
-            children: [
-              MediaQuery(
-                data: MediaQuery.of(context)
-                    .copyWith(textScaler: TextScaler.linear(_uiScale)),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (_username == null)
-                      Padding(
-                        padding: const EdgeInsets.all(8),
-                        child: _isRegisterMode
-                            ? Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(children: [
-                                    Expanded(
-                                        child: TextField(
-                                            controller: emailCtrl,
-                                            decoration: const InputDecoration(
-                                                labelText: '邮箱'))),
-                                    const SizedBox(width: 8),
-                                    ElevatedButton(
-                                        onPressed: loading ? null : _sendCode,
-                                        child: const Text('发送验证码')),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                        child: TextField(
-                                            controller: verifyCodeCtrl,
-                                            decoration: const InputDecoration(
-                                                labelText: '验证码'))),
-                                  ]),
-                                  const SizedBox(height: 8),
-                                  Row(children: [
+            appBar: AppBar(title: const Text('LambdaEssay')),
+            body: Column(
+              children: [
+                MediaQuery(
+                  data: MediaQuery.of(context)
+                      .copyWith(textScaler: TextScaler.linear(_uiScale)),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_username == null)
+                        Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: _isRegisterMode
+                              ? Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(children: [
+                                      Expanded(
+                                          child: TextField(
+                                              controller: emailCtrl,
+                                              decoration: const InputDecoration(
+                                                  labelText: '邮箱'))),
+                                      const SizedBox(width: 8),
+                                      ElevatedButton(
+                                          onPressed: loading ? null : _sendCode,
+                                          child: const Text('发送验证码')),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                          child: TextField(
+                                              controller: verifyCodeCtrl,
+                                              decoration: const InputDecoration(
+                                                  labelText: '验证码'))),
+                                    ]),
+                                    const SizedBox(height: 8),
+                                    Row(children: [
+                                      Expanded(
+                                          child: TextField(
+                                              controller: userCtrl,
+                                              decoration: const InputDecoration(
+                                                  labelText: '用户名'))),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                          child: TextField(
+                                              controller: passCtrl,
+                                              obscureText: true,
+                                              decoration: const InputDecoration(
+                                                  labelText: '密码'))),
+                                      const SizedBox(width: 8),
+                                      ElevatedButton(
+                                          onPressed:
+                                              loading ? null : _doRegister,
+                                          child: const Text('注册')),
+                                      const SizedBox(width: 8),
+                                      TextButton(
+                                          onPressed: () => setState(
+                                              () => _isRegisterMode = false),
+                                          child: const Text('返回登录')),
+                                    ]),
+                                  ],
+                                )
+                              : Row(
+                                  children: [
                                     Expanded(
                                         child: TextField(
                                             controller: userCtrl,
                                             decoration: const InputDecoration(
-                                                labelText: '用户名'))),
+                                                labelText: '用户名/邮箱'))),
                                     const SizedBox(width: 8),
                                     Expanded(
                                         child: TextField(
@@ -2470,206 +2507,218 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                                                 labelText: '密码'))),
                                     const SizedBox(width: 8),
                                     ElevatedButton(
-                                        onPressed: loading ? null : _doRegister,
-                                        child: const Text('注册')),
+                                        onPressed: loading ? null : _doLogin,
+                                        child: const Text('登录')),
                                     const SizedBox(width: 8),
                                     TextButton(
                                         onPressed: () => setState(
-                                            () => _isRegisterMode = false),
-                                        child: const Text('返回登录')),
-                                  ]),
-                                ],
-                              )
-                            : Row(
-                                children: [
-                                  Expanded(
-                                      child: TextField(
-                                          controller: userCtrl,
-                                          decoration: const InputDecoration(
-                                              labelText: '用户名/邮箱'))),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                      child: TextField(
-                                          controller: passCtrl,
-                                          obscureText: true,
-                                          decoration: const InputDecoration(
-                                              labelText: '密码'))),
-                                  const SizedBox(width: 8),
-                                  ElevatedButton(
-                                      onPressed: loading ? null : _doLogin,
-                                      child: const Text('登录')),
-                                  const SizedBox(width: 8),
-                                  TextButton(
-                                      onPressed: () => setState(
-                                          () => _isRegisterMode = true),
-                                      child: const Text('去注册')),
-                                ],
-                              ),
-                      )
-                    else
+                                            () => _isRegisterMode = true),
+                                        child: const Text('去注册')),
+                                  ],
+                                ),
+                        )
+                      else
+                        Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: Row(children: [
+                            Text('当前用户: $_username'),
+                            const SizedBox(width: 8),
+                            ElevatedButton(
+                                onPressed: _showShareDialog,
+                                child: const Text('分享仓库')),
+                            const SizedBox(width: 8),
+                            ElevatedButton(
+                                onPressed: loading ? null : _doLogout,
+                                child: const Text('登出'))
+                          ]),
+                        ),
                       Padding(
-                        padding: const EdgeInsets.all(8),
-                        child: Row(children: [
-                          Text('当前用户: $_username'),
-                          const SizedBox(width: 8),
-                          ElevatedButton(
-                              onPressed: _showShareDialog,
-                              child: const Text('分享仓库')),
-                          const SizedBox(width: 8),
-                          ElevatedButton(
-                              onPressed: loading ? null : _doLogout,
-                              child: const Text('登出'))
-                        ]),
-                      ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      child: Row(
-                        children: [
-                          const Text('整体缩放: '),
-                          SizedBox(
-                            width: 200,
-                            child: Slider(
-                              value: _uiScale.clamp(0.5, 2.0),
-                              min: 0.5,
-                              max: 2.0,
-                              onChanged: (value) {
-                                setState(() {
-                                  _uiScale = value;
-                                });
-                              },
-                            ),
-                          ),
-                          Text(_uiScale.toStringAsFixed(1)),
-                          const SizedBox(width: 16),
-                          IconButton(
-                            onPressed: () {
-                              _sharedController.value = Matrix4.identity();
-                            },
-                            tooltip: '重置视图',
-                            icon: const Icon(Icons.center_focus_strong),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.all(8),
-                      child: Row(
-                        children: [
-                          ElevatedButton(
-                            onPressed: loading ? null : _onCreateTrackProject,
-                            child: const Text('新建追踪项目'),
-                          ),
-                          const SizedBox(width: 8),
-                          ElevatedButton(
-                            onPressed: loading ? null : _onOpenTrackProject,
-                            child: const Text('打开追踪项目'),
-                          ),
-                          const SizedBox(width: 8),
-                          ElevatedButton(
-                            onPressed: () {
-                              _localGraphKey.currentState?.resetLayout();
-                            },
-                            child: const Text('恢复默认布局'),
-                          ),
-                          const SizedBox(width: 8),
-                          ElevatedButton(
-                            onPressed: loading ? null: () => _onUpdateRepoAction(opIdentical: false),
-                            child: const Text('如果文档没同步就点我'),
-                          ),
-                          const SizedBox(width: 8),
-                          ElevatedButton(
-                            onPressed: loading ? null : _onPush,
-                            child: const Text('推送本地追踪项目到远程'),
-                          ),
-                          const SizedBox(width: 8),
-                          ElevatedButton(
-                            onPressed: loading ? null : _onPull,
-                            child: const Text('从远程拉取追踪项目到本地'),
-                          ),
-                          const SizedBox(width: 8),
-                          OutlinedButton.icon(
-                            onPressed: loading
-                                ? null
-                                : () {
-                                    setState(() {
-                                      showRemotePreview = !showRemotePreview;
-                                    });
-                                    if (showRemotePreview) {
-                                      _load();
-                                    } else {
-                                      setState(() {
-                                        remoteData = null;
-                                        localRowMapping = null;
-                                        remoteRowMapping = null;
-                                        totalRows = null;
-                                      });
-                                    }
-                                  },
-                            icon: Icon(showRemotePreview
-                                ? Icons.visibility_off
-                                : Icons.visibility),
-                            label: Text(showRemotePreview ? '隐藏远程' : '显示远程'),
-                          ),
-                          const SizedBox(width: 8),
-                          if (currentProjectName != null)
-                            Text(
-                              ' 当前项目: $currentProjectName ',
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                    if (currentProjectName != null)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 4),
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
                         child: Row(
                           children: [
-                            const Text('追踪文档的路径: '),
-                            Expanded(
-                              child: TextField(
-                                controller: docxPathCtrl,
-                                readOnly: true,
-                                decoration: const InputDecoration(
-                                  border: OutlineInputBorder(),
-                                  contentPadding:
-                                      EdgeInsets.symmetric(horizontal: 8),
-                                ),
+                            const Text('整体缩放: '),
+                            SizedBox(
+                              width: 200,
+                              child: Slider(
+                                value: _uiScale.clamp(0.5, 2.0),
+                                min: 0.5,
+                                max: 2.0,
+                                onChanged: (value) {
+                                  setState(() {
+                                    _uiScale = value;
+                                  });
+                                },
                               ),
                             ),
+                            Text(_uiScale.toStringAsFixed(1)),
+                            const SizedBox(width: 16),
                             IconButton(
-                              onPressed: _onChangeDocxPath,
-                              icon: const Icon(Icons.edit),
-                              tooltip: '修改Docx路径',
+                              onPressed: () {
+                                _sharedController.value = Matrix4.identity();
+                              },
+                              tooltip: '重置视图',
+                              icon: const Icon(Icons.center_focus_strong),
                             ),
                           ],
                         ),
                       ),
-                    if (error != null)
                       Padding(
                         padding: const EdgeInsets.all(8),
-                        child: Text(error!,
-                            style: const TextStyle(color: Colors.red)),
+                        child: Row(
+                          children: [
+                            ElevatedButton(
+                              onPressed: loading ? null : _onCreateTrackProject,
+                              child: const Text('新建追踪项目'),
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton(
+                              onPressed: loading ? null : _onOpenTrackProject,
+                              child: const Text('打开追踪项目'),
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton(
+                              onPressed: () {
+                                _localGraphKey.currentState?.resetLayout();
+                              },
+                              child: const Text('恢复默认布局'),
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton(
+                              onPressed: loading
+                                  ? null
+                                  : () =>
+                                      _onUpdateRepoAction(opIdentical: false),
+                              child: const Text('如果文档没同步就点我'),
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton(
+                              onPressed: loading ? null : _onPush,
+                              child: const Text('推送本地追踪项目到远程'),
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton(
+                              onPressed: loading ? null : _onPull,
+                              child: const Text('从远程拉取追踪项目到本地'),
+                            ),
+                            const SizedBox(width: 8),
+                            OutlinedButton.icon(
+                              onPressed: loading
+                                  ? null
+                                  : () {
+                                      setState(() {
+                                        showRemotePreview = !showRemotePreview;
+                                      });
+                                      if (showRemotePreview) {
+                                        _load();
+                                      } else {
+                                        setState(() {
+                                          remoteData = null;
+                                          localRowMapping = null;
+                                          remoteRowMapping = null;
+                                          totalRows = null;
+                                        });
+                                      }
+                                    },
+                              icon: Icon(showRemotePreview
+                                  ? Icons.visibility_off
+                                  : Icons.visibility),
+                              label: Text(showRemotePreview ? '隐藏远程' : '显示远程'),
+                            ),
+                            const SizedBox(width: 8),
+                            if (currentProjectName != null)
+                              Text(
+                                ' 当前项目: $currentProjectName ',
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                          ],
+                        ),
                       ),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: data == null
-                    ? const Center(child: Text('输入路径并点击加载'))
-                    : (showRemotePreview && remoteData != null)
-                        ? Row(
+                      if (currentProjectName != null)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
+                          child: Row(
                             children: [
+                              const Text('追踪文档的路径: '),
                               Expanded(
-                                flex: 1,
-                                child: Container(
-                                  decoration: const BoxDecoration(
-                                    border: Border(
-                                        right: BorderSide(color: Colors.grey)),
+                                child: TextField(
+                                  controller: docxPathCtrl,
+                                  readOnly: true,
+                                  decoration: const InputDecoration(
+                                    border: OutlineInputBorder(),
+                                    contentPadding:
+                                        EdgeInsets.symmetric(horizontal: 8),
                                   ),
+                                ),
+                              ),
+                              IconButton(
+                                onPressed: _onChangeDocxPath,
+                                icon: const Icon(Icons.edit),
+                                tooltip: '修改Docx路径',
+                              ),
+                            ],
+                          ),
+                        ),
+                      if (error != null)
+                        Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: Text(error!,
+                              style: const TextStyle(color: Colors.red)),
+                        ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: data == null
+                      ? const Center(child: Text('输入路径并点击加载'))
+                      : (showRemotePreview && remoteData != null)
+                          ? Row(
+                              children: [
+                                Expanded(
+                                  flex: 1,
+                                  child: Container(
+                                    decoration: const BoxDecoration(
+                                      border: Border(
+                                          right:
+                                              BorderSide(color: Colors.grey)),
+                                    ),
+                                    child: Column(
+                                      children: [
+                                        Container(
+                                          width: double.infinity,
+                                          padding: const EdgeInsets.all(8.0),
+                                          color: Colors.grey.shade200,
+                                          child: const Text(
+                                            '远程文档跟踪',
+                                            textAlign: TextAlign.center,
+                                            style: TextStyle(
+                                                fontWeight: FontWeight.bold),
+                                          ),
+                                        ),
+                                        Expanded(
+                                          child: _GraphView(
+                                            data: remoteData!,
+                                            repoPath: pathCtrl.text.trim(),
+                                            projectName: currentProjectName,
+                                            token: _token,
+                                            readOnly: true,
+                                            primaryBranchName: 'origin/master',
+                                            customRowMapping: remoteRowMapping,
+                                            totalRows: totalRows,
+                                            transformationController:
+                                                _sharedController,
+                                            uiScale: _uiScale,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                Expanded(
+                                  flex: 1,
                                   child: Column(
                                     children: [
                                       Container(
@@ -2677,7 +2726,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                                         padding: const EdgeInsets.all(8.0),
                                         color: Colors.grey.shade200,
                                         child: const Text(
-                                          '远程文档跟踪',
+                                          '本地文档跟踪',
                                           textAlign: TextAlign.center,
                                           style: TextStyle(
                                               fontWeight: FontWeight.bold),
@@ -2685,103 +2734,73 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                                       ),
                                       Expanded(
                                         child: _GraphView(
-                                          data: remoteData!,
+                                          key: _localGraphKey,
+                                          data: data!,
+                                          working: (data!.commits.isEmpty &&
+                                                  working != null)
+                                              ? WorkingState(
+                                                  changed: true,
+                                                  baseId: working!.baseId)
+                                              : working,
                                           repoPath: pathCtrl.text.trim(),
                                           projectName: currentProjectName,
                                           token: _token,
-                                          readOnly: true,
-                                          primaryBranchName: 'origin/master',
-                                          customRowMapping: remoteRowMapping,
-                                          totalRows: totalRows,
+                                          onRefresh: _load,
+                                          onUpdate: _onUpdateRepoAction,
+                                          onMerge: _performMerge,
+                                          onFindIdentical: _findIdentical,
+                                          identicalCommitIds:
+                                              identicalCommitIds,
+                                          onLoading: (v) =>
+                                              setState(() => loading = v),
                                           transformationController:
                                               _sharedController,
                                           uiScale: _uiScale,
+                                          customRowMapping: localRowMapping,
+                                          totalRows: totalRows,
+                                          primaryBranchName: 'master',
                                         ),
                                       ),
                                     ],
                                   ),
                                 ),
-                              ),
-                              Expanded(
-                                flex: 1,
-                                child: Column(
-                                  children: [
-                                    Container(
-                                      width: double.infinity,
-                                      padding: const EdgeInsets.all(8.0),
-                                      color: Colors.grey.shade200,
-                                      child: const Text(
-                                        '本地文档跟踪',
-                                        textAlign: TextAlign.center,
-                                        style: TextStyle(
-                                            fontWeight: FontWeight.bold),
-                                      ),
-                                    ),
-                                    Expanded(
-                                      child: _GraphView(
-                                        key: _localGraphKey,
-                                        data: data!,
-                                        working: (data!.commits.isEmpty &&
-                                                working != null)
-                                            ? WorkingState(
-                                                changed: true,
-                                                baseId: working!.baseId)
-                                            : working,
-                                        repoPath: pathCtrl.text.trim(),
-                                        projectName: currentProjectName,
-                                        token: _token,
-                                        onRefresh: _load,
-                                        onUpdate: _onUpdateRepoAction,
-                                        onMerge: _performMerge,
-                                        onFindIdentical: _findIdentical,
-                                        identicalCommitIds: identicalCommitIds,
-                                        onLoading: (v) =>
-                                            setState(() => loading = v),
-                                        transformationController:
-                                            _sharedController,
-                                        uiScale: _uiScale,
-                                        customRowMapping: localRowMapping,
-                                        totalRows: totalRows,
-                                        primaryBranchName: 'master',
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          )
-                        : _GraphView(
-                            key: _localGraphKey,
-                            data: data!,
-                            working: (data!.commits.isEmpty && working != null)
-                                ? WorkingState(
-                                    changed: true, baseId: working!.baseId)
-                                : working,
-                            repoPath: pathCtrl.text.trim(),
-                            projectName: currentProjectName,
-                            token: _token,
-                            onRefresh: _load,
-                            onUpdate: _onUpdateRepoAction,
-                            onMerge: _performMerge,
-                            onFindIdentical: _findIdentical,
-                            identicalCommitIds: identicalCommitIds,
-                            onLoading: (v) => setState(() => loading = v),
-                            transformationController: _sharedController,
-                            uiScale: _uiScale,
-                            primaryBranchName: 'master',
-                          ),
-              ),
-            ],
+                              ],
+                            )
+                          : _GraphView(
+                              key: _localGraphKey,
+                              data: data!,
+                              working:
+                                  (data!.commits.isEmpty && working != null)
+                                      ? WorkingState(
+                                          changed: true,
+                                          baseId: working!.baseId)
+                                      : working,
+                              repoPath: pathCtrl.text.trim(),
+                              projectName: currentProjectName,
+                              token: _token,
+                              onRefresh: _load,
+                              onUpdate: _onUpdateRepoAction,
+                              onMerge: _performMerge,
+                              onFindIdentical: _findIdentical,
+                              identicalCommitIds: identicalCommitIds,
+                              onLoading: (v) => setState(() => loading = v),
+                              transformationController: _sharedController,
+                              uiScale: _uiScale,
+                              primaryBranchName: 'master',
+                            ),
+                ),
+              ],
+            ),
           ),
-        ),
-        if (loading)
-          const Opacity(
-            opacity: 0.3,
-            child: ModalBarrier(dismissible: false, color: Colors.black),
-          ),
-        if (loading) const Center(child: CircularProgressIndicator()),
-      ],
-    ),);
+          if (loading)
+            const Opacity(
+              opacity: 0.3,
+              child: ModalBarrier(dismissible: false, color: Colors.black),
+            ),
+          if (loading) const Center(child: CircularProgressIndicator()),
+        ],
+      ),
+    );
   }
 }
 
@@ -2856,11 +2875,41 @@ class _GraphViewState extends State<_GraphView>
   bool _branchPanelCollapsed = false;
   bool _legendPanelCollapsed = false;
 
-  String? _hoverPreviewCommitId;
-  Uint8List? _hoverPreviewThumb;
-  bool _hoverPreviewThumbLoading = false;
-  Timer? _hoverPreviewDebounce;
-  Timer? _hoverPreviewPoll;
+  Timer? _bgPollTimer;
+
+  Future<void> _startPdfPolling() async {
+    if (widget.data.commits.isEmpty) return;
+
+    _bgPollTimer?.cancel();
+    _bgPollTimer = Timer.periodic(const Duration(seconds: 120), (timer) async {
+      if (!mounted) {
+        return;
+      }
+      if (widget.data.commits.isEmpty) return;
+
+      print('正在轮询检查PDF预览...');
+
+      await ensureAppDataCacheDir();
+
+      for (final commit in widget.data.commits) {
+        final pdfPath = cachePdfPathForSha(commit.id);
+        final f = File(pdfPath);
+        if (!f.existsSync()) {
+          print('节点 ${commit.id.substring(0, 7)} 缺少预览，正在请求生成...');
+          try {
+            http.post(
+              Uri.parse('http://localhost:8080/preview_cache'),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode(
+                  {'repoPath': widget.repoPath, 'commitId': commit.id}),
+            );
+          } catch (e) {
+            print('请求生成失败: $e');
+          }
+        }
+      }
+    });
+  }
 
   Offset _clampPanelOffset(Offset value, Size panelSize, Size parentSize) {
     final scaledW = panelSize.width * widget.uiScale;
@@ -2896,8 +2945,7 @@ class _GraphViewState extends State<_GraphView>
       parentSize,
     );
 
-    final needUpdate =
-        (!_legendPanelInitialized) ||
+    final needUpdate = (!_legendPanelInitialized) ||
         (nextLegendOffset - _legendPanelOffset).distance > 0.5 ||
         (nextBranchOffset - _branchPanelOffset).distance > 0.5;
 
@@ -2923,82 +2971,8 @@ class _GraphViewState extends State<_GraphView>
     } catch (_) {}
   }
 
-  Future<void> _startHoverThumbnail(String commitId) async {
-    _hoverPreviewDebounce?.cancel();
-    _hoverPreviewDebounce = Timer(const Duration(milliseconds: 120), () async {
-      if (!mounted) return;
-      if (_hoverPreviewCommitId != commitId) return;
-
-      await ensureAppDataCacheDir();
-      final pdfPath = cachePdfPathForSha(commitId);
-      final f = File(pdfPath);
-      if (f.existsSync()) {
-        try {
-          final bytes = await f.readAsBytes();
-          if (!mounted) return;
-          if (_hoverPreviewCommitId != commitId) return;
-          setState(() {
-            _hoverPreviewThumb = bytes;
-            _hoverPreviewThumbLoading = false;
-          });
-          return;
-        } catch (_) {}
-      }
-
-      setState(() {
-        _hoverPreviewThumbLoading = true;
-        _hoverPreviewThumb = null;
-      });
-
-      await _requestPreviewCache(commitId);
-
-      _hoverPreviewPoll?.cancel();
-      var tries = 0;
-      _hoverPreviewPoll = Timer.periodic(const Duration(milliseconds: 300),
-          (t) async {
-        tries++;
-        if (!mounted) {
-          t.cancel();
-          return;
-        }
-        if (_hoverPreviewCommitId != commitId) {
-          t.cancel();
-          return;
-        }
-        final ff = File(pdfPath);
-        if (ff.existsSync()) {
-          try {
-            final bytes = await ff.readAsBytes();
-            if (!mounted) {
-              t.cancel();
-              return;
-            }
-            if (_hoverPreviewCommitId != commitId) {
-              t.cancel();
-              return;
-            }
-            setState(() {
-              _hoverPreviewThumb = bytes;
-              _hoverPreviewThumbLoading = false;
-            });
-            t.cancel();
-            return;
-          } catch (_) {}
-        }
-        if (tries >= 80) {
-          t.cancel();
-          if (!mounted) return;
-          if (_hoverPreviewCommitId != commitId) return;
-          setState(() {
-            _hoverPreviewThumbLoading = false;
-          });
-        }
-      });
-    });
-  }
-
-
-  Future<void> _showPdfBytesDialog(Uint8List bytes, {required String title}) async {
+  Future<void> _showPdfBytesDialog(Uint8List bytes,
+      {required String title}) async {
     await showDialog<void>(
       context: context,
       builder: (_) {
@@ -3033,6 +3007,14 @@ class _GraphViewState extends State<_GraphView>
       duration: const Duration(milliseconds: 800),
     )..repeat(reverse: true);
     _loadLayoutPrefs();
+
+    // Auto start background conversion if data exists
+    if (widget.data.commits.isNotEmpty) {
+      // Delay slightly to let UI render first
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted) _startPdfPolling();
+      });
+    }
   }
 
   Future<void> _loadLayoutPrefs() async {
@@ -3121,8 +3103,7 @@ class _GraphViewState extends State<_GraphView>
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_handleKey);
-    _hoverPreviewDebounce?.cancel();
-    _hoverPreviewPoll?.cancel();
+    _bgPollTimer?.cancel();
     _graphFlashCtrl.dispose();
     if (widget.transformationController == null) {
       _tc.dispose();
@@ -3131,8 +3112,9 @@ class _GraphViewState extends State<_GraphView>
   }
 
   bool _handleKey(KeyEvent event) {
-    final isCtrl = HardwareKeyboard.instance.logicalKeysPressed.any(
-        (k) => k == LogicalKeyboardKey.controlLeft || k == LogicalKeyboardKey.controlRight);
+    final isCtrl = HardwareKeyboard.instance.logicalKeysPressed.any((k) =>
+        k == LogicalKeyboardKey.controlLeft ||
+        k == LogicalKeyboardKey.controlRight);
     if (isCtrl != _isCtrlPressed) {
       setState(() {
         _isCtrlPressed = isCtrl;
@@ -3167,6 +3149,14 @@ class _GraphViewState extends State<_GraphView>
       _rightPanStart = null;
       _selectedNodes.clear();
       _comparing = false;
+    }
+
+    // If data changed, restart background conversion
+    if (widget.data.commits.isNotEmpty &&
+        !identical(oldWidget.data, widget.data)) {
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted) _startPdfPolling();
+      });
     }
   }
 
@@ -3348,7 +3338,7 @@ class _GraphViewState extends State<_GraphView>
       if (resp.statusCode != 200) throw Exception(resp.body);
       // Use onUpdate which should map to _onUpdateRepo in parent
       if (widget.onUpdate != null) {
-        await widget.onUpdate!(opIdentical:false);
+        await widget.onUpdate!(opIdentical: false);
       } else {
         // Fallback if onUpdate not provided (should not happen in main usage)
         if (widget.onRefresh != null) widget.onRefresh!();
@@ -3443,18 +3433,20 @@ class _GraphViewState extends State<_GraphView>
           'branchName': name,
         }),
       );
-      print('[Perf][Frontend][SwitchBranch][Request] ${swStep.elapsedMilliseconds}ms');
+      print(
+          '[Perf][Frontend][SwitchBranch][Request] ${swStep.elapsedMilliseconds}ms');
       swStep.reset();
-      
+
       if (resp.statusCode != 200) throw Exception(resp.body);
 
       // Force update repo status after switch (to check diff against new branch)
       if (widget.onUpdate != null) {
-        await widget.onUpdate!(forcePull: false,opIdentical: false);
+        await widget.onUpdate!(forcePull: false, opIdentical: false);
       } else {
         if (widget.onRefresh != null) widget.onRefresh!();
       }
-      print('[Perf][Frontend][SwitchBranch][UpdateUI] ${swStep.elapsedMilliseconds}ms');
+      print(
+          '[Perf][Frontend][SwitchBranch][UpdateUI] ${swStep.elapsedMilliseconds}ms');
       swStep.stop();
 
       if (mounted) {
@@ -3471,7 +3463,8 @@ class _GraphViewState extends State<_GraphView>
     } finally {
       widget.onLoading?.call(false);
       sw.stop();
-      print('[Perf][Frontend][SwitchBranch][Total] ${sw.elapsedMilliseconds}ms');
+      print(
+          '[Perf][Frontend][SwitchBranch][Total] ${sw.elapsedMilliseconds}ms');
     }
   }
 
@@ -3612,7 +3605,8 @@ class _GraphViewState extends State<_GraphView>
                                           Navigator.pop(ctx);
                                           _doSwitchBranch(b);
                                         },
-                                        avatar: const Icon(Icons.swap_horiz, size: 16),
+                                        avatar: const Icon(Icons.swap_horiz,
+                                            size: 16),
                                       ))
                                   .toList(),
                             ),
@@ -3637,7 +3631,8 @@ class _GraphViewState extends State<_GraphView>
                                   child: SizedBox(
                                     width: 18,
                                     height: 18,
-                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2),
                                   ),
                                 )
                               : (pdfPath != null
@@ -3730,7 +3725,7 @@ class _GraphViewState extends State<_GraphView>
         throw Exception('回退失败: ${resp.body}');
       }
       if (widget.onUpdate != null) {
-        await widget.onUpdate!(forcePull: false,opIdentical:false);
+        await widget.onUpdate!(forcePull: false, opIdentical: false);
       } else {
         if (widget.onRefresh != null) widget.onRefresh!();
       }
@@ -3806,7 +3801,7 @@ class _GraphViewState extends State<_GraphView>
       }
 
       if (widget.onUpdate != null) {
-        await widget.onUpdate!(forcePull: false,opIdentical: false);
+        await widget.onUpdate!(forcePull: false, opIdentical: false);
       } else {
         if (widget.onRefresh != null) widget.onRefresh!();
       }
@@ -3910,718 +3905,675 @@ class _GraphViewState extends State<_GraphView>
         _ensureOverlayBounds(parentSize);
         return Stack(
           children: [
-        MouseRegion(
-          onHover: (d) {
-            final scene = _toScene(d.localPosition);
-            final hit = _hitTest(scene, widget.data);
-            EdgeInfo? ehit;
-            if (hit == null) {
-              ehit = _hitEdge(scene, widget.data);
-            }
-            final nextId = hit?.id;
-            if (nextId != null && nextId != _hoverPreviewCommitId) {
-              setState(() {
-                _hovered = hit;
-                _hoverPos = d.localPosition;
-                _hoverEdge = ehit;
-                _hoverPreviewCommitId = nextId;
-                _hoverPreviewThumb = null;
-                _hoverPreviewThumbLoading = false;
-              });
-              _startHoverThumbnail(nextId);
-            } else {
-              setState(() {
-                _hovered = hit;
-                _hoverPos = d.localPosition;
-                _hoverEdge = ehit;
-              });
-            }
-          },
-          onExit: (_) {
-            _hoverPreviewDebounce?.cancel();
-            _hoverPreviewPoll?.cancel();
-            setState(() {
-              _hovered = null;
-              _hoverPos = null;
-              _hoverEdge = null;
-              _hoverPreviewCommitId = null;
-              _hoverPreviewThumb = null;
-              _hoverPreviewThumbLoading = false;
-            });
-          },
-          child: Listener(
-            onPointerDown: (e) {
-              if (e.buttons & kSecondaryMouseButton != 0) {
-                _rightPanStart = DateTime.now();
-                _rightPanLast = e.localPosition;
-                _rightPanActive = false;
-              }
-            },
-            onPointerMove: (e) {
-              if (e.buttons & kSecondaryMouseButton != 0 &&
-                  _rightPanLast != null) {
-                final now = DateTime.now();
-                if (!_rightPanActive &&
-                    _rightPanStart != null &&
-                    now.difference(_rightPanStart!) >= _rightPanDelay) {
-                  _rightPanActive = true;
-                }
-                if (_rightPanActive) {
-                  final delta = e.localPosition - _rightPanLast!;
-                  final m = _tc.value.clone();
-                  m.translate(delta.dx, delta.dy);
-                  _tc.value = m;
-                  _rightPanLast = e.localPosition;
-                }
-              }
-            },
-            onPointerUp: (e) {
-              _rightPanActive = false;
-              _rightPanLast = null;
-              _rightPanStart = null;
-            },
-            child: GestureDetector(
-              onTapUp: (d) {
+            MouseRegion(
+              onHover: (d) {
                 final scene = _toScene(d.localPosition);
                 final hit = _hitTest(scene, widget.data);
-                if (hit != null) {
-                  setState(() {
-                    if (_selectedNodes.contains(hit.id)) {
-                      _selectedNodes.remove(hit.id);
-                    } else {
-                      if (_selectedNodes.length >= 2) {
-                        _selectedNodes.clear();
-                        _selectedNodes.add(hit.id);
-                      } else {
-                        _selectedNodes.add(hit.id);
-                      }
-                    }
-                  });
+                EdgeInfo? ehit;
+                if (hit == null) {
+                  ehit = _hitEdge(scene, widget.data);
                 }
+                setState(() {
+                  _hovered = hit;
+                  _hoverPos = d.localPosition;
+                  _hoverEdge = ehit;
+                });
               },
-              child: InteractiveViewer(
-                scaleEnabled: !_isCtrlPressed,
-                transformationController: _tc,
-                minScale: 0.2,
-                maxScale: 4,
-                constrained: false,
-                boundaryMargin: const EdgeInsets.all(2000),
+              onExit: (_) {
+                setState(() {
+                  _hovered = null;
+                  _hoverPos = null;
+                  _hoverEdge = null;
+                });
+              },
+              child: Listener(
+                onPointerDown: (e) {
+                  if (e.buttons & kSecondaryMouseButton != 0) {
+                    _rightPanStart = DateTime.now();
+                    _rightPanLast = e.localPosition;
+                    _rightPanActive = false;
+                  }
+                },
+                onPointerMove: (e) {
+                  if (e.buttons & kSecondaryMouseButton != 0 &&
+                      _rightPanLast != null) {
+                    final now = DateTime.now();
+                    if (!_rightPanActive &&
+                        _rightPanStart != null &&
+                        now.difference(_rightPanStart!) >= _rightPanDelay) {
+                      _rightPanActive = true;
+                    }
+                    if (_rightPanActive) {
+                      final delta = e.localPosition - _rightPanLast!;
+                      final m = _tc.value.clone();
+                      m.translate(delta.dx, delta.dy);
+                      _tc.value = m;
+                      _rightPanLast = e.localPosition;
+                    }
+                  }
+                },
+                onPointerUp: (e) {
+                  _rightPanActive = false;
+                  _rightPanLast = null;
+                  _rightPanStart = null;
+                },
                 child: GestureDetector(
-                  onDoubleTap: () {},
-                  onDoubleTapDown: (d) {
-                    final hit = _hitTest(d.localPosition, widget.data);
+                  onTapUp: (d) {
+                    final scene = _toScene(d.localPosition);
+                    final hit = _hitTest(scene, widget.data);
                     if (hit != null) {
-                      _showNodeActionDialog(hit);
-                    } else {
-                      final edgeHit = _hitEdge(d.localPosition, widget.data);
-                      if (edgeHit != null && edgeHit.isMerge) return;
-                      if (edgeHit != null && edgeHit.branches.isNotEmpty) {
-                        final current = widget.data.currentBranch;
-                        final others = edgeHit.branches
-                            .where((b) => b != current)
-                            .toList();
-                        if (others.isEmpty) {
-                          if (edgeHit.branches.contains(current)) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('已经是当前分支')),
-                            );
-                          }
-                          return;
-                        }
-                        if (others.length == 1) {
-                          _doSwitchBranch(others.first);
+                      setState(() {
+                        if (_selectedNodes.contains(hit.id)) {
+                          _selectedNodes.remove(hit.id);
                         } else {
-                          showDialog(
-                            context: context,
-                            builder: (_) => SimpleDialog(
-                              title: const Text('选择分支'),
-                              children: others
-                                  .map((b) => SimpleDialogOption(
-                                        onPressed: () {
-                                          Navigator.pop(context);
-                                          _doSwitchBranch(b);
-                                        },
-                                        child: Text(Branch.decodeName(b)),
-                                      ))
-                                  .toList(),
-                            ),
-                          );
+                          if (_selectedNodes.length >= 2) {
+                            _selectedNodes.clear();
+                            _selectedNodes.add(hit.id);
+                          } else {
+                            _selectedNodes.add(hit.id);
+                          }
                         }
-                      }
+                      });
                     }
                   },
-                  child: SizedBox(
-                    width: _canvasSize!.width,
-                    height: _canvasSize!.height,
-                    child: AnimatedBuilder(
-                      animation: _graphFlashCtrl,
-                      builder: (context, child) {
-                        return CustomPaint(
-                          painter: GraphPainter(
-                            widget.data,
-                            _branchColors!,
-                            _hoverEdgeKey(),
-                            _laneWidth,
-                            _rowHeight,
-                            working: widget.working,
-                            selectedNodes: _selectedNodes,
-                            identicalCommitIds: widget.identicalCommitIds,
-                            customRowMapping: widget.customRowMapping,
-                            totalRows: widget.totalRows,
-                            primaryBranchName: widget.primaryBranchName,
-                            flashValue: _graphFlashCtrl.value,
-                          ),
-                          size: _canvasSize!,
-                        );
-                      },
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-        if (!widget.readOnly)
-          MovableResizablePanel(
-            offset: _branchPanelOffset,
-            size: _branchPanelSize,
-            parentSize: parentSize,
-            scale: widget.uiScale,
-            title: '当前分支与操作',
-            minSize: const Size(320, 88),
-            maxSize: const Size(1600, 600),
-            elevation: 4,
-            borderRadius: BorderRadius.circular(8),
-            contentPadding: const EdgeInsets.all(8),
-            backgroundColor: Colors.white,
-            onOffsetChanged: (v) => setState(() => _branchPanelOffset = v),
-            onSizeChanged: (v) => setState(() => _branchPanelSize = v),
-            isCollapsed: _branchPanelCollapsed,
-            onCollapseChanged: (v) {
-              setState(() => _branchPanelCollapsed = v);
-              _saveLayoutPrefs();
-            },
-            onInteractionEnd: _saveLayoutPrefs,
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    '当前分支: ${Branch.decodeName(widget.data.currentBranch ?? "Unknown")}',
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    softWrap: false,
-                  ),
-                  const SizedBox(height: 8),
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        ElevatedButton.icon(
-                          onPressed: _onCommit,
-                          icon: const Icon(Icons.upload),
-                          label: const Text(
-                            '提交更改',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            softWrap: false,
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.green,
-                            foregroundColor: Colors.white,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        OutlinedButton.icon(
-                          onPressed: _onCreateBranch,
-                          icon: const Icon(Icons.add),
-                          label: const Text(
-                            '新建分支',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            softWrap: false,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        OutlinedButton.icon(
-                          onPressed: _onSwitchBranch,
-                          icon: const Icon(Icons.swap_horiz),
-                          label: const Text(
-                            '切换分支',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            softWrap: false,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        OutlinedButton.icon(
-                          onPressed: _onMergeButton,
-                          icon: const Icon(Icons.call_merge),
-                          label: const Text(
-                            '合并分支',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            softWrap: false,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        OutlinedButton.icon(
-                          onPressed: widget.onFindIdentical,
-                          icon: const Icon(Icons.find_in_page),
-                          label: const Text(
-                            '查找与当前本地文档相同的版本',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            softWrap: false,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        MovableResizablePanel(
-          offset: _legendPanelOffset,
-          size: _legendPanelSize,
-          parentSize: parentSize,
-          scale: widget.uiScale,
-          title: '分支图例与设置',
-          minSize: const Size(220, 220),
-          maxSize: const Size(900, 1200),
-          elevation: 2,
-          borderRadius: BorderRadius.circular(6),
-          contentPadding: const EdgeInsets.all(8),
-          backgroundColor: const Color(0xFFFDFDFD),
-          onOffsetChanged: (v) => setState(() => _legendPanelOffset = v),
-          onSizeChanged: (v) => setState(() => _legendPanelSize = v),
-          isCollapsed: _legendPanelCollapsed,
-          onCollapseChanged: (v) {
-            setState(() => _legendPanelCollapsed = v);
-            _saveLayoutPrefs();
-          },
-          onInteractionEnd: _saveLayoutPrefs,
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final w = constraints.maxWidth;
-              final sliderWidth = (w - 120).clamp(90.0, 180.0);
-              final valueWidth = 42.0;
-              final labelWidth = 56.0;
-
-              return SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          ElevatedButton.icon(
-                            onPressed: _resetView,
-                            icon: const Icon(Icons.home),
-                            label: const Text(
-                              '返回主视角',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              softWrap: false,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          ElevatedButton.icon(
-                            onPressed: () {
-                              if (widget.projectName == null ||
-                                  widget.repoPath.isEmpty) {
+                  child: InteractiveViewer(
+                    scaleEnabled: !_isCtrlPressed,
+                    transformationController: _tc,
+                    minScale: 0.2,
+                    maxScale: 4,
+                    constrained: false,
+                    boundaryMargin: const EdgeInsets.all(2000),
+                    child: GestureDetector(
+                      onDoubleTap: () {},
+                      onDoubleTapDown: (d) {
+                        final hit = _hitTest(d.localPosition, widget.data);
+                        if (hit != null) {
+                          _showNodeActionDialog(hit);
+                        } else {
+                          final edgeHit =
+                              _hitEdge(d.localPosition, widget.data);
+                          if (edgeHit != null && edgeHit.isMerge) return;
+                          if (edgeHit != null && edgeHit.branches.isNotEmpty) {
+                            final current = widget.data.currentBranch;
+                            final others = edgeHit.branches
+                                .where((b) => b != current)
+                                .toList();
+                            if (others.isEmpty) {
+                              if (edgeHit.branches.contains(current)) {
                                 ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('请先打开一个项目')),
+                                  const SnackBar(content: Text('已经是当前分支')),
                                 );
-                                return;
                               }
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                    builder: (_) => BackupPage(
-                                          projectName: widget.projectName!,
-                                          repoPath: widget.repoPath,
-                                          token: widget.token ??
-                                              'No token there bro.',
-                                        )),
+                              return;
+                            }
+                            if (others.length == 1) {
+                              _doSwitchBranch(others.first);
+                            } else {
+                              showDialog(
+                                context: context,
+                                builder: (_) => SimpleDialog(
+                                  title: const Text('选择分支'),
+                                  children: others
+                                      .map((b) => SimpleDialogOption(
+                                            onPressed: () {
+                                              Navigator.pop(context);
+                                              _doSwitchBranch(b);
+                                            },
+                                            child: Text(Branch.decodeName(b)),
+                                          ))
+                                      .toList(),
+                                ),
                               );
-                            },
-                            icon: const Icon(Icons.history),
-                            label: const Text(
-                              '历史备份',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              softWrap: false,
-                            ),
-                          ),
-                        ],
+                            }
+                          }
+                        }
+                      },
+                      child: SizedBox(
+                        width: _canvasSize!.width,
+                        height: _canvasSize!.height,
+                        child: AnimatedBuilder(
+                          animation: _graphFlashCtrl,
+                          builder: (context, child) {
+                            return CustomPaint(
+                              painter: GraphPainter(
+                                widget.data,
+                                _branchColors!,
+                                _hoverEdgeKey(),
+                                _laneWidth,
+                                _rowHeight,
+                                working: widget.working,
+                                selectedNodes: _selectedNodes,
+                                identicalCommitIds: widget.identicalCommitIds,
+                                customRowMapping: widget.customRowMapping,
+                                totalRows: widget.totalRows,
+                                primaryBranchName: widget.primaryBranchName,
+                                flashValue: _graphFlashCtrl.value,
+                              ),
+                              size: _canvasSize!,
+                            );
+                          },
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      '间距调整',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      softWrap: false,
-                    ),
-                    const SizedBox(height: 6),
-                    Row(
-                      mainAxisSize: MainAxisSize.max,
-                      children: [
-                        SizedBox(
-                          width: labelWidth,
-                          child: const Text(
-                            '节点间距',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            softWrap: false,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        SizedBox(
-                          width: sliderWidth,
-                          child: Slider(
-                            min: 40,
-                            max: 160,
-                            divisions: 24,
-                            value: _rowHeight,
-                            label: _rowHeight.round().toString(),
-                            onChanged: (v) {
-                              setState(() {
-                                _rowHeight = v;
-                                _canvasSize = _computeCanvasSize(widget.data);
-                              });
-                            },
-                          ),
-                        ),
-                        SizedBox(
-                          width: valueWidth,
-                          child: Text(
-                            _rowHeight.round().toString(),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            softWrap: false,
-                          ),
-                        ),
-                      ],
-                    ),
-                    Row(
-                      mainAxisSize: MainAxisSize.max,
-                      children: [
-                        SizedBox(
-                          width: labelWidth,
-                          child: const Text(
-                            '分支间距',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            softWrap: false,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        SizedBox(
-                          width: sliderWidth,
-                          child: Slider(
-                            min: 60,
-                            max: 200,
-                            divisions: 28,
-                            value: _laneWidth,
-                            label: _laneWidth.round().toString(),
-                            onChanged: (v) {
-                              setState(() {
-                                _laneWidth = v;
-                                _canvasSize = _computeCanvasSize(widget.data);
-                              });
-                            },
-                          ),
-                        ),
-                        SizedBox(
-                          width: valueWidth,
-                          child: Text(
-                            _laneWidth.round().toString(),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            softWrap: false,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      '分支图例',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      softWrap: false,
-                    ),
-                    const SizedBox(height: 6),
-                    for (final b in widget.data.branches)
-                      InkWell(
-                        onDoubleTap: () => _doSwitchBranch(b.name),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 4),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.max,
-                            children: [
-                              Container(
-                                width: 12,
-                                height: 12,
-                                decoration: BoxDecoration(
-                                  color: _branchColors![b.name]!,
-                                  shape: BoxShape.circle,
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-                              Expanded(
-                                child: Text(
-                                  Branch.decodeName(b.name),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  softWrap: false,
-                                  style: TextStyle(
-                                    fontWeight: b.name ==
-                                            widget.data.currentBranch
-                                        ? FontWeight.bold
-                                        : FontWeight.normal,
-                                    color: b.name == widget.data.currentBranch
-                                        ? Colors.blue[900]
-                                        : Colors.black,
-                                  ),
-                                ),
-                              ),
-                              if (b.name == widget.data.currentBranch)
-                                const Padding(
-                                  padding: EdgeInsets.only(left: 4),
-                                  child: Icon(
-                                    Icons.check_circle,
-                                    size: 14,
-                                    color: Colors.green,
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    if (_hasUnknownEdges())
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 2),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            SizedBox(
-                              width: 12,
-                              height: 12,
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  color: Color(0xFF9E9E9E),
-                                  shape: BoxShape.circle,
-                                ),
-                              ),
-                            ),
-                            SizedBox(width: 6),
-                            Text(
-                              '其它',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              softWrap: false,
-                            ),
-                          ],
-                        ),
-                      ),
-                  ],
+                  ),
                 ),
-              );
-            },
-          ),
-        ),
-        if (_hovered != null && _hoverPos != null)
-          Positioned(
-            left: _hoverPos!.dx + 12,
-            top: _hoverPos!.dy + 12,
-            child: Material(
-              elevation: 2,
-              color: Colors.transparent,
-              child: Container(
-                constraints: const BoxConstraints(maxWidth: 720),
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFAFAFA),
-                  borderRadius: BorderRadius.circular(6),
-                  boxShadow: const [
-                    BoxShadow(color: Color(0x33000000), blurRadius: 6),
-                  ],
-                ),
-                child: DefaultTextStyle(
-                  style: const TextStyle(color: Colors.black, fontSize: 12),
-                  child: Row(
+              ),
+            ),
+            if (!widget.readOnly)
+              MovableResizablePanel(
+                offset: _branchPanelOffset,
+                size: _branchPanelSize,
+                parentSize: parentSize,
+                scale: widget.uiScale,
+                title: '当前分支与操作',
+                minSize: const Size(320, 88),
+                maxSize: const Size(1600, 600),
+                elevation: 4,
+                borderRadius: BorderRadius.circular(8),
+                contentPadding: const EdgeInsets.all(8),
+                backgroundColor: Colors.white,
+                onOffsetChanged: (v) => setState(() => _branchPanelOffset = v),
+                onSizeChanged: (v) => setState(() => _branchPanelSize = v),
+                isCollapsed: _branchPanelCollapsed,
+                onCollapseChanged: (v) {
+                  setState(() => _branchPanelCollapsed = v);
+                  _saveLayoutPrefs();
+                },
+                onInteractionEnd: _saveLayoutPrefs,
+                child: SingleChildScrollView(
+                  child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                      Text(
+                        '当前分支: ${Branch.decodeName(widget.data.currentBranch ?? "Unknown")}',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        softWrap: false,
+                      ),
+                      const SizedBox(height: 8),
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Text('提交信息: ${_hovered!.subject}'),
-                            const SizedBox(height: 4),
-                            Text('作者: ${_hovered!.author}'),
-                            Text('时间: ${_hovered!.date}'),
-                            const SizedBox(height: 4),
-                            Text('父节点的提交的 ID: ${_hovered!.parents.join(', ')}'),
-                            Text('提交的 ID: ${_hovered!.id}'),
+                            ElevatedButton.icon(
+                              onPressed: _onCommit,
+                              icon: const Icon(Icons.upload),
+                              label: const Text(
+                                '提交更改',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                softWrap: false,
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green,
+                                foregroundColor: Colors.white,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            OutlinedButton.icon(
+                              onPressed: _onCreateBranch,
+                              icon: const Icon(Icons.add),
+                              label: const Text(
+                                '新建分支',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                softWrap: false,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            OutlinedButton.icon(
+                              onPressed: _onSwitchBranch,
+                              icon: const Icon(Icons.swap_horiz),
+                              label: const Text(
+                                '切换分支',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                softWrap: false,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            OutlinedButton.icon(
+                              onPressed: _onMergeButton,
+                              icon: const Icon(Icons.call_merge),
+                              label: const Text(
+                                '合并分支',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                softWrap: false,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            OutlinedButton.icon(
+                              onPressed: widget.onFindIdentical,
+                              icon: const Icon(Icons.find_in_page),
+                              label: const Text(
+                                '查找与当前本地文档相同的版本',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                softWrap: false,
+                              ),
+                            ),
                           ],
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      SizedBox(
-                        width: 180,
-                        height: 120,
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: const Color(0xFFE6E6E6)),
-                          ),
-                          child: Center(
-                            child: _hoverPreviewThumbLoading
-                                ? const SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(strokeWidth: 2),
-                                  )
-                                : (_hoverPreviewThumb != null
-                                    ? ClipRRect(
-                                        borderRadius: BorderRadius.circular(6),
-                                        child: PdfPreviewPane(
-                                          bytes: _hoverPreviewThumb,
-                                          thumbnailMode: true,
-                                          initialZoom: 0.4,
-                                        ),
-                                      )
-                                    : const Text('暂无缩略图')),
-                          ),
                         ),
                       ),
                     ],
                   ),
                 ),
               ),
-            ),
-          ),
-        if (_hoverEdge != null && _hoverPos != null && _hovered == null)
-          Positioned(
-            left: _hoverPos!.dx + 12,
-            top: _hoverPos!.dy + 12,
-            child: Material(
+            MovableResizablePanel(
+              offset: _legendPanelOffset,
+              size: _legendPanelSize,
+              parentSize: parentSize,
+              scale: widget.uiScale,
+              title: '分支图例与设置',
+              minSize: const Size(220, 220),
+              maxSize: const Size(900, 1200),
               elevation: 2,
-              color: Colors.transparent,
-              child: Container(
-                constraints: const BoxConstraints(maxWidth: 420),
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFAFAFA),
-                  borderRadius: BorderRadius.circular(6),
-                  boxShadow: const [
-                    BoxShadow(color: Color(0x33000000), blurRadius: 6),
-                  ],
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      '${_hoverEdge!.child.substring(0, 7)} → ${_hoverEdge!.parent.substring(0, 7)}',
-                    ),
-                    const SizedBox(height: 6),
-                    if (_hoverEdge!.isMerge)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color:
-                              const Color(0xFF9E9E9E).withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: const Color(0xFF9E9E9E),
-                          ),
-                        ),
-                        child: const Text(
-                          '合并边',
-                          style: TextStyle(fontSize: 12),
-                        ),
-                      )
-                    else
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: _hoverEdge!.branches
-                            .map(
-                              (b) => Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 4,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: (_branchColors?[b] ??
-                                          const Color(0xFF9E9E9E))
-                                      .withValues(alpha: 0.15),
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(
-                                    color: _branchColors?[b] ??
-                                        const Color(0xFF9E9E9E),
-                                  ),
-                                ),
-                                child: Text(
-                                  b,
-                                  style: const TextStyle(fontSize: 12),
+              borderRadius: BorderRadius.circular(6),
+              contentPadding: const EdgeInsets.all(8),
+              backgroundColor: const Color(0xFFFDFDFD),
+              onOffsetChanged: (v) => setState(() => _legendPanelOffset = v),
+              onSizeChanged: (v) => setState(() => _legendPanelSize = v),
+              isCollapsed: _legendPanelCollapsed,
+              onCollapseChanged: (v) {
+                setState(() => _legendPanelCollapsed = v);
+                _saveLayoutPrefs();
+              },
+              onInteractionEnd: _saveLayoutPrefs,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final w = constraints.maxWidth;
+                  final sliderWidth = (w - 120).clamp(90.0, 180.0);
+                  final valueWidth = 42.0;
+                  final labelWidth = 56.0;
+
+                  return SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              ElevatedButton.icon(
+                                onPressed: _resetView,
+                                icon: const Icon(Icons.home),
+                                label: const Text(
+                                  '返回主视角',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  softWrap: false,
                                 ),
                               ),
-                            )
-                            .toList(),
+                              const SizedBox(width: 8),
+                              ElevatedButton.icon(
+                                onPressed: () {
+                                  if (widget.projectName == null ||
+                                      widget.repoPath.isEmpty) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(content: Text('请先打开一个项目')),
+                                    );
+                                    return;
+                                  }
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                        builder: (_) => BackupPage(
+                                              projectName: widget.projectName!,
+                                              repoPath: widget.repoPath,
+                                              token: widget.token ??
+                                                  'No token there bro.',
+                                            )),
+                                  );
+                                },
+                                icon: const Icon(Icons.history),
+                                label: const Text(
+                                  '历史备份',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  softWrap: false,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          '间距调整',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          softWrap: false,
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          mainAxisSize: MainAxisSize.max,
+                          children: [
+                            SizedBox(
+                              width: labelWidth,
+                              child: const Text(
+                                '节点间距',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                softWrap: false,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            SizedBox(
+                              width: sliderWidth,
+                              child: Slider(
+                                min: 40,
+                                max: 160,
+                                divisions: 24,
+                                value: _rowHeight,
+                                label: _rowHeight.round().toString(),
+                                onChanged: (v) {
+                                  setState(() {
+                                    _rowHeight = v;
+                                    _canvasSize =
+                                        _computeCanvasSize(widget.data);
+                                  });
+                                },
+                              ),
+                            ),
+                            SizedBox(
+                              width: valueWidth,
+                              child: Text(
+                                _rowHeight.round().toString(),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                softWrap: false,
+                              ),
+                            ),
+                          ],
+                        ),
+                        Row(
+                          mainAxisSize: MainAxisSize.max,
+                          children: [
+                            SizedBox(
+                              width: labelWidth,
+                              child: const Text(
+                                '分支间距',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                softWrap: false,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            SizedBox(
+                              width: sliderWidth,
+                              child: Slider(
+                                min: 60,
+                                max: 200,
+                                divisions: 28,
+                                value: _laneWidth,
+                                label: _laneWidth.round().toString(),
+                                onChanged: (v) {
+                                  setState(() {
+                                    _laneWidth = v;
+                                    _canvasSize =
+                                        _computeCanvasSize(widget.data);
+                                  });
+                                },
+                              ),
+                            ),
+                            SizedBox(
+                              width: valueWidth,
+                              child: Text(
+                                _laneWidth.round().toString(),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                softWrap: false,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          '分支图例',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          softWrap: false,
+                        ),
+                        const SizedBox(height: 6),
+                        for (final b in widget.data.branches)
+                          InkWell(
+                            onDoubleTap: () => _doSwitchBranch(b.name),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 4),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.max,
+                                children: [
+                                  Container(
+                                    width: 12,
+                                    height: 12,
+                                    decoration: BoxDecoration(
+                                      color: _branchColors![b.name]!,
+                                      shape: BoxShape.circle,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Text(
+                                      Branch.decodeName(b.name),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      softWrap: false,
+                                      style: TextStyle(
+                                        fontWeight:
+                                            b.name == widget.data.currentBranch
+                                                ? FontWeight.bold
+                                                : FontWeight.normal,
+                                        color:
+                                            b.name == widget.data.currentBranch
+                                                ? Colors.blue[900]
+                                                : Colors.black,
+                                      ),
+                                    ),
+                                  ),
+                                  if (b.name == widget.data.currentBranch)
+                                    const Padding(
+                                      padding: EdgeInsets.only(left: 4),
+                                      child: Icon(
+                                        Icons.check_circle,
+                                        size: 14,
+                                        color: Colors.green,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        if (_hasUnknownEdges())
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 2),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                SizedBox(
+                                  width: 12,
+                                  height: 12,
+                                  child: DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      color: Color(0xFF9E9E9E),
+                                      shape: BoxShape.circle,
+                                    ),
+                                  ),
+                                ),
+                                SizedBox(width: 6),
+                                Text(
+                                  '其它',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  softWrap: false,
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+            if (_hovered != null && _hoverPos != null)
+              Positioned(
+                left: _hoverPos!.dx + 12,
+                top: _hoverPos!.dy + 12,
+                child: Material(
+                  elevation: 2,
+                  color: Colors.transparent,
+                  child: Container(
+                    constraints: const BoxConstraints(maxWidth: 720),
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFAFAFA),
+                      borderRadius: BorderRadius.circular(6),
+                      boxShadow: const [
+                        BoxShadow(color: Color(0x33000000), blurRadius: 6),
+                      ],
+                    ),
+                    child: DefaultTextStyle(
+                      style: const TextStyle(color: Colors.black, fontSize: 12),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text('提交信息: ${_hovered!.subject}'),
+                                const SizedBox(height: 4),
+                                Text('作者: ${_hovered!.author}'),
+                                Text('时间: ${_hovered!.date}'),
+                                const SizedBox(height: 4),
+                                Text(
+                                    '父节点的提交的 ID: ${_hovered!.parents.join(', ')}'),
+                                Text('提交的 ID: ${_hovered!.id}'),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        if (_selectedNodes.length == 2)
-          Positioned(
-            bottom: 32,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: ElevatedButton.icon(
-                onPressed: _comparing ? null : _onCompare,
-                icon: _comparing
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.compare_arrows),
-                label: Text(_comparing ? '对比中...' : '一键比较差异'),
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 24,
-                    vertical: 16,
+                    ),
                   ),
-                  textStyle: const TextStyle(fontSize: 16),
                 ),
               ),
-            ),
-          ),
+            if (_hoverEdge != null && _hoverPos != null && _hovered == null)
+              Positioned(
+                left: _hoverPos!.dx + 12,
+                top: _hoverPos!.dy + 12,
+                child: Material(
+                  elevation: 2,
+                  color: Colors.transparent,
+                  child: Container(
+                    constraints: const BoxConstraints(maxWidth: 420),
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFAFAFA),
+                      borderRadius: BorderRadius.circular(6),
+                      boxShadow: const [
+                        BoxShadow(color: Color(0x33000000), blurRadius: 6),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          '${_hoverEdge!.child.substring(0, 7)} → ${_hoverEdge!.parent.substring(0, 7)}',
+                        ),
+                        const SizedBox(height: 6),
+                        if (_hoverEdge!.isMerge)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF9E9E9E)
+                                  .withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: const Color(0xFF9E9E9E),
+                              ),
+                            ),
+                            child: const Text(
+                              '合并边',
+                              style: TextStyle(fontSize: 12),
+                            ),
+                          )
+                        else
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: _hoverEdge!.branches
+                                .map(
+                                  (b) => Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: (_branchColors?[b] ??
+                                              const Color(0xFF9E9E9E))
+                                          .withValues(alpha: 0.15),
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(
+                                        color: _branchColors?[b] ??
+                                            const Color(0xFF9E9E9E),
+                                      ),
+                                    ),
+                                    child: Text(
+                                      b,
+                                      style: const TextStyle(fontSize: 12),
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            if (_selectedNodes.length == 2)
+              Positioned(
+                bottom: 32,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: ElevatedButton.icon(
+                    onPressed: _comparing ? null : _onCompare,
+                    icon: _comparing
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.compare_arrows),
+                    label: Text(_comparing ? '对比中...' : '一键比较差异'),
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 16,
+                      ),
+                      textStyle: const TextStyle(fontSize: 16),
+                    ),
+                  ),
+                ),
+              ),
           ],
         );
       },

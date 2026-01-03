@@ -16,9 +16,6 @@ String cachePdfPathForSha(String sha1) {
   return '${appDataCacheDirPath()}${Platform.pathSeparator}$sha1.pdf';
 }
 
-String cacheThumbPathForSha(String sha1) {
-  return '${appDataCacheDirPath()}${Platform.pathSeparator}$sha1.png';
-}
 
 Future<Directory> ensureAppDataCacheDir() async {
   final dir = Directory(appDataCacheDirPath());
