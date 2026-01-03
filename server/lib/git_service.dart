@@ -9,11 +9,10 @@ import 'models.dart';
 bool _debugMode = false;
 void setDebugMode(bool value) => _debugMode = value;
 final scriptDir = p.dirname(Platform.script.toFilePath());
-
+List<String> workingIds = [];
 String get _psScriptPath {
   final candidates = <String>[
-    if (_debugMode)
-      r'c:\Users\m1369\Documents\gitbin\frontend\lib\doccmp.ps1',
+    if (_debugMode) r'c:\Users\m1369\Documents\gitbin\frontend\lib\doccmp.ps1',
     p.join(scriptDir, 'doccmp.ps1'),
     p.normalize(p.join(scriptDir, '..', '..', 'frontend', 'bin', 'doccmp.ps1')),
     p.normalize(p.join(scriptDir, '..', '..', 'frontend', 'lib', 'doccmp.ps1')),
@@ -635,7 +634,8 @@ Future<void> commitChanges(
     await _runGit(['commit', '--author=$authorArg', '-m', message], repoPath);
 
     final headLines = await _runGit(['rev-parse', 'HEAD'], repoPath);
-    final head = headLines.isNotEmpty ? headLines.first.trim().toLowerCase() : '';
+    final head =
+        headLines.isNotEmpty ? headLines.first.trim().toLowerCase() : '';
     if (head.isNotEmpty) {
       unawaited(ensureCommitPreviewAssets(repoPath, head));
     }
@@ -718,20 +718,21 @@ Future<Uint8List> compareWorking(String repoPath) async {
       final ps1Path = _psScriptPath;
 
       final res = await Process.run(
-          'powershell', [
-        '-NoProfile',
-        '-NonInteractive',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-File',
-        ps1Path,
-        '-OriginalPath',
-        p1,
-        '-RevisedPath',
-        p2,
-        '-PdfPath',
-        pdf
-      ],
+          'powershell',
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-ExecutionPolicy',
+            'Bypass',
+            '-File',
+            ps1Path,
+            '-OriginalPath',
+            p1,
+            '-RevisedPath',
+            p2,
+            '-PdfPath',
+            pdf
+          ],
           workingDirectory: p.dirname(ps1Path));
 
       final pdfFile = File(pdf);
@@ -952,7 +953,8 @@ String _docx2pdfPs1Path() {
   return p.join(_repoRootDir(), 'frontend', 'lib', 'docx2pdf.ps1');
 }
 
-Future<void> _docxToPdf(String docxPath, String pdfPath) async {
+Future<void> _docxToPdf(
+    String docxPath, String pdfPath, String commitId) async {
   final psScript = _docx2pdfPs1Path();
   if (!File(psScript).existsSync()) {
     throw Exception('docx2pdf.ps1 not found at $psScript');
@@ -969,6 +971,7 @@ Future<void> _docxToPdf(String docxPath, String pdfPath) async {
     '-OutputPath',
     pdfPath,
   ]);
+  workingIds.remove(commitId);
   if (res.exitCode != 0 || !File(pdfPath).existsSync()) {
     throw Exception('docx->pdf failed: ${res.stderr}');
   }
@@ -978,6 +981,8 @@ Future<void> _ensureCommitPreviewAssetsUnlocked(
   String repoPath,
   String commitId,
 ) async {
+  if (workingIds.contains(commitId)) return;
+  workingIds.add(commitId);
   final cacheDir = _globalPreviewCacheDir();
   if (!cacheDir.existsSync()) {
     cacheDir.createSync(recursive: true);
@@ -996,7 +1001,7 @@ Future<void> _ensureCommitPreviewAssetsUnlocked(
 
     if (!pdfFile.existsSync()) {
       final tmpPdfPath = p.join(tmpDir.path, '$commitId.pdf');
-      await _docxToPdf(docxPath, tmpPdfPath);
+      await _docxToPdf(docxPath, tmpPdfPath, commitId);
       await File(tmpPdfPath).copy(pdfPath);
     }
   } finally {
@@ -1012,6 +1017,7 @@ Future<Map<String, bool>> ensureCommitPreviewAssets(
   String repoPath,
   String commitId,
 ) async {
+  print(workingIds);
   return _withRepoLock(repoPath, () async {
     await _ensureCommitPreviewAssetsUnlocked(repoPath, commitId);
     return {
@@ -1086,24 +1092,26 @@ Future<Uint8List> compareCommits(
       final ps1Path = _psScriptPath;
 
       if (!File(ps1Path).existsSync()) {
-        throw Exception('doccmp.ps1 not found at $ps1Path and _debugMode=$_debugMode');
+        throw Exception(
+            'doccmp.ps1 not found at $ps1Path and _debugMode=$_debugMode');
       }
 
       final res = await Process.run(
-          'powershell', [
-        '-NoProfile',
-        '-NonInteractive',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-File',
-        ps1Path,
-        '-OriginalPath',
-        p1,
-        '-RevisedPath',
-        p2,
-        '-PdfPath',
-        pdf
-      ],
+          'powershell',
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-ExecutionPolicy',
+            'Bypass',
+            '-File',
+            ps1Path,
+            '-OriginalPath',
+            p1,
+            '-RevisedPath',
+            p2,
+            '-PdfPath',
+            pdf
+          ],
           workingDirectory: p.dirname(ps1Path));
 
       final pdfFile = File(pdf);
