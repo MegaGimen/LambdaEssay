@@ -2881,7 +2881,7 @@ class _GraphViewState extends State<_GraphView>
     if (widget.data.commits.isEmpty) return;
 
     _bgPollTimer?.cancel();
-    _bgPollTimer = Timer.periodic(const Duration(seconds: 120), (timer) async {
+    _bgPollTimer = Timer.periodic(const Duration(seconds: 3), (timer) async {
       if (!mounted) {
         return;
       }
