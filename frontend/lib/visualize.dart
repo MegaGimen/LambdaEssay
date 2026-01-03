@@ -34,6 +34,7 @@ class PdfPreviewPane extends StatefulWidget {
   final double minZoom;
   final double maxZoom;
   final double initialZoom;
+  final bool thumbnailMode;
 
   const PdfPreviewPane({
     super.key,
@@ -42,6 +43,7 @@ class PdfPreviewPane extends StatefulWidget {
     this.minZoom = 0.5,
     this.maxZoom = 3.0,
     this.initialZoom = 1.0,
+    this.thumbnailMode = false,
   });
 
   @override
@@ -80,11 +82,29 @@ class _PdfPreviewPaneState extends State<PdfPreviewPane> {
         ? SfPdfViewer.file(
             File(widget.filePath!),
             controller: _controller,
+            canShowScrollHead: !widget.thumbnailMode,
+            canShowPaginationDialog: !widget.thumbnailMode,
+            enableDoubleTapZooming: !widget.thumbnailMode,
+            enableTextSelection: !widget.thumbnailMode,
+            pageLayoutMode: widget.thumbnailMode
+                ? PdfPageLayoutMode.single
+                : PdfPageLayoutMode.continuous,
           )
         : SfPdfViewer.memory(
             widget.bytes!,
             controller: _controller,
+            canShowScrollHead: !widget.thumbnailMode,
+            canShowPaginationDialog: !widget.thumbnailMode,
+            enableDoubleTapZooming: !widget.thumbnailMode,
+            enableTextSelection: !widget.thumbnailMode,
+            pageLayoutMode: widget.thumbnailMode
+                ? PdfPageLayoutMode.single
+                : PdfPageLayoutMode.continuous,
           );
+
+    if (widget.thumbnailMode) {
+      return AbsorbPointer(child: viewer);
+    }
 
     return Column(
       children: [
