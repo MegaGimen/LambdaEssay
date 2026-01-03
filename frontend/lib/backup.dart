@@ -4,7 +4,6 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'models.dart';
-import 'visualize.dart'; // For VisualizeDocxPage
 import 'graph_view.dart'; // For SimpleGraphView
 
 class BackupPage extends StatefulWidget {
@@ -219,34 +218,6 @@ class _BackupPageState extends State<BackupPage> {
       }
     }
     return colors;
-  }
-
-  Future<void> _previewDoc(String repo, String sha) async {
-    try {
-      final url = '$backupBase/backup/preview';
-      final resp = await http.post(
-        Uri.parse(url),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'repoName': repo, 'commitId': sha}),
-      );
-      if (resp.statusCode != 200) {
-        throw Exception('预览失败: ${resp.body}');
-      }
-      final bytes = resp.bodyBytes;
-      if (!mounted) return;
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => VisualizeDocxPage(
-            initialBytes: bytes,
-            title: '预览: ${sha.substring(0, 7)}',
-          ),
-        ),
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('预览失败: $e')));
-    }
   }
 
   Future<void> _compareTwoCommits() async {
