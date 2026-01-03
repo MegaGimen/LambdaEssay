@@ -1487,12 +1487,12 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           } else {
             showDialog(
               context: context,
-              builder: (_) => AlertDialog(
+              builder: (ctx) => AlertDialog(
                 title: const Text('无法拉取'),
                 content: Text(message),
                 actions: [
                   TextButton(
-                    onPressed: () => Navigator.pop(context),
+                    onPressed: () => Navigator.pop(ctx),
                     child: const Text('取消'),
                   ),
                 ],
@@ -2975,7 +2975,7 @@ class _GraphViewState extends State<_GraphView>
       {required String title}) async {
     await showDialog<void>(
       context: context,
-      builder: (_) {
+      builder: (ctx) {
         return AlertDialog(
           title: Text(title),
           content: SizedBox(
@@ -2988,7 +2988,7 @@ class _GraphViewState extends State<_GraphView>
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context),
+              onPressed: () => Navigator.pop(ctx),
               child: const Text('关闭'),
             ),
           ],
@@ -4011,12 +4011,12 @@ class _GraphViewState extends State<_GraphView>
                             } else {
                               showDialog(
                                 context: context,
-                                builder: (_) => SimpleDialog(
+                                builder: (ctx) => SimpleDialog(
                                   title: const Text('选择分支'),
                                   children: others
                                       .map((b) => SimpleDialogOption(
                                             onPressed: () {
-                                              Navigator.pop(context);
+                                              Navigator.pop(ctx);
                                               _doSwitchBranch(b);
                                             },
                                             child: Text(Branch.decodeName(b)),

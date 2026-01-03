@@ -1003,6 +1003,35 @@ Future<void> _docxToPdf(
   }
 }
 
+String _doccmpPs1Path() {
+  return p.join(_repoRootDir(), 'frontend', 'lib', 'doccmp.ps1');
+}
+
+Future<void> _doccmpToPdf(
+    String oldDocx, String newDocx, String pdfPath) async {
+  final psScript = _doccmpPs1Path();
+  if (!File(psScript).existsSync()) {
+    throw Exception('doccmp.ps1 not found at $psScript');
+  }
+  final res = await Process.run('powershell', [
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    psScript,
+    '-OriginalPath',
+    oldDocx,
+    '-RevisedPath',
+    newDocx,
+    '-PdfPath',
+    pdfPath,
+  ]);
+  if (res.exitCode != 0 || !File(pdfPath).existsSync()) {
+    throw Exception('doccmp failed: ${res.stderr}');
+  }
+}
+
 Future<void> _generatePreviewInternal(
   String repoPath,
   String commitId,
@@ -1018,20 +1047,55 @@ Future<void> _generatePreviewInternal(
     return;
   }
 
-  final tmpDir = await Directory.systemTemp.createTemp('gitdocx_prev_asset_');
+  // Determine parent commit
+  String parentId = '';
   try {
-    final docxPath = p.join(tmpDir.path, '$commitId.docx');
-    
-    // Only lock for git archive
+    // Only lock for git command
     await _withRepoLock(repoPath, () async {
-       await _gitArchiveToDocx(repoPath, commitId, docxPath);
+       final parents = await _runGit(['rev-parse', '$commitId^'], repoPath);
+       if (parents.isNotEmpty && parents.first.trim().isNotEmpty) {
+         parentId = parents.first.trim();
+       }
     });
+  } catch (_) {
+    // Has no parent (initial commit) or error
+  }
 
-    if (!pdfFile.existsSync()) {
-      final tmpPdfPath = p.join(tmpDir.path, '$commitId.pdf');
-      // No lock for PDF conversion
-      await _docxToPdf(docxPath, tmpPdfPath, commitId);
-      await File(tmpPdfPath).copy(pdfPath);
+  final tmpDir = await Directory.systemTemp.createTemp('gitdocx_prev_diff_');
+  try {
+    final currentDocx = p.join(tmpDir.path, '$commitId.docx');
+    
+    // 1. Export current docx
+    await _withRepoLock(repoPath, () async {
+       await _gitArchiveToDocx(repoPath, commitId, currentDocx);
+    });
+    
+    if (parentId.isEmpty) {
+       // Initial commit: just convert to PDF directly using docx2pdf logic (or treat as diff against empty?)
+       // For consistency with user request "diff", if no parent, maybe just show the content.
+       // But user asked to use doccmp. Let's use docx2pdf for single file if no parent, 
+       // or we can simulate empty doc.
+       // Let's stick to simple conversion for initial commit to avoid complexity.
+       if (!pdfFile.existsSync()) {
+          final tmpPdfPath = p.join(tmpDir.path, '$commitId.pdf');
+          await _docxToPdf(currentDocx, tmpPdfPath, commitId);
+          await File(tmpPdfPath).copy(pdfPath);
+       }
+    } else {
+       // Has parent
+       final parentDocx = p.join(tmpDir.path, '$parentId.docx');
+       
+       // 2. Export parent docx
+       await _withRepoLock(repoPath, () async {
+          await _gitArchiveToDocx(repoPath, parentId, parentDocx);
+       });
+
+       // 3. Compare and generate PDF
+       if (!pdfFile.existsSync()) {
+          final tmpPdfPath = p.join(tmpDir.path, '$commitId.pdf');
+          await _doccmpToPdf(parentDocx, currentDocx, tmpPdfPath);
+          await File(tmpPdfPath).copy(pdfPath);
+       }
     }
   } finally {
     try {
