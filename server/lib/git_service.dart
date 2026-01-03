@@ -943,10 +943,6 @@ String _globalCachedPdfPath(String commitId) {
   return p.join(_globalPreviewCacheDir().path, '$commitId.pdf');
 }
 
-String _globalCachedThumbPath(String commitId) {
-  return p.join(_globalPreviewCacheDir().path, '$commitId.png');
-}
-
 String _repoRootDir() {
   final scriptPath = p.fromUri(Platform.script);
   return p.dirname(p.dirname(p.dirname(scriptPath)));
@@ -954,10 +950,6 @@ String _repoRootDir() {
 
 String _docx2pdfPs1Path() {
   return p.join(_repoRootDir(), 'frontend', 'lib', 'docx2pdf.ps1');
-}
-
-String _psQuote(String value) {
-  return "'${value.replaceAll("'", "''")}'";
 }
 
 Future<void> _docxToPdf(String docxPath, String pdfPath) async {
@@ -982,73 +974,6 @@ Future<void> _docxToPdf(String docxPath, String pdfPath) async {
   }
 }
 
-Future<void> _docxToFirstPageThumbnailPng(String docxPath, String pngPath) async {
-  final tmpDir = await Directory.systemTemp.createTemp('gitdocx_thumb_');
-  try {
-    final xpsPath = p.join(tmpDir.path, 'first_page.xps');
-    final cmd = [
-      r"$inputPath = "+_psQuote(docxPath)+r";",
-      r"$xpsPath = "+_psQuote(xpsPath)+r";",
-      r"$pngPath = "+_psQuote(pngPath)+r";",
-      r"$wdDoNotSaveChanges = 0;",
-      r"$wdExportFormatXPS = 18;",
-      r"$wdExportFromTo = 3;",
-      r"$word = New-Object -ComObject Word.Application;",
-      r"$word.Visible = $false;",
-      r"$word.DisplayAlerts = 0;",
-      r"try {",
-      r"  $doc = $word.Documents.Open($inputPath, $false, $true);",
-      r"  $doc.ExportAsFixedFormat($xpsPath, $wdExportFormatXPS, $false, 0, $wdExportFromTo, 1, 1, 0, $true, $true, 0, $true, $true, $false);",
-      r"  $doc.Close($wdDoNotSaveChanges);",
-      r"} finally {",
-      r"  $word.Quit();",
-      r"  [System.Runtime.Interopservices.Marshal]::ReleaseComObject($word) | Out-Null;",
-      r"  Remove-Variable word -ErrorAction SilentlyContinue;",
-      r"  [GC]::Collect();",
-      r"  [GC]::WaitForPendingFinalizers();",
-      r"}",
-      r"Add-Type -AssemblyName ReachFramework;",
-      r"Add-Type -AssemblyName PresentationCore;",
-      r"Add-Type -AssemblyName WindowsBase;",
-      r"$xps = New-Object System.Windows.Xps.Packaging.XpsDocument($xpsPath, [System.IO.FileAccess]::Read);",
-      r"$seq = $xps.GetFixedDocumentSequence();",
-      r"$fixedDoc = $seq.References[0].GetDocument($false);",
-      r"$page = $fixedDoc.Pages[0].GetPageRoot($false);",
-      r"$w = [double]$page.Width;",
-      r"$h = [double]$page.Height;",
-      r"$targetW = 320.0;",
-      r"$scale = $targetW / $w;",
-      r"if ($scale -le 0) { $scale = 1.0 }",
-      r"$rtb = New-Object System.Windows.Media.Imaging.RenderTargetBitmap([int]($w*$scale), [int]($h*$scale), 96*$scale, 96*$scale, [System.Windows.Media.PixelFormats]::Pbgra32);",
-      r"$rtb.Render($page);",
-      r"$encoder = New-Object System.Windows.Media.Imaging.PngBitmapEncoder;",
-      r"$encoder.Frames.Add([System.Windows.Media.Imaging.BitmapFrame]::Create($rtb));",
-      r"$fs = New-Object System.IO.FileStream($pngPath, [System.IO.FileMode]::Create);",
-      r"$encoder.Save($fs);",
-      r"$fs.Close();",
-      r"$xps.Close();",
-    ].join(' ');
-
-    final res = await Process.run('powershell', [
-      '-NoProfile',
-      '-NonInteractive',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-Command',
-      cmd,
-    ]);
-    if (res.exitCode != 0 || !File(pngPath).existsSync()) {
-      throw Exception('docx->png failed: ${res.stderr}');
-    }
-  } finally {
-    try {
-      if (tmpDir.existsSync()) {
-        tmpDir.deleteSync(recursive: true);
-      }
-    } catch (_) {}
-  }
-}
-
 Future<void> _ensureCommitPreviewAssetsUnlocked(
   String repoPath,
   String commitId,
@@ -1059,11 +984,8 @@ Future<void> _ensureCommitPreviewAssetsUnlocked(
   }
 
   final pdfPath = _globalCachedPdfPath(commitId);
-  final thumbPath = _globalCachedThumbPath(commitId);
-
   final pdfFile = File(pdfPath);
-  final thumbFile = File(thumbPath);
-  if (pdfFile.existsSync() && thumbFile.existsSync()) {
+  if (pdfFile.existsSync()) {
     return;
   }
 
@@ -1076,12 +998,6 @@ Future<void> _ensureCommitPreviewAssetsUnlocked(
       final tmpPdfPath = p.join(tmpDir.path, '$commitId.pdf');
       await _docxToPdf(docxPath, tmpPdfPath);
       await File(tmpPdfPath).copy(pdfPath);
-    }
-
-    if (!thumbFile.existsSync()) {
-      final tmpPngPath = p.join(tmpDir.path, '$commitId.png');
-      await _docxToFirstPageThumbnailPng(docxPath, tmpPngPath);
-      await File(tmpPngPath).copy(thumbPath);
     }
   } finally {
     try {
@@ -1100,7 +1016,7 @@ Future<Map<String, bool>> ensureCommitPreviewAssets(
     await _ensureCommitPreviewAssetsUnlocked(repoPath, commitId);
     return {
       'pdf': File(_globalCachedPdfPath(commitId)).existsSync(),
-      'thumb': File(_globalCachedThumbPath(commitId)).existsSync(),
+      'thumb': false, // No longer generating thumbs
     };
   });
 }

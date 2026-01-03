@@ -2930,8 +2930,8 @@ class _GraphViewState extends State<_GraphView>
       if (_hoverPreviewCommitId != commitId) return;
 
       await ensureAppDataCacheDir();
-      final thumbPath = cacheThumbPathForSha(commitId);
-      final f = File(thumbPath);
+      final pdfPath = cachePdfPathForSha(commitId);
+      final f = File(pdfPath);
       if (f.existsSync()) {
         try {
           final bytes = await f.readAsBytes();
@@ -2965,7 +2965,7 @@ class _GraphViewState extends State<_GraphView>
           t.cancel();
           return;
         }
-        final ff = File(thumbPath);
+        final ff = File(pdfPath);
         if (ff.existsSync()) {
           try {
             final bytes = await ff.readAsBytes();
@@ -4502,9 +4502,10 @@ class _GraphViewState extends State<_GraphView>
                                 : (_hoverPreviewThumb != null
                                     ? ClipRRect(
                                         borderRadius: BorderRadius.circular(6),
-                                        child: Image.memory(
-                                          _hoverPreviewThumb!,
-                                          fit: BoxFit.contain,
+                                        child: PdfPreviewPane(
+                                          bytes: _hoverPreviewThumb,
+                                          thumbnailMode: true,
+                                          initialZoom: 0.4,
                                         ),
                                       )
                                     : const Text('暂无缩略图')),
