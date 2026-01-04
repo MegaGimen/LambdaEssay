@@ -353,6 +353,14 @@ public:
         if (FAILED(hr) || result.vt != VT_DISPATCH) return false;
         IDispatch* pDoc = result.pdispVal;
 
+        // Accept all revisions and turn off TrackRevisions
+        AutoWrap(DISPATCH_METHOD, NULL, pDoc, (LPOLESTR)L"AcceptAllRevisions", 0);
+        
+        VARIANT vFalse;
+        vFalse.vt = VT_BOOL;
+        vFalse.boolVal = VARIANT_FALSE;
+        AutoWrap(DISPATCH_PROPERTYPUT, NULL, pDoc, (LPOLESTR)L"TrackRevisions", 1, vFalse);
+
         VARIANT vContent;
         VariantInit(&vContent);
         hr = AutoWrap(DISPATCH_PROPERTYGET, &vContent, pDoc, (LPOLESTR)L"Content", 0);
