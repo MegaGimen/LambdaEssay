@@ -384,9 +384,7 @@ public:
         // Replace content (InsertFile)
         hr = AutoWrap(DISPATCH_METHOD, NULL, pRange, (LPOLESTR)L"InsertFile", 1, vFileName);
         
-        // Finalize: Force AcceptAllRevisions again to clear any "Inserted" revisions
-        AutoWrap(DISPATCH_METHOD, NULL, pDoc, (LPOLESTR)L"AcceptAllRevisions", 0);
-        // Ensure TrackRevisions is still OFF
+        // Finalize: Ensure TrackRevisions is still OFF
         AutoWrap(DISPATCH_PROPERTYPUT, NULL, pDoc, (LPOLESTR)L"TrackRevisions", 1, vFalse);
 
         SysFreeString(bstrFile);
