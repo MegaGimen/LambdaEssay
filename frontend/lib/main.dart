@@ -584,7 +584,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   final TextEditingController docxPathCtrl = TextEditingController();
   GraphData? data;
   GraphData? remoteData; // New: Remote graph data
-  bool showRemotePreview = true; // New: Toggle for remote preview
+  bool showRemotePreview = false; // New: Toggle for remote preview (Default false)
   Map<String, int>? localRowMapping;
   Map<String, int>? remoteRowMapping;
   int? totalRows;
@@ -2604,10 +2604,20 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                             OutlinedButton.icon(
                               onPressed: loading
                                   ? null
-                                  : () {
+                                  : () async {
                                       setState(() {
                                         showRemotePreview = !showRemotePreview;
                                       });
+                                      try {
+                                        final prefs = await SharedPreferences
+                                            .getInstance();
+                                        await prefs.setBool(
+                                            'show_remote_preview',
+                                            showRemotePreview);
+                                      } catch (e) {
+                                        print('Error saving prefs: $e');
+                                      }
+
                                       if (showRemotePreview) {
                                         _load();
                                       } else {
