@@ -1145,92 +1145,68 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             child: const Text('取消'),
           ),
           OutlinedButton(
-            onPressed: () async {
-              if (currentProjectName == null ||
-                  _username == null ||
-                  _token == null) return;
-              final ok = await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (_) => PullPreviewPage(
-                            repoName: currentProjectName!,
-                            username: _username!,
-                            token: _token!,
-                            type: 'fork',
-                          )));
-              if (ok == true && ctx.mounted) Navigator.pop(ctx, 'fork');
-            },
+            onPressed: () => Navigator.pop(ctx, 'preview_fork'),
             child: const Text('分叉 (Fork)'),
           ),
           ElevatedButton(
-            onPressed: () async {
-              if (currentProjectName == null ||
-                  _username == null ||
-                  _token == null) return;
-              final ok = await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (_) => PullPreviewPage(
-                            repoName: currentProjectName!,
-                            username: _username!,
-                            token: _token!,
-                            type: 'rebase',
-                          )));
-              if (ok == true && ctx.mounted) Navigator.pop(ctx, 'rebase');
-            },
+            onPressed: () => Navigator.pop(ctx, 'preview_rebase'),
             child: const Text('在远程提交后附着 (Rebase)'),
           ),
           if (!isPush)
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-              onPressed: () async {
-                if (currentProjectName == null ||
-                    _username == null ||
-                    _token == null) return;
-                final ok = await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) => PullPreviewPage(
-                              repoName: currentProjectName!,
-                              username: _username!,
-                              token: _token!,
-                              type: 'force',
-                            )));
-                if (ok == true && ctx.mounted) Navigator.pop(ctx, 'force');
-              },
+              onPressed: () => Navigator.pop(ctx, 'preview_force'),
               child: const Text('强制覆盖 (Force Overwrite)'),
             ),
           const SizedBox(height: 16),
           TextButton.icon(
             icon: const Icon(Icons.compare_arrows),
             label: const Text('预览冲突差异 (Preview Differences)'),
-            onPressed: () async {
-              if (currentProjectName == null ||
-                  _username == null ||
-                  _token == null) return;
-              // Use 'force' preview type which shows side-by-side comparison
-              // This is effectively what "preview conflict" means (mine vs theirs)
-              await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (_) => PullPreviewPage(
-                            repoName: currentProjectName!,
-                            username: _username!,
-                            token: _token!,
-                            type: 'force',
-                          )));
-            },
+            onPressed: () => Navigator.pop(ctx, 'preview_diff'),
           ),
         ],
       ),
     );
 
-    if (choice == 'rebase') {
-      await _doRebasePull(isPush: isPush);
-    } else if (choice == 'fork') {
-      await _doForkLocal(isPush: isPush);
-    } else if (choice == 'force') {
-      await _doForcePull();
+    if (!mounted) return;
+    if (choice == null || choice == 'cancel') return;
+
+    if (choice.startsWith('preview_')) {
+      if (currentProjectName == null || _username == null || _token == null) {
+        return;
+      }
+
+      String type = 'force'; // default for diff
+      if (choice == 'preview_fork') type = 'fork';
+      if (choice == 'preview_rebase') type = 'rebase';
+      if (choice == 'preview_force') type = 'force';
+
+      final ok = await Navigator.push(
+          context,
+          MaterialPageRoute(
+              builder: (_) => PullPreviewPage(
+                    repoName: currentProjectName!,
+                    username: _username!,
+                    token: _token!,
+                    type: type,
+                  )));
+
+      if (!mounted) return;
+
+      // 如果是预览差异，或者用户在预览页取消了操作，则重新显示对话框
+      if (choice == 'preview_diff' || ok != true) {
+        await _showResolveConflictDialog(isPush: isPush);
+        return;
+      }
+
+      // 如果用户在预览页确认了操作
+      if (choice == 'preview_fork') {
+        await _doForkLocal(isPush: isPush);
+      } else if (choice == 'preview_rebase') {
+        await _doRebasePull(isPush: isPush);
+      } else if (choice == 'preview_force') {
+        await _doForcePull();
+      }
     }
   }
 
