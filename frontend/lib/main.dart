@@ -585,6 +585,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   GraphData? data;
   GraphData? remoteData; // New: Remote graph data
   bool showRemotePreview = false; // New: Toggle for remote preview (Default false)
+  bool isFolderProject = false; // New: Folder project mode
+  List<Map<String, dynamic>> subRepos = []; // New: Sub-repos for folder project
   Map<String, int>? localRowMapping;
   Map<String, int>? remoteRowMapping;
   int? totalRows;
@@ -1900,6 +1902,16 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                         }
                       },
                     ),
+                    IconButton(
+                      icon: const Icon(Icons.folder_open),
+                      tooltip: '选择文件夹',
+                      onPressed: () async {
+                        String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
+                        if (selectedDirectory != null) {
+                          docxCtrl.text = selectedDirectory;
+                        }
+                      },
+                    ),
                   ],
                 ),
               ],
@@ -1935,21 +1947,52 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         'docxPath': docx.isEmpty ? null : docx,
       });
       final repoPath = resp['repoPath'] as String;
-      setState(() {
-        currentProjectName = name;
-        pathCtrl.text = repoPath;
-        docxPathCtrl.text = docx;
-      });
-      final up = await _postJson('http://localhost:8080/track/update', {
-        'name': name,
-      });
-      setState(() {
-        working = WorkingState(
-          changed: up['workingChanged'] == true,
-          baseId: up['head'] as String?,
-        );
-      });
-      await _load();
+      final type = resp['type'] as String? ?? 'file';
+
+      if (type == 'folder') {
+        final reposResp = await _postJson('http://localhost:8080/track/repos', {
+           'name': name,
+        });
+        final repos = (reposResp['repos'] as List).cast<Map<String, dynamic>>();
+        
+        setState(() {
+          currentProjectName = name;
+          pathCtrl.text = repoPath; 
+          docxPathCtrl.text = docx;
+          isFolderProject = true;
+          subRepos = repos;
+        });
+
+        if (repos.isNotEmpty) {
+           final firstRepo = repos.first;
+           setState(() {
+              pathCtrl.text = firstRepo['repoPath'];
+              docxPathCtrl.text = firstRepo['docxPath'] ?? '';
+           });
+           await _onUpdateRepoAction(opIdentical: true, specificRepoPath: firstRepo['repoPath'], specificDocxPath: firstRepo['docxPath']);
+           await _load();
+        } else {
+           setState(() => loading = false); 
+        }
+      } else {
+        setState(() {
+          currentProjectName = name;
+          pathCtrl.text = repoPath;
+          docxPathCtrl.text = docx;
+          isFolderProject = false;
+          subRepos = [];
+        });
+        final up = await _postJson('http://localhost:8080/track/update', {
+          'name': name,
+        });
+        setState(() {
+          working = WorkingState(
+            changed: up['workingChanged'] == true,
+            baseId: up['head'] as String?,
+          );
+        });
+        await _load();
+      }
     } catch (e) {
       setState(() => error = e.toString());
     }
@@ -2029,13 +2072,40 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       });
       final repoPath = resp['repoPath'] as String;
       final docxPath = resp['docxPath'] as String?;
-      setState(() {
-        currentProjectName = name;
-        pathCtrl.text = repoPath;
-        docxPathCtrl.text = docxPath ?? '';
-      });
-      // Auto update after opening/selecting repo to sync latest status
-      await _onUpdateRepoAction(forcePull: true, opIdentical: false);
+      final type = resp['type'] as String? ?? 'file';
+
+      if (type == 'folder') {
+        final reposResp = await _postJson('http://localhost:8080/track/repos', {
+           'name': name,
+        });
+        final repos = (reposResp['repos'] as List).cast<Map<String, dynamic>>();
+        setState(() {
+          currentProjectName = name;
+          pathCtrl.text = repoPath; 
+          docxPathCtrl.text = docxPath ?? '';
+          isFolderProject = true;
+          subRepos = repos;
+        });
+
+        if (repos.isNotEmpty) {
+           final firstRepo = repos.first;
+           setState(() {
+              pathCtrl.text = firstRepo['repoPath'];
+              docxPathCtrl.text = firstRepo['docxPath'] ?? '';
+           });
+           await _onUpdateRepoAction(forcePull: true, opIdentical: false, specificRepoPath: firstRepo['repoPath'], specificDocxPath: firstRepo['docxPath']);
+        }
+      } else {
+        setState(() {
+          currentProjectName = name;
+          pathCtrl.text = repoPath;
+          docxPathCtrl.text = docxPath ?? '';
+          isFolderProject = false;
+          subRepos = [];
+        });
+        // Auto update after opening/selecting repo to sync latest status
+        await _onUpdateRepoAction(forcePull: true, opIdentical: false);
+      }
     } catch (e) {
       setState(() => error = e.toString());
     } finally {
@@ -2084,7 +2154,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   bool _isUpdatingRepo = false;
 
   Future<void> _onUpdateRepoAction(
-      {bool forcePull = false, bool opIdentical = true}) async {
+      {bool forcePull = false, bool opIdentical = true, String? specificRepoPath, String? specificDocxPath}) async {
     final sw = Stopwatch()..start();
     if (_isUpdatingRepo) return;
     _isUpdatingRepo = true;
@@ -2178,8 +2248,12 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
       try {
         final swUpdate = Stopwatch()..start();
-        final resp = await _postJson('http://localhost:8080/track/update',
-            {'name': name, 'opIdentical': opIdentical});
+        final resp = await _postJson('http://localhost:8080/track/update', {
+          'name': name,
+          'opIdentical': opIdentical,
+          'repoPath': specificRepoPath,
+          'docxPath': specificDocxPath,
+        });
         print(
             '[Perf][Frontend][UpdateRepo][TrackUpdate] ${swUpdate.elapsedMilliseconds}ms');
         swUpdate.reset();
@@ -2773,6 +2847,41 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                           ],
                         ),
                       ),
+                      if (isFolderProject && subRepos.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          child: Row(
+                            children: [
+                              const Text('选择子文档: ', style: TextStyle(fontWeight: FontWeight.bold)),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: DropdownButton<String>(
+                                  isExpanded: true,
+                                  value: subRepos.any((r) => r['repoPath'] == pathCtrl.text) 
+                                      ? pathCtrl.text 
+                                      : null,
+                                  items: subRepos.map((r) {
+                                     return DropdownMenuItem<String>(
+                                       value: r['repoPath'],
+                                       child: Text('${r['relPath']}'),
+                                     );
+                                  }).toList(),
+                                  onChanged: (val) async {
+                                    if (val == null) return;
+                                    final repo = subRepos.firstWhere((r) => r['repoPath'] == val);
+                                    setState(() {
+                                      pathCtrl.text = val;
+                                      docxPathCtrl.text = repo['docxPath'] ?? '';
+                                    });
+                                    // Trigger update/load
+                                    await _onUpdateRepoAction(opIdentical: true, specificRepoPath: val, specificDocxPath: repo['docxPath']);
+                                    await _load();
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       if (currentProjectName != null)
                         Padding(
                           padding: const EdgeInsets.symmetric(
