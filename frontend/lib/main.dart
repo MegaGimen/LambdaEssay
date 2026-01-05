@@ -578,6 +578,24 @@ class GraphPage extends StatefulWidget {
   State<GraphPage> createState() => _GraphPageState();
 }
 
+class FileNode {
+  final String name;
+  final String fullPath;
+  final String? docxPath;
+  final bool isFile;
+  final List<FileNode> children;
+  bool isExpanded;
+
+  FileNode({
+    required this.name,
+    required this.fullPath,
+    this.docxPath,
+    required this.isFile,
+    this.children = const [],
+    this.isExpanded = true,
+  });
+}
+
 class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   final TextEditingController pathCtrl = TextEditingController();
   final TextEditingController limitCtrl = TextEditingController(text: '500');
@@ -587,11 +605,136 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   bool showRemotePreview = false; // New: Toggle for remote preview (Default false)
   bool isFolderProject = false; // New: Folder project mode
   List<Map<String, dynamic>> subRepos = []; // New: Sub-repos for folder project
+  List<FileNode> fileTree = []; // New: File tree structure
+  
   Map<String, int>? localRowMapping;
   Map<String, int>? remoteRowMapping;
   int? totalRows;
   final TransformationController _sharedController = TransformationController();
   late AnimationController _sidebarFlashCtrl;
+
+  void _buildFileTree() {
+    if (!isFolderProject || subRepos.isEmpty) {
+      fileTree = [];
+      return;
+    }
+
+    final rootNodes = <FileNode>[];
+    
+    // 假设 relPath 格式为 "sub/folder/file.docx" 或 "file.docx"
+    for (final repo in subRepos) {
+      final relPath = repo['relPath'] as String;
+      final parts = relPath.split(RegExp(r'[/\\]')); // Split by / or \
+      
+      List<FileNode> currentLevel = rootNodes;
+      
+      for (int i = 0; i < parts.length; i++) {
+        final part = parts[i];
+        final isLast = i == parts.length - 1;
+        
+        final existingNodeIndex = currentLevel.indexWhere((n) => n.name == part);
+        
+        if (existingNodeIndex != -1) {
+          if (isLast) {
+             // 理论上不应该发生，因为文件是叶子节点，除非有同名目录和文件
+          } else {
+             currentLevel = currentLevel[existingNodeIndex].children;
+          }
+        } else {
+          final newNode = FileNode(
+            name: part,
+            fullPath: isLast ? (repo['repoPath'] as String) : '', // 只有文件节点存储 repoPath
+            docxPath: isLast ? (repo['docxPath'] as String?) : null,
+            isFile: isLast,
+            children: [],
+          );
+          currentLevel.add(newNode);
+          if (!isLast) {
+             currentLevel = newNode.children;
+          }
+        }
+      }
+    }
+    
+    setState(() {
+      fileTree = rootNodes;
+    });
+  }
+
+  Widget _buildTreeWidget(List<FileNode> nodes) {
+    return ListView.builder(
+      shrinkWrap: true,
+      physics: const ClampingScrollPhysics(),
+      itemCount: nodes.length,
+      itemBuilder: (context, index) {
+        final node = nodes[index];
+        return _buildNodeWidget(node, 0);
+      },
+    );
+  }
+
+  Widget _buildNodeWidget(FileNode node, int level) {
+     if (node.isFile) {
+       final isSelected = node.fullPath == pathCtrl.text;
+       return InkWell(
+         onDoubleTap: () async {
+            setState(() {
+               pathCtrl.text = node.fullPath;
+               docxPathCtrl.text = node.docxPath ?? '';
+            });
+            await _onUpdateRepoAction(opIdentical: true, specificRepoPath: node.fullPath, specificDocxPath: node.docxPath);
+            await _load();
+         },
+         child: Container(
+           color: isSelected ? Colors.blue.withValues(alpha: 0.1) : null,
+           padding: EdgeInsets.only(left: 16.0 * level + 8, top: 4, bottom: 4),
+           child: Row(
+             children: [
+               const Icon(Icons.description, size: 16, color: Colors.blueGrey),
+               const SizedBox(width: 8),
+               Expanded(child: Text(node.name, overflow: TextOverflow.ellipsis)),
+             ],
+           ),
+         ),
+       );
+     } else {
+       return Column(
+         crossAxisAlignment: CrossAxisAlignment.start,
+         children: [
+           InkWell(
+             onTap: () {
+               setState(() {
+                 node.isExpanded = !node.isExpanded;
+               });
+             },
+             child: Container(
+                padding: EdgeInsets.only(left: 16.0 * level + 8, top: 4, bottom: 4),
+                child: Row(
+                  children: [
+                    Icon(
+                      node.isExpanded ? Icons.folder_open : Icons.folder,
+                      size: 16,
+                      color: Colors.amber,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(node.name, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold))),
+                  ],
+                ),
+             ),
+           ),
+           if (node.isExpanded)
+             ListView.builder(
+               shrinkWrap: true,
+               physics: const NeverScrollableScrollPhysics(),
+               itemCount: node.children.length,
+               itemBuilder: (context, index) {
+                 return _buildNodeWidget(node.children[index], level + 1);
+               },
+             ),
+         ],
+       );
+     }
+  }
 
   @override
   void dispose() {
@@ -1967,7 +2110,6 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
            final firstRepo = repos.first;
            setState(() {
               pathCtrl.text = firstRepo['repoPath'];
-              docxPathCtrl.text = firstRepo['docxPath'] ?? '';
            });
            await _onUpdateRepoAction(opIdentical: true, specificRepoPath: firstRepo['repoPath'], specificDocxPath: firstRepo['docxPath']);
            await _load();
@@ -2091,7 +2233,6 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
            final firstRepo = repos.first;
            setState(() {
               pathCtrl.text = firstRepo['repoPath'];
-              docxPathCtrl.text = firstRepo['docxPath'] ?? '';
            });
            await _onUpdateRepoAction(forcePull: true, opIdentical: false, specificRepoPath: firstRepo['repoPath'], specificDocxPath: firstRepo['docxPath']);
         }
@@ -2612,6 +2753,125 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     }
   }
 
+  Future<void> _openProject(String name, {bool isFolderProject = false}) async {
+    setState(() => loading = true);
+    try {
+      final resp = await _postJson('http://localhost:8080/track/open', {
+        'name': name,
+      });
+      final repoPath = resp['repoPath'] as String;
+      final docxPath = resp['docxPath'] as String?;
+      final type = resp['type'] as String? ?? 'file';
+
+      if (type == 'folder') {
+        final reposResp = await _postJson('http://localhost:8080/track/repos', {
+           'name': name,
+        });
+        final repos = (reposResp['repos'] as List).cast<Map<String, dynamic>>();
+        setState(() {
+          currentProjectName = name;
+          pathCtrl.text = repoPath; 
+          docxPathCtrl.text = docxPath ?? '';
+          this.isFolderProject = true;
+          subRepos = repos;
+        });
+
+        if (repos.isNotEmpty) {
+           final firstRepo = repos.first;
+           setState(() {
+              pathCtrl.text = firstRepo['repoPath'];
+           });
+           await _onUpdateRepoAction(forcePull: true, opIdentical: false, specificRepoPath: firstRepo['repoPath'], specificDocxPath: firstRepo['docxPath']);
+        }
+      } else {
+        setState(() {
+          currentProjectName = name;
+          pathCtrl.text = repoPath;
+          docxPathCtrl.text = docxPath ?? '';
+          this.isFolderProject = false;
+          subRepos = [];
+        });
+        await _onUpdateRepoAction(forcePull: true, opIdentical: false);
+      }
+    } catch (e) {
+      setState(() => error = e.toString());
+    } finally {
+      setState(() => loading = false);
+    }
+  }
+
+  Future<void> _onSyncFolder() async {
+    if (currentProjectName == null) return;
+    setState(() => loading = true);
+    try {
+      final resp = await _postJson(
+          'http://localhost:8080/track/sync_folder', {'name': currentProjectName});
+      if (resp['status'] == 'ok') {
+        // Reload project list/repos
+        await _openProject(currentProjectName!, isFolderProject: true);
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('文件夹同步完成')));
+      }
+    } catch (e) {
+      setState(() => error = e.toString());
+    } finally {
+      setState(() => loading = false);
+    }
+  }
+
+  Widget _buildSidebar() {
+    return Container(
+      width: 250,
+      decoration: BoxDecoration(
+        border: Border(right: BorderSide(color: Colors.grey.shade300)),
+        color: Colors.grey.shade50,
+      ),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: loading ? null : _onSyncFolder,
+                icon: const Icon(Icons.sync),
+                label: const Text('同步文件夹'),
+              ),
+            ),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: ListView.builder(
+              itemCount: subRepos.length,
+              itemBuilder: (context, index) {
+                final repo = subRepos[index];
+                final isSelected = repo['repoPath'] == pathCtrl.text;
+                return ListTile(
+                  title: Text(repo['relPath'] ?? '', style: const TextStyle(fontSize: 14)),
+                  selected: isSelected,
+                  selectedTileColor: Colors.blue.withOpacity(0.1),
+                  dense: true,
+                  onTap: () async {
+                    if (isSelected) return;
+                    setState(() {
+                      pathCtrl.text = repo['repoPath'];
+                      // Keep docxPathCtrl showing the root project path
+                    });
+                    await _onUpdateRepoAction(
+                        opIdentical: true,
+                        specificRepoPath: repo['repoPath'],
+                        specificDocxPath: repo['docxPath']);
+                    await _load();
+                  },
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Listener(
@@ -2633,9 +2893,13 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         children: [
           Scaffold(
             appBar: AppBar(title: const Text('LambdaEssay')),
-            body: Column(
+            body: Row(
               children: [
-                MediaQuery(
+                if (isFolderProject) _buildSidebar(),
+                Expanded(
+                  child: Column(
+                    children: [
+                      MediaQuery(
                   data: MediaQuery.of(context)
                       .copyWith(textScaler: TextScaler.linear(_uiScale)),
                   child: Column(
@@ -2847,48 +3111,14 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                           ],
                         ),
                       ),
-                      if (isFolderProject && subRepos.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          child: Row(
-                            children: [
-                              const Text('选择子文档: ', style: TextStyle(fontWeight: FontWeight.bold)),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: DropdownButton<String>(
-                                  isExpanded: true,
-                                  value: subRepos.any((r) => r['repoPath'] == pathCtrl.text) 
-                                      ? pathCtrl.text 
-                                      : null,
-                                  items: subRepos.map((r) {
-                                     return DropdownMenuItem<String>(
-                                       value: r['repoPath'],
-                                       child: Text('${r['relPath']}'),
-                                     );
-                                  }).toList(),
-                                  onChanged: (val) async {
-                                    if (val == null) return;
-                                    final repo = subRepos.firstWhere((r) => r['repoPath'] == val);
-                                    setState(() {
-                                      pathCtrl.text = val;
-                                      docxPathCtrl.text = repo['docxPath'] ?? '';
-                                    });
-                                    // Trigger update/load
-                                    await _onUpdateRepoAction(opIdentical: true, specificRepoPath: val, specificDocxPath: repo['docxPath']);
-                                    await _load();
-                                  },
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+
                       if (currentProjectName != null)
                         Padding(
                           padding: const EdgeInsets.symmetric(
                               horizontal: 8, vertical: 4),
                           child: Row(
                             children: [
-                              const Text('追踪文档的路径: '),
+                              Text(isFolderProject ? '追踪文件夹的路径: ' : '追踪文档的路径: '),
                               Expanded(
                                 child: TextField(
                                   controller: docxPathCtrl,
@@ -3035,6 +3265,9 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                               primaryBranchName: 'master',
                             ),
                 ),
+              ],
+            ),
+          ),
               ],
             ),
           ),
