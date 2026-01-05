@@ -1400,6 +1400,69 @@ Future<List<Map<String, dynamic>>> listProjectRepos(String name) async {
   return results;
 }
 
+Future<void> syncFolderProject(String name) async {
+  final projDir = _projectDir(name);
+  final tracking = await _readTracking(name);
+  final sourceRoot = tracking['docxPath'] as String?;
+  final type = tracking['type'];
+
+  if (type != 'folder' || sourceRoot == null) {
+    throw Exception('Not a folder project or docxPath is missing');
+  }
+
+  if (!Directory(sourceRoot).existsSync()) {
+     // Source folder deleted? We might want to warn or do nothing, but user said sync.
+     // If source is gone, maybe we should delete everything? Safer to throw for now.
+     throw Exception('Source folder not found: $sourceRoot');
+  }
+
+  // 1. Scan source folder for .docx files
+  final sourceFiles = Directory(sourceRoot)
+      .listSync(recursive: true)
+      .whereType<File>()
+      .where((f) => p.extension(f.path).toLowerCase() == '.docx')
+      .where((f) => !p.basename(f.path).startsWith('~\$'))
+      .toList();
+
+  final sourceRelPaths = <String>{};
+  
+  // 2. Update or Create repos
+  for (final file in sourceFiles) {
+    final relPath = p.relative(file.path, from: sourceRoot);
+    sourceRelPaths.add(relPath);
+    
+    final targetRepoPath = p.join(projDir, relPath);
+    // This will create if not exists, or update content.docx if exists
+    await _initSingleRepo(targetRepoPath, file.path);
+  }
+
+  // 3. Scan target folder for repos (directories with .git)
+  // We need to be careful not to delete the root projDir itself if it happens to be a repo (unlikely in folder mode)
+  final targetDir = Directory(projDir);
+  if (targetDir.existsSync()) {
+     final entities = targetDir.listSync(recursive: true);
+     for (final entity in entities) {
+        if (entity is Directory && p.basename(entity.path) == '.git') {
+           final repoPath = entity.parent.path;
+           // If repoPath is the project root, skip? Folder mode structure: projDir/sub/a.docx/.git
+           if (p.equals(p.normalize(repoPath), p.normalize(projDir))) continue;
+
+           final relPath = p.relative(repoPath, from: projDir);
+           
+           // Check if this relPath exists in source
+           if (!sourceRelPaths.contains(relPath)) {
+              print('Deleting orphaned repo: $repoPath');
+              try {
+                 entity.parent.deleteSync(recursive: true);
+              } catch (e) {
+                 print('Failed to delete orphaned repo: $e');
+              }
+           }
+        }
+     }
+  }
+}
+
 Future<Map<String, dynamic>> openTrackingProject(String name) async {
   final projDir = _projectDir(name);
   final dir = Directory(projDir);
