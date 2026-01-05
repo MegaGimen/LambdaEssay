@@ -1008,6 +1008,7 @@ Future<void> main(List<String> args) async {
     final username = (data['username'] as String?)?.trim() ?? '';
     final token = (data['token'] as String?)?.trim() ?? '';
     final force = data['force'] == true;
+    final targetRepoName = (data['targetRepoName'] as String?)?.trim();
 
     if (repoPath.isEmpty || username.isEmpty || token.isEmpty) {
       return _cors(Response(400,
@@ -1015,7 +1016,8 @@ Future<void> main(List<String> args) async {
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
-      await pushToRemote(repoPath, username, token, force: force);
+      await pushToRemote(repoPath, username, token,
+          force: force, targetRepoName: targetRepoName);
       return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
         'Content-Type': 'application/json; charset=utf-8',
       }));
@@ -1400,6 +1402,7 @@ Future<void> main(List<String> args) async {
     final username = (data['username'] as String?)?.trim() ?? '';
     final token = (data['token'] as String?)?.trim() ?? '';
     final force = data['force'] == true;
+    final targetRepoName = (data['targetRepoName'] as String?)?.trim();
 
     if (repoName.isEmpty || username.isEmpty || token.isEmpty) {
       return _cors(Response(400,
@@ -1407,8 +1410,8 @@ Future<void> main(List<String> args) async {
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
-      final result =
-          await pullFromRemote(repoName, username, token, force: force);
+      final result = await pullFromRemote(repoName, username, token,
+          force: force, targetRepoName: targetRepoName);
       print("pullResult=${result}");
       return _cors(Response.ok(jsonEncode(result),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));

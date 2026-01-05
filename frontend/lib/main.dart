@@ -999,6 +999,119 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     }
   }
 
+  Future<String?> _showRepoSelectionDialog({
+    bool allowNew = false,
+    String? defaultName,
+  }) async {
+    if (_token == null) return null;
+
+    // Fetch repos
+    List<String> repos = [];
+    try {
+      final resp = await http.post(
+        Uri.parse('http://localhost:8080/remote/list'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'token': _token}),
+      );
+      if (resp.statusCode == 200) {
+        repos = (jsonDecode(resp.body) as List).cast<String>();
+      }
+    } catch (e) {
+      if (!mounted) return null;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('获取仓库列表失败: $e')),
+      );
+      // If fetching fails, we can still allow manual entry if allowNew is true
+      if (!allowNew) return null;
+    }
+
+    if (!mounted) return null;
+
+    String? selectedRepo;
+    final nameCtrl = TextEditingController(text: defaultName);
+
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setState) {
+          return AlertDialog(
+            title: Text(allowNew ? '选择或新建远程仓库' : '选择远程仓库'),
+            content: SizedBox(
+              width: 400,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (repos.isNotEmpty) ...[
+                    const Text('远程仓库列表:'),
+                    DropdownButton<String>(
+                      isExpanded: true,
+                      value: selectedRepo,
+                      hint: const Text('请选择...'),
+                      items: repos.map((r) {
+                        return DropdownMenuItem(
+                          value: r,
+                          child: Text(r),
+                        );
+                      }).toList(),
+                      onChanged: (v) {
+                        setState(() {
+                          selectedRepo = v;
+                          if (v != null) {
+                            nameCtrl.text = v;
+                          }
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+                  if (allowNew) ...[
+                    const Text('仓库名称 (新建或覆盖):'),
+                    TextField(
+                      controller: nameCtrl,
+                      decoration: const InputDecoration(
+                        hintText: '输入仓库名称',
+                      ),
+                      onChanged: (v) {
+                        setState(() {
+                          // If user types, clear dropdown selection if it doesn't match?
+                          // Or just let text field override.
+                          // We'll use text field value as final result.
+                          // But visually maybe keep dropdown if it matches?
+                          // For simplicity, just update text.
+                        });
+                      },
+                    ),
+                  ] else ...[
+                     // If not allowNew, maybe we still want to show the selected name?
+                     // But we forced selection from dropdown?
+                     // Or should we allow selecting "Other" (manual input)?
+                     // User said "allow user to select one to pull".
+                     // So just dropdown is enough for pull.
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('取消'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  final text = nameCtrl.text.trim();
+                  if (text.isEmpty) return;
+                  Navigator.pop(ctx, text);
+                },
+                child: const Text('确定'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
   Future<void> _onPush({bool force = false}) async {
     if (!await _ensureToken()) {
       setState(() => error = '请先登录');
@@ -1009,6 +1122,22 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       setState(() => error = '请输入本地仓库路径');
       return;
     }
+
+    // Determine default name
+    String defaultName = currentProjectName ?? '';
+    if (defaultName.isEmpty) {
+      // split by / or \
+      defaultName = repoPath.split(RegExp(r'[/\\]')).last;
+    }
+
+    // Ask user for target repo
+    final targetRepoName = await _showRepoSelectionDialog(
+      allowNew: true,
+      defaultName: defaultName,
+    );
+
+    if (targetRepoName == null) return; // User cancelled
+
     setState(() {
       loading = true;
       error = null;
@@ -1019,6 +1148,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         'username': _username,
         'token': _token,
         'force': force,
+        'targetRepoName': targetRepoName,
       });
       if (!mounted) return;
       ScaffoldMessenger.of(context)
@@ -1422,12 +1552,17 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       return;
     }
 
-    // 直接使用当前打开的项目名称，不再让用户选择
     if (currentProjectName == null || currentProjectName!.isEmpty) {
       setState(() => error = '当前未打开任何项目，无法拉取');
       return;
     }
     final repoName = currentProjectName!;
+
+    // Ask user for target repo to pull from
+    final targetRepoName = await _showRepoSelectionDialog(
+      allowNew: false,
+    );
+    if (targetRepoName == null) return;
 
     setState(() {
       loading = true;
@@ -1438,6 +1573,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         'repoName': repoName,
         'username': _username,
         'token': _token,
+        'targetRepoName': targetRepoName,
       });
 
       final status = resp['status'] as String?;
