@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:file_tree_view/file_tree_view.dart';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:archive/archive_io.dart';
@@ -2820,6 +2821,27 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   }
 
   Widget _buildSidebar() {
+    final rootPath = docxPathCtrl.text.trim();
+    bool isValid = rootPath.isNotEmpty;
+    try {
+      if (isValid && !Directory(rootPath).existsSync()) {
+        isValid = false;
+      }
+    } catch (_) {
+      isValid = false;
+    }
+
+    if (!isValid) {
+      return Container(
+        width: 250,
+        decoration: BoxDecoration(
+          border: Border(right: BorderSide(color: Colors.grey.shade300)),
+          color: Colors.grey.shade50,
+        ),
+        child: const Center(child: Text("请先选择或创建一个包含子项目的文件夹项目")),
+      );
+    }
+
     return Container(
       width: 250,
       decoration: BoxDecoration(
@@ -2841,29 +2863,41 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           ),
           const Divider(height: 1),
           Expanded(
-            child: ListView.builder(
-              itemCount: subRepos.length,
-              itemBuilder: (context, index) {
-                final repo = subRepos[index];
-                final isSelected = repo['repoPath'] == pathCtrl.text;
-                return ListTile(
-                  title: Text(repo['relPath'] ?? '', style: const TextStyle(fontSize: 14)),
-                  selected: isSelected,
-                  selectedTileColor: Colors.blue.withOpacity(0.1),
-                  dense: true,
-                  onTap: () async {
-                    if (isSelected) return;
-                    setState(() {
-                      pathCtrl.text = repo['repoPath'];
-                      // Keep docxPathCtrl showing the root project path
-                    });
-                    await _onUpdateRepoAction(
+            child: DirectoryTreeViewer(
+              rootPath: rootPath,
+              fileIconBuilder: (extension) => const Icon(Icons.description, size: 16, color: Colors.blueGrey),
+              onFileTap: (file, details) async {
+                final filePath = file.path;
+                
+                Map<String, dynamic>? targetRepo;
+                int maxLen = 0;
+                
+                final normalizedFilePath = filePath.replaceAll('\\', '/');
+                
+                for (final repo in subRepos) {
+                  String rPath = repo['repoPath'] as String;
+                  rPath = rPath.replaceAll('\\', '/');
+                  
+                  if (normalizedFilePath.startsWith(rPath)) {
+                     if (rPath.length > maxLen) {
+                       maxLen = rPath.length;
+                       targetRepo = repo;
+                     }
+                  }
+                }
+                
+                if (targetRepo != null) {
+                   if (targetRepo['repoPath'] == pathCtrl.text) return;
+                   
+                   setState(() {
+                      pathCtrl.text = targetRepo!['repoPath'];
+                   });
+                   await _onUpdateRepoAction(
                         opIdentical: true,
-                        specificRepoPath: repo['repoPath'],
-                        specificDocxPath: repo['docxPath']);
-                    await _load();
-                  },
-                );
+                        specificRepoPath: targetRepo['repoPath'],
+                        specificDocxPath: targetRepo['docxPath']);
+                   await _load();
+                }
               },
             ),
           ),
