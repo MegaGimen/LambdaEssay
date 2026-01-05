@@ -11,7 +11,8 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:file_tree_view/file_tree_view.dart';
+// import 'package:file_tree_view/file_tree_view.dart';
+import 'widgets/custom_file_tree.dart';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:archive/archive_io.dart';
@@ -598,7 +599,9 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   late AnimationController _sidebarFlashCtrl;
   
   Set<String> _fetchingPaths = {};
-  Map<String, bool> _repoUpdates = {}; // path -> true if updated
+  Map<String, bool> _repoUpdates = {};
+  String? _selectedFilePath;
+ // path -> true if updated
   
   // For double-click detection
   DateTime? _lastTapTime;
@@ -2645,6 +2648,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           currentProjectName = name;
           pathCtrl.text = repoPath; 
           docxPathCtrl.text = docxPath ?? '';
+          _selectedFilePath = docxPath;
           this.isFolderProject = true;
           subRepos = repos;
         });
@@ -2661,6 +2665,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           currentProjectName = name;
           pathCtrl.text = repoPath;
           docxPathCtrl.text = docxPath ?? '';
+          _selectedFilePath = docxPath;
           this.isFolderProject = false;
           subRepos = [];
         });
@@ -2696,6 +2701,9 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   Future<void> _handleFileTap(File file, TapDownDetails details) async {
     final now = DateTime.now();
     final filePath = file.path;
+    setState(() {
+      _selectedFilePath = filePath;
+    });
 
     // Double click detection
     if (_lastTapTime != null &&
@@ -2892,6 +2900,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                   notifier: _treeNotifier,
                   child: FoldableDirectoryTree(
                     rootPath: rootPath,
+                    selectedPath: _selectedFilePath,
+                    updatedPaths: _repoUpdates.entries.where((e) => e.value).map((e) => e.key).toSet(),
                     fileIconBuilder: (extension) =>
                         const Icon(Icons.description, size: 16, color: Colors.blueGrey),
                     onFileTap: _handleFileTap,
