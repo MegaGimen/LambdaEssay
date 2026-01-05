@@ -1278,39 +1278,126 @@ Future<Map<String, dynamic>> createTrackingProject(
     String name, String? docxPath) async {
   final projDir = _projectDir(name);
   final dir = Directory(projDir);
-  if (!dir.existsSync()) {
+  
+  // Clean up existing if any (or maybe we should fail if exists?)
+  // For now, assume fresh creation or overwrite
+  if (dir.existsSync()) {
+    // If it was a single file repo before, or a folder repo, this might be dangerous.
+    // But let's follow existing logic which seems to assume it's okay to reuse or user handles it.
+    // Actually, existing logic only creates if not exists.
+    if (!dir.existsSync()) {
+      dir.createSync(recursive: true);
+    }
+  } else {
     dir.createSync(recursive: true);
   }
-  final gitDir = Directory(p.join(projDir, '.git'));
-  if (!gitDir.existsSync()) {
-    await _runGit(['init'], projDir);
-    final gitignore = File(p.join(projDir, '.gitignore'));
-    await gitignore.writeAsString('tracking.json\n*.docx\n');
+
+  bool isFolderMode = false;
+  if (docxPath != null && docxPath.trim().isNotEmpty) {
+    if (FileSystemEntity.isDirectorySync(docxPath)) {
+      isFolderMode = true;
+    }
   }
 
-  // Handle doc content
-  if (docxPath != null && docxPath.trim().isNotEmpty) {
-    // Just copy/zip to content.docx. NO UNZIP to doc_content.
-    await _updateContentDocx(projDir, docxPath);
+  if (isFolderMode) {
+    final rootDir = Directory(docxPath!);
+    final files = rootDir.listSync(recursive: true).whereType<File>();
+    for (final file in files) {
+       if (p.extension(file.path).toLowerCase() != '.docx') continue;
+       if (p.basename(file.path).startsWith('~\$')) continue;
+ 
+       final relPath = p.relative(file.path, from: docxPath);
+      // Construct target repo path: projDir/relPath
+      // relPath is like "sub/a.docx"
+      // We want repo to be at "projDir/sub/a.docx" (as a directory)
+      final targetRepoPath = p.join(projDir, relPath);
+      
+      await _initSingleRepo(targetRepoPath, file.path);
+    }
   } else {
-    // Ensure empty content dir exists (so git init works?)
-    // Actually git init works fine.
-    // We might want an empty content.docx
-    await _ensureRepoDocx(projDir);
+    // Single file mode (legacy or file selection)
+    // Here projDir IS the repo path
+    await _initSingleRepo(projDir, docxPath);
   }
 
   final tracking = await _readTracking(name);
   tracking['name'] = name;
   if (docxPath != null && docxPath.trim().isNotEmpty) {
     tracking['docxPath'] = _sanitizeFsPath(docxPath);
+    tracking['type'] = isFolderMode ? 'folder' : 'file';
+  } else {
+    tracking['type'] = 'file'; // Default to file if no path provided (empty repo)
   }
-  tracking['repoDocxPath'] = p.join(projDir, kContentDirName);
+  // repoDocxPath is ambiguous for folder mode, maybe point to root?
+  tracking['repoDocxPath'] = p.join(projDir, kContentDirName); 
 
   await _writeTracking(name, tracking);
   return {
     'name': name,
     'repoPath': projDir,
+    'type': tracking['type'],
   };
+}
+
+Future<void> _initSingleRepo(String repoPath, String? sourceDocxPath) async {
+  final dir = Directory(repoPath);
+  if (!dir.existsSync()) {
+    dir.createSync(recursive: true);
+  }
+  
+  final gitDir = Directory(p.join(repoPath, '.git'));
+  if (!gitDir.existsSync()) {
+    await _runGit(['init'], repoPath);
+    final gitignore = File(p.join(repoPath, '.gitignore'));
+    await gitignore.writeAsString('tracking.json\n*.docx\n');
+  }
+
+  // Handle doc content
+  if (sourceDocxPath != null && sourceDocxPath.trim().isNotEmpty) {
+    await _updateContentDocx(repoPath, sourceDocxPath);
+  } else {
+    await _ensureRepoDocx(repoPath);
+  }
+}
+
+Future<List<Map<String, dynamic>>> listProjectRepos(String name) async {
+  final projDir = _projectDir(name);
+  final tracking = await _readTracking(name);
+  
+  if (tracking['type'] != 'folder') {
+    return [{
+       'relPath': '.',
+       'repoPath': projDir,
+       'docxPath': tracking['docxPath']
+    }];
+  }
+
+  final results = <Map<String, dynamic>>[];
+  final dir = Directory(projDir);
+  final rootDocxPath = tracking['docxPath'] as String?;
+
+  if (dir.existsSync()) {
+    // Scan for .git directories
+    final entities = dir.listSync(recursive: true);
+    for (final entity in entities) {
+      if (entity is Directory && p.basename(entity.path) == '.git') {
+         final repoPath = entity.parent.path;
+         final relPath = p.relative(repoPath, from: projDir);
+         
+         String? subDocxPath;
+         if (rootDocxPath != null) {
+            subDocxPath = p.join(rootDocxPath, relPath);
+         }
+
+         results.add({
+            'relPath': relPath,
+            'repoPath': repoPath,
+            'docxPath': subDocxPath,
+         });
+      }
+    }
+  }
+  return results;
 }
 
 Future<Map<String, dynamic>> openTrackingProject(String name) async {
@@ -1324,6 +1411,7 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
     'name': name,
     'repoPath': projDir,
     'docxPath': tracking['docxPath'],
+    'type': tracking['type'] ?? 'file',
   };
 }
 
@@ -1351,8 +1439,8 @@ Future<Map<String, dynamic>?> getTrackingInfo(String repoPath) async {
 
 Future<Map<String, dynamic>> updateTrackingProject(
     String name, bool opIdentical,
-    {String? newDocxPath}) async {
-  final projDir = _projectDir(name);
+    {String? newDocxPath, String? repoPath, String? docxPath}) async {
+  final projDir = repoPath ?? _projectDir(name);
   return _withRepoLock(projDir, () async {
     _isUpdating[name] = true;
     final totalSw = Stopwatch()..start();
@@ -1363,7 +1451,17 @@ Future<Map<String, dynamic>> updateTrackingProject(
       if (!dir.existsSync()) {
         throw Exception('project not found');
       }
-      var tracking = await _readTracking(name);
+      
+      Map<String, dynamic> tracking;
+      if (repoPath != null) {
+        tracking = {
+           'name': name,
+           'docxPath': docxPath,
+        };
+      } else {
+        tracking = await _readTracking(name);
+      }
+      
       String? sourcePath = tracking['docxPath'] as String?;
       if (newDocxPath != null && newDocxPath.trim().isNotEmpty) {
         sourcePath = _sanitizeFsPath(newDocxPath);
@@ -1393,7 +1491,10 @@ Future<Map<String, dynamic>> updateTrackingProject(
         contentDir.createSync();
       }
       tracking['repoDocxPath'] = contentDir.path;
-      await _writeTracking(name, tracking);
+      
+      if (repoPath == null) {
+         await _writeTracking(name, tracking);
+      }
 
       print(
           '[Perf] Ensure Content Dir & Write Tracking: ${sectionSw.elapsedMilliseconds}ms');

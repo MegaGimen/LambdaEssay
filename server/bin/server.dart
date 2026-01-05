@@ -900,19 +900,42 @@ Future<void> main(List<String> args) async {
     }
   });
 
-  router.post('/track/update', (Request req) async {
+  router.post('/track/repos', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
     final name = (data['name'] as String?)?.trim() ?? '';
-    final opIdentical = (data['opIdentical'] as bool?) ?? false;
-    final newDocxPath = data['newDocxPath'] as String?;
     if (name.isEmpty) {
       return _cors(Response(400,
           body: jsonEncode({'error': 'name required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
-      final resp = await updateTrackingProject(name,opIdentical, newDocxPath: newDocxPath);
+      final repos = await listProjectRepos(name);
+      return _cors(Response.ok(jsonEncode({'repos': repos}), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/track/update', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final name = (data['name'] as String?)?.trim() ?? '';
+    final opIdentical = (data['opIdentical'] as bool?) ?? false;
+    final newDocxPath = data['newDocxPath'] as String?;
+    final repoPath = data['repoPath'] as String?;
+    final docxPath = data['docxPath'] as String?;
+    if (name.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'name required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      final resp = await updateTrackingProject(name,opIdentical, newDocxPath: newDocxPath, repoPath: repoPath, docxPath: docxPath);
       return _cors(Response.ok(jsonEncode(resp), headers: {
         'Content-Type': 'application/json; charset=utf-8',
       }));
