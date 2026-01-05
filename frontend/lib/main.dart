@@ -597,6 +597,9 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   final TransformationController _sharedController = TransformationController();
   late AnimationController _sidebarFlashCtrl;
   
+  Set<String> _fetchingPaths = {};
+  Map<String, bool> _repoUpdates = {}; // path -> true if updated
+  
   // For double-click detection
   DateTime? _lastTapTime;
   String? _lastTappedPath;
@@ -2755,6 +2758,51 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     }
   }
 
+  Future<void> _checkAndFetchAllProjects(String rootPath) async {
+    if (_fetchingPaths.contains(rootPath)) return;
+    _fetchingPaths.add(rootPath);
+    
+    final dir = Directory(rootPath);
+    if (!await dir.exists()) {
+       _fetchingPaths.remove(rootPath);
+       return;
+    }
+
+    try {
+      await for (final entity in dir.list()) {
+        if (entity is Directory) {
+           final gitDir = Directory(p.join(entity.path, '.git'));
+           if (await gitDir.exists()) {
+              // It is a git repo. Fetch in background.
+              _fetchRepoBackground(entity.path);
+           }
+        }
+      }
+    } catch (e) {
+      print('Error listing dir: $e');
+    }
+  }
+
+  Future<void> _fetchRepoBackground(String repoPath) async {
+    try {
+       // Silent fetch
+       final result = await Process.run('git', ['fetch'], workingDirectory: repoPath);
+       if (result.exitCode == 0) {
+          final output = result.stderr.toString();
+          // If fetch updated something, it usually prints "->" or "new tag" etc.
+          if (output.contains('->') || output.contains('new branch') || output.contains('new tag') || output.contains('FETCH_HEAD')) {
+             if (mounted) {
+                setState(() {
+                   _repoUpdates[repoPath] = true;
+                });
+             }
+          }
+       }
+    } catch (e) {
+       print('Bg fetch error: $e');
+    }
+  }
+
   Widget _buildSidebar() {
     final rootPath = docxPathCtrl.text.trim();
     bool isValid = rootPath.isNotEmpty;
@@ -2776,6 +2824,9 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       );
     }
 
+    // Auto-fetch in background
+    _checkAndFetchAllProjects(rootPath);
+
     return Container(
       decoration: BoxDecoration(
         border: Border(right: BorderSide(color: Colors.grey.shade300)),
@@ -2794,6 +2845,43 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
               ),
             ),
           ),
+          if (currentProjectName != null)
+             Container(
+                width: double.infinity,
+                color: Colors.blue.withOpacity(0.1),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                child: Row(children: [
+                   const Icon(Icons.folder_open, size: 16, color: Colors.blue),
+                   const SizedBox(width: 8),
+                   Expanded(child: Text('当前: $currentProjectName', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blue, fontSize: 13))),
+                ]),
+             ),
+          if (_repoUpdates.isNotEmpty)
+             Container(
+                width: double.infinity,
+                color: Colors.red.withOpacity(0.05),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                child: Column(
+                   crossAxisAlignment: CrossAxisAlignment.start,
+                   children: [
+                      const Row(children: [
+                         Icon(Icons.notifications_active, color: Colors.red, size: 14),
+                         SizedBox(width: 8),
+                         Text('发现更新:', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 13)),
+                      ]),
+                      ..._repoUpdates.entries.where((e) => e.value).map((e) => e.key).map((path) => 
+                         Padding(
+                           padding: const EdgeInsets.only(left: 22, top: 4),
+                           child: Row(children: [
+                              const Icon(Icons.circle, size: 6, color: Colors.red),
+                              const SizedBox(width: 4),
+                              Expanded(child: Text(p.basename(path), overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12))),
+                           ]),
+                         )
+                      ).take(5),
+                   ],
+                ),
+             ),
           const Divider(height: 1),
           Expanded(
             child: SingleChildScrollView(
