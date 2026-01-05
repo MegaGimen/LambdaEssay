@@ -137,6 +137,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "10.3.8"
+  file_tree_view:
+    dependency: "direct main"
+    description:
+      name: file_tree_view
+      sha256: e39e2cb03f116945e1b94b266163ad81d4f3a271bb01191a9f9db93dc33f9014
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.0.7"
   fixnum:
     dependency: transitive
     description:
@@ -176,6 +184,14 @@ packages:
     description: flutter
     source: sdk
     version: "0.0.0"
+  font_awesome_flutter:
+    dependency: transitive
+    description:
+      name: font_awesome_flutter
+      sha256: b738e35f8bb4957896c34957baf922f99c5d415b38ddc8b070d14b7fa95715d4
+      url: "https://pub.dev"
+    source: hosted
+    version: "10.9.1"
   http:
     dependency: "direct main"
     description:
