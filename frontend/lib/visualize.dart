@@ -1,7 +1,134 @@
 import 'dart:typed_data';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 import 'package:file_picker/file_picker.dart';
+
+String appDataCacheDirPath() {
+  final app = Platform.environment['APPDATA'];
+  if (app != null && app.isNotEmpty) {
+    return '$app${Platform.pathSeparator}cache';
+  }
+  return Directory.systemTemp.path;
+}
+
+String cachePdfPathForSha(String sha1) {
+  return '${appDataCacheDirPath()}${Platform.pathSeparator}$sha1.pdf';
+}
+
+
+Future<Directory> ensureAppDataCacheDir() async {
+  final dir = Directory(appDataCacheDirPath());
+  if (!dir.existsSync()) {
+    dir.createSync(recursive: true);
+  }
+  return dir;
+}
+
+class PdfPreviewPane extends StatefulWidget {
+  final Uint8List? bytes;
+  final String? filePath;
+  final double minZoom;
+  final double maxZoom;
+  final double initialZoom;
+  final bool thumbnailMode;
+
+  const PdfPreviewPane({
+    super.key,
+    this.bytes,
+    this.filePath,
+    this.minZoom = 0.5,
+    this.maxZoom = 3.0,
+    this.initialZoom = 1.0,
+    this.thumbnailMode = false,
+  });
+
+  @override
+  State<PdfPreviewPane> createState() => _PdfPreviewPaneState();
+}
+
+class _PdfPreviewPaneState extends State<PdfPreviewPane> {
+  final PdfViewerController _controller = PdfViewerController();
+  late double _zoomLevel;
+
+  @override
+  void initState() {
+    super.initState();
+    _zoomLevel = widget.initialZoom;
+    _controller.zoomLevel = _zoomLevel;
+  }
+
+  @override
+  void didUpdateWidget(covariant PdfPreviewPane oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialZoom != widget.initialZoom) {
+      _zoomLevel = widget.initialZoom;
+      _controller.zoomLevel = _zoomLevel;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasBytes = widget.bytes != null && widget.bytes!.isNotEmpty;
+    final hasFile = widget.filePath != null && widget.filePath!.isNotEmpty;
+    if (!hasBytes && !hasFile) {
+      return const Center(child: Text('暂无可预览的 PDF'));
+    }
+
+    final viewer = hasFile
+        ? SfPdfViewer.file(
+            File(widget.filePath!),
+            controller: _controller,
+            canShowScrollHead: !widget.thumbnailMode,
+            canShowPaginationDialog: !widget.thumbnailMode,
+            enableDoubleTapZooming: !widget.thumbnailMode,
+            enableTextSelection: !widget.thumbnailMode,
+            pageLayoutMode: widget.thumbnailMode
+                ? PdfPageLayoutMode.single
+                : PdfPageLayoutMode.continuous,
+          )
+        : SfPdfViewer.memory(
+            widget.bytes!,
+            controller: _controller,
+            canShowScrollHead: !widget.thumbnailMode,
+            canShowPaginationDialog: !widget.thumbnailMode,
+            enableDoubleTapZooming: !widget.thumbnailMode,
+            enableTextSelection: !widget.thumbnailMode,
+            pageLayoutMode: widget.thumbnailMode
+                ? PdfPageLayoutMode.single
+                : PdfPageLayoutMode.continuous,
+          );
+
+    if (widget.thumbnailMode) {
+      return AbsorbPointer(child: viewer);
+    }
+
+    return Column(
+      children: [
+        Row(
+          children: [
+            const SizedBox(width: 8),
+            const Text('缩放', style: TextStyle(fontSize: 12)),
+            Expanded(
+              child: Slider(
+                value: _zoomLevel.clamp(widget.minZoom, widget.maxZoom),
+                min: widget.minZoom,
+                max: widget.maxZoom,
+                onChanged: (v) {
+                  setState(() {
+                    _zoomLevel = v;
+                    _controller.zoomLevel = v;
+                  });
+                },
+              ),
+            ),
+          ],
+        ),
+        Expanded(child: viewer),
+      ],
+    );
+  }
+}
 
 class VisualizeDocxPage extends StatefulWidget {
   final Uint8List? initialBytes;
@@ -65,7 +192,7 @@ class _VisualizeDocxPageState extends State<VisualizeDocxPage> {
         actions: [
           Slider(
             value: _zoomLevel,
-            min: 1.0,
+            min: 0.5,
             max: 3.0,
             onChanged: (value) {
               setState(() {

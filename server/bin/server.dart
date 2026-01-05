@@ -732,6 +732,25 @@ Future<void> main(List<String> args) async {
     }
   });
 
+  router.post('/preview_cache', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoPath = _sanitizePath(data['repoPath'] as String?);
+    final commitId = data['commitId'] as String?;
+
+    if (repoPath.isEmpty || commitId == null || commitId.trim().isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoPath, commitId required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+
+    unawaited(ensureCommitPreviewAssets(repoPath, commitId.trim()));
+
+    return _cors(Response.ok(jsonEncode({'status': 'scheduled'}), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  });
+
   router.post('/rollback', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
@@ -989,6 +1008,7 @@ Future<void> main(List<String> args) async {
     final username = (data['username'] as String?)?.trim() ?? '';
     final token = (data['token'] as String?)?.trim() ?? '';
     final force = data['force'] == true;
+    final targetRepoName = (data['targetRepoName'] as String?)?.trim();
 
     if (repoPath.isEmpty || username.isEmpty || token.isEmpty) {
       return _cors(Response(400,
@@ -996,7 +1016,8 @@ Future<void> main(List<String> args) async {
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
-      await pushToRemote(repoPath, username, token, force: force);
+      await pushToRemote(repoPath, username, token,
+          force: force, targetRepoName: targetRepoName);
       return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
         'Content-Type': 'application/json; charset=utf-8',
       }));
@@ -1381,6 +1402,7 @@ Future<void> main(List<String> args) async {
     final username = (data['username'] as String?)?.trim() ?? '';
     final token = (data['token'] as String?)?.trim() ?? '';
     final force = data['force'] == true;
+    final targetRepoName = (data['targetRepoName'] as String?)?.trim();
 
     if (repoName.isEmpty || username.isEmpty || token.isEmpty) {
       return _cors(Response(400,
@@ -1388,8 +1410,8 @@ Future<void> main(List<String> args) async {
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
-      final result =
-          await pullFromRemote(repoName, username, token, force: force);
+      final result = await pullFromRemote(repoName, username, token,
+          force: force, targetRepoName: targetRepoName);
       print("pullResult=${result}");
       return _cors(Response.ok(jsonEncode(result),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
