@@ -580,6 +580,7 @@ class GraphPage extends StatefulWidget {
 }
 
 class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
+  final DirectoryTreeStateNotifier _treeNotifier = DirectoryTreeStateNotifier();
   double _sidebarWidth = 250.0;
   final TextEditingController pathCtrl = TextEditingController();
   final TextEditingController limitCtrl = TextEditingController(text: '500');
@@ -2688,6 +2689,72 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     }
   }
 
+
+  Future<void> _handleFileTap(File file, TapDownDetails details) async {
+    final now = DateTime.now();
+    final filePath = file.path;
+
+    // Double click detection
+    if (_lastTapTime != null &&
+        now.difference(_lastTapTime!) < const Duration(milliseconds: 500) &&
+        (p.equals(_lastTappedPath!, filePath) || _lastTappedPath == filePath)) {
+      _lastTapTime = null; // Reset
+    } else {
+      _lastTapTime = now;
+      _lastTappedPath = filePath;
+      return;
+    }
+
+    print("DEBUG: Double clicked file: $filePath");
+
+    Map<String, dynamic>? targetRepo;
+    int maxLen = 0;
+    bool exactDocMatch = false;
+
+    print("DEBUG: Checking against ${subRepos.length} repos");
+
+    for (final repo in subRepos) {
+      final rPath = repo['repoPath'] as String;
+      final dPath = repo['docxPath'] as String?;
+
+      // Priority 1: Exact docx path match
+      if (dPath != null && (p.equals(dPath, filePath) || dPath == filePath)) {
+        targetRepo = repo;
+        exactDocMatch = true;
+        break; // Found the exact document, stop searching
+      }
+
+      // Priority 2: File is inside repo path (find longest match)
+      if (!exactDocMatch) {
+        if (p.isWithin(rPath, filePath) || p.equals(rPath, filePath)) {
+          if (rPath.length > maxLen) {
+            maxLen = rPath.length;
+            targetRepo = repo;
+          }
+        }
+      }
+    }
+
+    if (targetRepo != null) {
+      print("DEBUG: Opening repo: ${targetRepo['repoPath']}");
+      setState(() {
+        pathCtrl.text = targetRepo!['repoPath'];
+      });
+      await _onUpdateRepoAction(
+          opIdentical: true,
+          specificRepoPath: targetRepo['repoPath'],
+          specificDocxPath: targetRepo['docxPath']);
+      await _load();
+    } else {
+      print("DEBUG: No matching repo found for $filePath");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('未找到此文件的追踪信息'), duration: Duration(seconds: 1)),
+        );
+      }
+    }
+  }
+
   Widget _buildSidebar() {
     final rootPath = docxPathCtrl.text.trim();
     bool isValid = rootPath.isNotEmpty;
@@ -2729,73 +2796,20 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           ),
           const Divider(height: 1),
           Expanded(
-            child: DirectoryTreeViewer(
-              rootPath: rootPath,
-              fileIconBuilder: (extension) => const Icon(Icons.description, size: 16, color: Colors.blueGrey),
-              onFileTap: (file, details) async {
-                final now = DateTime.now();
-                final filePath = file.path;
-                
-                // Double click detection
-                if (_lastTapTime != null && 
-                    now.difference(_lastTapTime!) < const Duration(milliseconds: 500) &&
-                    (p.equals(_lastTappedPath!, filePath) || _lastTappedPath == filePath)) {
-                    _lastTapTime = null; // Reset
-                } else {
-                    _lastTapTime = now;
-                    _lastTappedPath = filePath;
-                    return;
-                }
-
-                print("DEBUG: Double clicked file: $filePath");
-                
-                Map<String, dynamic>? targetRepo;
-                int maxLen = 0;
-                bool exactDocMatch = false;
-                
-                print("DEBUG: Checking against ${subRepos.length} repos");
-                
-                for (final repo in subRepos) {
-                  final rPath = repo['repoPath'] as String;
-                  final dPath = repo['docxPath'] as String?;
-                  
-                  // Priority 1: Exact docx path match
-                  if (dPath != null && (p.equals(dPath, filePath) || dPath == filePath)) {
-                    targetRepo = repo;
-                    exactDocMatch = true;
-                    break; // Found the exact document, stop searching
-                  }
-                  
-                  // Priority 2: File is inside repo path (find longest match)
-                  if (!exactDocMatch) {
-                    if (p.isWithin(rPath, filePath) || p.equals(rPath, filePath)) {
-                       if (rPath.length > maxLen) {
-                         maxLen = rPath.length;
-                         targetRepo = repo;
-                       }
-                    }
-                  }
-                }
-                
-                if (targetRepo != null) {
-                   print("DEBUG: Opening repo: ${targetRepo['repoPath']}");
-                   setState(() {
-                      pathCtrl.text = targetRepo!['repoPath'];
-                   });
-                   await _onUpdateRepoAction(
-                        opIdentical: true,
-                        specificRepoPath: targetRepo['repoPath'],
-                        specificDocxPath: targetRepo['docxPath']);
-                   await _load();
-                } else {
-                   print("DEBUG: No matching repo found for $filePath");
-                   if (mounted) {
-                     ScaffoldMessenger.of(context).showSnackBar(
-                       const SnackBar(content: Text('未找到此文件的追踪信息'), duration: Duration(seconds: 1)),
-                     );
-                   }
-                }
-              },
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minWidth: _sidebarWidth),
+                child: DirectoryTreeStateProvider(
+                  notifier: _treeNotifier,
+                  child: FoldableDirectoryTree(
+                    rootPath: rootPath,
+                    fileIconBuilder: (extension) =>
+                        const Icon(Icons.description, size: 16, color: Colors.blueGrey),
+                    onFileTap: _handleFileTap,
+                  ),
+                ),
+              ),
             ),
           ),
         ],
@@ -2998,25 +3012,24 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                       ),
                       Padding(
                         padding: const EdgeInsets.all(8),
-                        child: Row(
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
                           children: [
                             ElevatedButton(
                               onPressed: loading ? null : _onCreateTrackProject,
                               child: const Text('新建追踪项目'),
                             ),
-                            const SizedBox(width: 8),
                             ElevatedButton(
                               onPressed: loading ? null : _onOpenTrackProject,
                               child: const Text('打开追踪项目'),
                             ),
-                            const SizedBox(width: 8),
                             ElevatedButton(
                               onPressed: () {
                                 _localGraphKey.currentState?.resetLayout();
                               },
                               child: const Text('恢复默认布局'),
                             ),
-                            const SizedBox(width: 8),
                             ElevatedButton(
                               onPressed: loading
                                   ? null
@@ -3024,17 +3037,14 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                                       _onUpdateRepoAction(opIdentical: false),
                               child: const Text('如果文档没同步就点我'),
                             ),
-                            const SizedBox(width: 8),
                             ElevatedButton(
                               onPressed: loading ? null : _onPush,
                               child: const Text('推送本地追踪项目到远程'),
                             ),
-                            const SizedBox(width: 8),
                             ElevatedButton(
                               onPressed: loading ? null : _onPull,
                               child: const Text('从远程拉取追踪项目到本地'),
                             ),
-                            const SizedBox(width: 8),
                             OutlinedButton.icon(
                               onPressed: loading
                                   ? null
@@ -3068,7 +3078,6 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                                   : Icons.visibility),
                               label: Text(showRemotePreview ? '隐藏远程' : '显示远程'),
                             ),
-                            const SizedBox(width: 8),
                             if (currentProjectName != null)
                               Text(
                                 ' 当前项目: $currentProjectName ',
