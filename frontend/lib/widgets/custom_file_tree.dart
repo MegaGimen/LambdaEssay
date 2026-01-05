@@ -149,6 +149,7 @@ class DirectoryTreeStateNotifier extends ChangeNotifier {
 
   ///Watches for file system changes
   StreamSubscription<FileSystemEvent>? _directoryWatcher;
+  String? _watchedPath;
 
   /// Checks if a folder is expanded or collapsed
   bool isUnfolded(String dirPath, String rootPath) => dirPath == rootPath
@@ -178,6 +179,8 @@ class DirectoryTreeStateNotifier extends ChangeNotifier {
 
   /// Watches the given directory for changes and updates the UI accordingly
   void watchDirectory(String directoryPath) {
+    if (_watchedPath == directoryPath) return;
+    _watchedPath = directoryPath;
     _directoryWatcher?.cancel();
     final dir = Directory(directoryPath);
     if (dir.existsSync()) {
@@ -311,14 +314,11 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
                       : widget.folderStyle?.rootFolderClosedIcon ??
                             FolderStyle().rootFolderClosedIcon,
                   const SizedBox(width: 8),
-                  Flexible(
-                    child: Text(
-                      path.basename(directory.path),
-                      overflow: TextOverflow.ellipsis,
-                      style:
-                          widget.folderStyle?.folderNameStyle ??
-                          FolderStyle().folderNameStyle,
-                    ),
+                  Text(
+                    path.basename(directory.path),
+                    style:
+                        widget.folderStyle?.folderNameStyle ??
+                        FolderStyle().folderNameStyle,
                   ),
                   if (hasUpdate) ...[
                      const SizedBox(width: 8),
@@ -402,34 +402,34 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
             : widget.editingFieldStyle?.fileIcon ??
                   EditingFieldStyle().fileIcon,
         const SizedBox(width: 8),
-        Expanded(
-          child: SizedBox(
-            height: widget.editingFieldStyle?.textFieldHeight,
-            width: widget.editingFieldStyle?.textFieldWidth,
-            child: TextField(
-              style: widget.editingFieldStyle?.textStyle,
-              textAlignVertical: widget.editingFieldStyle?.verticalTextAlign,
-              cursorRadius: widget.editingFieldStyle?.cursorRadius,
-              cursorWidth: widget.editingFieldStyle?.cursorWidth ?? 2.0,
-              cursorHeight: widget.editingFieldStyle?.cursorHeight,
-              cursorColor: widget.editingFieldStyle?.cursorColor,
-              controller: controller,
-              autofocus: true,
-              decoration:
-                  widget.editingFieldStyle?.textfieldDecoration ??
-                  EditingFieldStyle().textfieldDecoration,
-              onSubmitted: (value) {
-                if (value.trim().isNotEmpty) {
-                  final newPath = path.join(parent.path, value.trim());
-                  if (stateNotifier.isFolderCreation) {
-                    Directory(newPath).createSync();
-                  } else {
-                    File(newPath).createSync();
-                  }
+        SizedBox(
+          height: widget.editingFieldStyle?.textFieldHeight,
+          width: (widget.editingFieldStyle?.textFieldWidth ?? double.infinity) == double.infinity 
+              ? 200 
+              : widget.editingFieldStyle?.textFieldWidth,
+          child: TextField(
+            style: widget.editingFieldStyle?.textStyle,
+            textAlignVertical: widget.editingFieldStyle?.verticalTextAlign,
+            cursorRadius: widget.editingFieldStyle?.cursorRadius,
+            cursorWidth: widget.editingFieldStyle?.cursorWidth ?? 2.0,
+            cursorHeight: widget.editingFieldStyle?.cursorHeight,
+            cursorColor: widget.editingFieldStyle?.cursorColor,
+            controller: controller,
+            autofocus: true,
+            decoration:
+                widget.editingFieldStyle?.textfieldDecoration ??
+                EditingFieldStyle().textfieldDecoration,
+            onSubmitted: (value) {
+              if (value.trim().isNotEmpty) {
+                final newPath = path.join(parent.path, value.trim());
+                if (stateNotifier.isFolderCreation) {
+                  Directory(newPath).createSync(recursive: true);
+                } else {
+                  File(newPath).createSync(recursive: true);
                 }
-                stateNotifier.stopCreating();
-              },
-            ),
+              }
+              stateNotifier.stopCreating();
+            },
           ),
         ),
         IconButton(
@@ -463,9 +463,9 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
   /// Builds the widget for a single file item.
   Widget _buildFileItem(File file) {
     final extension = path.extension(file.path).toLowerCase();
-    final customIcon = widget.fileIconBuilder != null
-        ? widget.fileIconBuilder!(extension)
-        : widget.fileStyle?.fileIcon ?? FileStyle().fileIcon;
+    final customIcon = widget.fileIconBuilder?.call(extension) ??
+        widget.fileStyle?.fileIcon ??
+        FileStyle().fileIcon;
     
     final bool isSelected = widget.selectedPath != null && 
         (path.equals(widget.selectedPath!, file.path) || widget.selectedPath == file.path);
@@ -493,13 +493,10 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
             children: [
               customIcon,
               const SizedBox(width: 8),
-              Flexible(
-                child: Text(
-                  path.basename(file.path),
-                  overflow: TextOverflow.ellipsis,
-                  style:
-                      widget.fileStyle?.fileNameStyle ?? FileStyle().fileNameStyle,
-                ),
+              Text(
+                path.basename(file.path),
+                style:
+                    widget.fileStyle?.fileNameStyle ?? FileStyle().fileNameStyle,
               ),
               if (hasUpdate) ...[
                  const SizedBox(width: 8),
@@ -526,7 +523,6 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
   @override
   Widget build(BuildContext context) {
     final stateNotifier = DirectoryTreeStateProvider.of(context);
-    stateNotifier.watchDirectory(widget.rootPath);
     final rootDirectory = Directory(widget.rootPath);
 
     if (!rootDirectory.existsSync()) {
