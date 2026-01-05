@@ -579,25 +579,8 @@ class GraphPage extends StatefulWidget {
   State<GraphPage> createState() => _GraphPageState();
 }
 
-class FileNode {
-  final String name;
-  final String fullPath;
-  final String? docxPath;
-  final bool isFile;
-  final List<FileNode> children;
-  bool isExpanded;
-
-  FileNode({
-    required this.name,
-    required this.fullPath,
-    this.docxPath,
-    required this.isFile,
-    this.children = const [],
-    this.isExpanded = true,
-  });
-}
-
 class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
+  double _sidebarWidth = 250.0;
   final TextEditingController pathCtrl = TextEditingController();
   final TextEditingController limitCtrl = TextEditingController(text: '500');
   final TextEditingController docxPathCtrl = TextEditingController();
@@ -606,136 +589,12 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   bool showRemotePreview = false; // New: Toggle for remote preview (Default false)
   bool isFolderProject = false; // New: Folder project mode
   List<Map<String, dynamic>> subRepos = []; // New: Sub-repos for folder project
-  List<FileNode> fileTree = []; // New: File tree structure
   
   Map<String, int>? localRowMapping;
   Map<String, int>? remoteRowMapping;
   int? totalRows;
   final TransformationController _sharedController = TransformationController();
   late AnimationController _sidebarFlashCtrl;
-
-  void _buildFileTree() {
-    if (!isFolderProject || subRepos.isEmpty) {
-      fileTree = [];
-      return;
-    }
-
-    final rootNodes = <FileNode>[];
-    
-    // 假设 relPath 格式为 "sub/folder/file.docx" 或 "file.docx"
-    for (final repo in subRepos) {
-      final relPath = repo['relPath'] as String;
-      final parts = relPath.split(RegExp(r'[/\\]')); // Split by / or \
-      
-      List<FileNode> currentLevel = rootNodes;
-      
-      for (int i = 0; i < parts.length; i++) {
-        final part = parts[i];
-        final isLast = i == parts.length - 1;
-        
-        final existingNodeIndex = currentLevel.indexWhere((n) => n.name == part);
-        
-        if (existingNodeIndex != -1) {
-          if (isLast) {
-             // 理论上不应该发生，因为文件是叶子节点，除非有同名目录和文件
-          } else {
-             currentLevel = currentLevel[existingNodeIndex].children;
-          }
-        } else {
-          final newNode = FileNode(
-            name: part,
-            fullPath: isLast ? (repo['repoPath'] as String) : '', // 只有文件节点存储 repoPath
-            docxPath: isLast ? (repo['docxPath'] as String?) : null,
-            isFile: isLast,
-            children: [],
-          );
-          currentLevel.add(newNode);
-          if (!isLast) {
-             currentLevel = newNode.children;
-          }
-        }
-      }
-    }
-    
-    setState(() {
-      fileTree = rootNodes;
-    });
-  }
-
-  Widget _buildTreeWidget(List<FileNode> nodes) {
-    return ListView.builder(
-      shrinkWrap: true,
-      physics: const ClampingScrollPhysics(),
-      itemCount: nodes.length,
-      itemBuilder: (context, index) {
-        final node = nodes[index];
-        return _buildNodeWidget(node, 0);
-      },
-    );
-  }
-
-  Widget _buildNodeWidget(FileNode node, int level) {
-     if (node.isFile) {
-       final isSelected = node.fullPath == pathCtrl.text;
-       return InkWell(
-         onDoubleTap: () async {
-            setState(() {
-               pathCtrl.text = node.fullPath;
-               docxPathCtrl.text = node.docxPath ?? '';
-            });
-            await _onUpdateRepoAction(opIdentical: true, specificRepoPath: node.fullPath, specificDocxPath: node.docxPath);
-            await _load();
-         },
-         child: Container(
-           color: isSelected ? Colors.blue.withValues(alpha: 0.1) : null,
-           padding: EdgeInsets.only(left: 16.0 * level + 8, top: 4, bottom: 4),
-           child: Row(
-             children: [
-               const Icon(Icons.description, size: 16, color: Colors.blueGrey),
-               const SizedBox(width: 8),
-               Expanded(child: Text(node.name, overflow: TextOverflow.ellipsis)),
-             ],
-           ),
-         ),
-       );
-     } else {
-       return Column(
-         crossAxisAlignment: CrossAxisAlignment.start,
-         children: [
-           InkWell(
-             onTap: () {
-               setState(() {
-                 node.isExpanded = !node.isExpanded;
-               });
-             },
-             child: Container(
-                padding: EdgeInsets.only(left: 16.0 * level + 8, top: 4, bottom: 4),
-                child: Row(
-                  children: [
-                    Icon(
-                      node.isExpanded ? Icons.folder_open : Icons.folder,
-                      size: 16,
-                      color: Colors.amber,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(child: Text(node.name, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold))),
-                  ],
-                ),
-             ),
-           ),
-           if (node.isExpanded)
-             ListView.builder(
-               shrinkWrap: true,
-               physics: const NeverScrollableScrollPhysics(),
-               itemCount: node.children.length,
-               itemBuilder: (context, index) {
-                 return _buildNodeWidget(node.children[index], level + 1);
-               },
-             ),
-         ],
-       );
-     }
-  }
 
   @override
   void dispose() {
@@ -1925,13 +1784,17 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       if (info.isNotEmpty) {
         setState(() {
           currentProjectName = info['name'];
-          docxPathCtrl.text = info['docxPath'] ?? '';
+          if (info['docxPath'] != null && info['docxPath'].isNotEmpty) {
+            docxPathCtrl.text = info['docxPath'];
+          }
         });
       } else {
-        setState(() {
-          currentProjectName = null;
-          docxPathCtrl.clear();
-        });
+        if (!isFolderProject) {
+          setState(() {
+            currentProjectName = null;
+            docxPathCtrl.clear();
+          });
+        }
       }
     } catch (_) {
       // Ignore if not tracked or error
@@ -2833,17 +2696,15 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
     if (!isValid) {
       return Container(
-        width: 250,
         decoration: BoxDecoration(
           border: Border(right: BorderSide(color: Colors.grey.shade300)),
           color: Colors.grey.shade50,
         ),
-        child: const Center(child: Text("请先选择或创建一个包含子项目的文件夹项目")),
+        child: Center(child: Text("请先选择或创建一个包含子项目的文件夹项目\n当前路径: $rootPath")),
       );
     }
 
     return Container(
-      width: 250,
       decoration: BoxDecoration(
         border: Border(right: BorderSide(color: Colors.grey.shade300)),
         color: Colors.grey.shade50,
@@ -2929,7 +2790,27 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             appBar: AppBar(title: const Text('LambdaEssay')),
             body: Row(
               children: [
-                if (isFolderProject) _buildSidebar(),
+                if (isFolderProject)
+                  SizedBox(
+                    width: _sidebarWidth,
+                    child: _buildSidebar(),
+                  ),
+                if (isFolderProject)
+                  MouseRegion(
+                    cursor: SystemMouseCursors.resizeColumn,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      onHorizontalDragUpdate: (details) {
+                        setState(() {
+                          _sidebarWidth = (_sidebarWidth + details.delta.dx).clamp(100.0, 800.0);
+                        });
+                      },
+                      child: Container(
+                        width: 5,
+                        color: Colors.grey.shade200,
+                      ),
+                    ),
+                  ),
                 Expanded(
                   child: Column(
                     children: [
