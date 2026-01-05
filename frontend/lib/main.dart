@@ -595,6 +595,10 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   int? totalRows;
   final TransformationController _sharedController = TransformationController();
   late AnimationController _sidebarFlashCtrl;
+  
+  // For double-click detection
+  DateTime? _lastTapTime;
+  String? _lastTappedPath;
 
   @override
   void dispose() {
@@ -2094,11 +2098,12 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         });
 
         if (repos.isNotEmpty) {
-           final firstRepo = repos.first;
+           // Default: do not open any specific repo
            setState(() {
-              pathCtrl.text = firstRepo['repoPath'];
+              pathCtrl.clear();
+              data = null;
+              remoteData = null;
            });
-           await _onUpdateRepoAction(forcePull: true, opIdentical: false, specificRepoPath: firstRepo['repoPath'], specificDocxPath: firstRepo['docxPath']);
         }
       } else {
         setState(() {
@@ -2728,28 +2733,52 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
               rootPath: rootPath,
               fileIconBuilder: (extension) => const Icon(Icons.description, size: 16, color: Colors.blueGrey),
               onFileTap: (file, details) async {
+                final now = DateTime.now();
                 final filePath = file.path;
+                
+                // Double click detection
+                if (_lastTapTime != null && 
+                    now.difference(_lastTapTime!) < const Duration(milliseconds: 500) &&
+                    (p.equals(_lastTappedPath!, filePath) || _lastTappedPath == filePath)) {
+                    _lastTapTime = null; // Reset
+                } else {
+                    _lastTapTime = now;
+                    _lastTappedPath = filePath;
+                    return;
+                }
+
+                print("DEBUG: Double clicked file: $filePath");
                 
                 Map<String, dynamic>? targetRepo;
                 int maxLen = 0;
+                bool exactDocMatch = false;
                 
-                final normalizedFilePath = filePath.replaceAll('\\', '/');
+                print("DEBUG: Checking against ${subRepos.length} repos");
                 
                 for (final repo in subRepos) {
-                  String rPath = repo['repoPath'] as String;
-                  rPath = rPath.replaceAll('\\', '/');
+                  final rPath = repo['repoPath'] as String;
+                  final dPath = repo['docxPath'] as String?;
                   
-                  if (normalizedFilePath.startsWith(rPath)) {
-                     if (rPath.length > maxLen) {
-                       maxLen = rPath.length;
-                       targetRepo = repo;
-                     }
+                  // Priority 1: Exact docx path match
+                  if (dPath != null && (p.equals(dPath, filePath) || dPath == filePath)) {
+                    targetRepo = repo;
+                    exactDocMatch = true;
+                    break; // Found the exact document, stop searching
+                  }
+                  
+                  // Priority 2: File is inside repo path (find longest match)
+                  if (!exactDocMatch) {
+                    if (p.isWithin(rPath, filePath) || p.equals(rPath, filePath)) {
+                       if (rPath.length > maxLen) {
+                         maxLen = rPath.length;
+                         targetRepo = repo;
+                       }
+                    }
                   }
                 }
                 
                 if (targetRepo != null) {
-                   if (targetRepo['repoPath'] == pathCtrl.text) return;
-                   
+                   print("DEBUG: Opening repo: ${targetRepo['repoPath']}");
                    setState(() {
                       pathCtrl.text = targetRepo!['repoPath'];
                    });
@@ -2758,6 +2787,13 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                         specificRepoPath: targetRepo['repoPath'],
                         specificDocxPath: targetRepo['docxPath']);
                    await _load();
+                } else {
+                   print("DEBUG: No matching repo found for $filePath");
+                   if (mounted) {
+                     ScaffoldMessenger.of(context).showSnackBar(
+                       const SnackBar(content: Text('未找到此文件的追踪信息'), duration: Duration(seconds: 1)),
+                     );
+                   }
                 }
               },
             ),
@@ -2912,6 +2948,24 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                                 child: const Text('登出'))
                           ]),
                         ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                             if (isFolderProject && docxPathCtrl.text.isNotEmpty)
+                               Padding(
+                                 padding: const EdgeInsets.only(bottom: 4),
+                                 child: SelectableText('文件夹: ${docxPathCtrl.text}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                               ),
+                             if (isFolderProject && pathCtrl.text.isNotEmpty && docxPathCtrl.text.isNotEmpty)
+                               Padding(
+                                 padding: const EdgeInsets.only(bottom: 4),
+                                 child: SelectableText('当前文件: ${p.relative(pathCtrl.text, from: docxPathCtrl.text)}'),
+                               ),
+                          ],
+                        ),
+                      ),
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 8),
                         child: Row(
