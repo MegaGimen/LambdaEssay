@@ -1763,23 +1763,24 @@ Future<String> _resolveRepoOwner(String repoName, String token) async {
 }
 
 Future<void> pushToRemote(String repoPath, String username, String token,
-    {bool force = false}) async {
+    {bool force = false, String? targetRepoName}) async {
   return _withRepoLock(repoPath, () async {
     final repoName = p.basename(repoPath);
+    final effectiveRemoteRepoName = targetRepoName ?? repoName;
 
     String owner;
     try {
-      owner = await _resolveRepoOwner(repoName, token);
+      owner = await _resolveRepoOwner(effectiveRemoteRepoName, token);
     } catch (_) {
-      await ensureRemoteRepoExists(repoName, token);
+      await ensureRemoteRepoExists(effectiveRemoteRepoName, token);
       owner = username;
     }
 
     final remoteUrl =
-        'http://$username:$token@47.242.109.145:3000/$owner/$repoName.git';
+        'http://$username:$token@47.242.109.145:3000/$owner/$effectiveRemoteRepoName.git';
 
     // Ensure remote is added so fetch --all works
-    final remoteName = repoName.toLowerCase();
+    final remoteName = effectiveRemoteRepoName.toLowerCase();
     await addRemote(repoPath, remoteName, remoteUrl);
 
     final args = ['push'];
@@ -1895,17 +1896,18 @@ Future<void> _checkIfBehind(String repoPath, String remoteUrl) async {
 
 Future<Map<String, dynamic>> pullFromRemote(
     String repoName, String username, String token,
-    {bool force = false}) async {
+    {bool force = false, String? targetRepoName}) async {
   final projDir = _projectDir(repoName);
   return _withRepoLock(projDir, () async {
-    final remoteName = repoName.toLowerCase();
+    final effectiveRemoteRepoName = targetRepoName ?? repoName;
+    final remoteName = effectiveRemoteRepoName.toLowerCase();
     // final projDir = _projectDir(repoName); // Already calculated
     final dir = Directory(projDir);
     final gitDir = Directory(p.join(projDir, '.git'));
 
-    final owner = await _resolveRepoOwner(repoName, token);
+    final owner = await _resolveRepoOwner(effectiveRemoteRepoName, token);
     final remoteUrl =
-        'http://$username:$token@47.242.109.145:3000/$owner/$repoName.git';
+        'http://$username:$token@47.242.109.145:3000/$owner/$effectiveRemoteRepoName.git';
 
     // Map<String, dynamic>? savedTracking;
     // Map<String, dynamic>? savedTracking;

@@ -362,6 +362,18 @@ public:
         }
         IDispatch* pRange = vContent.pdispVal;
 
+        // 1. Turn off TrackRevisions FIRST to ensure Delete works directly
+        VARIANT vFalse;
+        vFalse.vt = VT_BOOL;
+        vFalse.boolVal = VARIANT_FALSE;
+        AutoWrap(DISPATCH_PROPERTYPUT, NULL, pDoc, (LPOLESTR)L"TrackRevisions", 1, vFalse);
+
+        // 2. Accept all prior revisions
+        AutoWrap(DISPATCH_METHOD, NULL, pDoc, (LPOLESTR)L"AcceptAllRevisions", 0);
+
+        // 3. Clear Document (Delete all content)
+        AutoWrap(DISPATCH_METHOD, NULL, pRange, (LPOLESTR)L"Delete", 0);
+
         VARIANT vFileName;
         vFileName.vt = VT_BSTR;
         int wlen = MultiByteToWideChar(CP_ACP, 0, tempFile.c_str(), -1, NULL, 0);
@@ -369,9 +381,12 @@ public:
         MultiByteToWideChar(CP_ACP, 0, tempFile.c_str(), -1, bstrFile, wlen);
         vFileName.bstrVal = bstrFile;
 
-        // Replace content
+        // Replace content (InsertFile)
         hr = AutoWrap(DISPATCH_METHOD, NULL, pRange, (LPOLESTR)L"InsertFile", 1, vFileName);
         
+        // Finalize: Ensure TrackRevisions is still OFF
+        AutoWrap(DISPATCH_PROPERTYPUT, NULL, pDoc, (LPOLESTR)L"TrackRevisions", 1, vFalse);
+
         SysFreeString(bstrFile);
         pRange->Release();
         pDoc->Release();

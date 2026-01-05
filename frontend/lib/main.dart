@@ -584,7 +584,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   final TextEditingController docxPathCtrl = TextEditingController();
   GraphData? data;
   GraphData? remoteData; // New: Remote graph data
-  bool showRemotePreview = true; // New: Toggle for remote preview
+  bool showRemotePreview = false; // New: Toggle for remote preview (Default false)
   Map<String, int>? localRowMapping;
   Map<String, int>? remoteRowMapping;
   int? totalRows;
@@ -999,6 +999,134 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     }
   }
 
+  Future<String?> _showRepoSelectionDialog({
+    bool allowNew = false,
+    String? defaultName,
+  }) async {
+    if (_token == null) return null;
+
+    // Fetch repos
+    List<String> repos = [];
+    try {
+      final resp = await http.post(
+        Uri.parse('http://localhost:8080/remote/list'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'token': _token}),
+      );
+      if (resp.statusCode == 200) {
+        repos = (jsonDecode(resp.body) as List).cast<String>();
+      }
+    } catch (e) {
+      if (!mounted) return null;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('获取仓库列表失败: $e')),
+      );
+      // If fetching fails, we can still allow manual entry if allowNew is true
+      if (!allowNew) return null;
+    }
+
+    if (!mounted) return null;
+
+    String? selectedRepo;
+    bool isCreatingNew = false;
+    final nameCtrl = TextEditingController(text: defaultName);
+
+    // Initial selection logic
+    if (defaultName != null && repos.contains(defaultName)) {
+      selectedRepo = defaultName;
+    } else if (allowNew) {
+      isCreatingNew = true;
+    }
+
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setState) {
+          return AlertDialog(
+            title: Text(allowNew ? '选择或新建远程仓库' : '选择远程仓库'),
+            content: SizedBox(
+              width: 400,
+              height: 400,
+              child: Column(
+                children: [
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: repos.length + (allowNew ? 1 : 0),
+                      itemBuilder: (context, index) {
+                        if (index < repos.length) {
+                          final repo = repos[index];
+                          return RadioListTile<String>(
+                            title: Text(repo),
+                            value: repo,
+                            groupValue: isCreatingNew ? null : selectedRepo,
+                            onChanged: (val) {
+                              setState(() {
+                                isCreatingNew = false;
+                                selectedRepo = val;
+                              });
+                            },
+                          );
+                        } else {
+                          // Create New option
+                          return RadioListTile<bool>(
+                            title: const Text('新建远程仓库',
+                                style: TextStyle(fontWeight: FontWeight.bold)),
+                            value: true,
+                            groupValue: isCreatingNew ? true : null,
+                            onChanged: (val) {
+                              setState(() {
+                                isCreatingNew = true;
+                                selectedRepo = null;
+                              });
+                            },
+                            secondary: const Icon(Icons.add_circle_outline),
+                          );
+                        }
+                      },
+                    ),
+                  ),
+                  if (isCreatingNew) ...[
+                    const Divider(),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8.0),
+                      child: TextField(
+                        controller: nameCtrl,
+                        decoration: const InputDecoration(
+                          labelText: '新仓库名称',
+                          border: OutlineInputBorder(),
+                          hintText: '请输入新仓库名称',
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('取消'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  if (isCreatingNew) {
+                    final text = nameCtrl.text.trim();
+                    if (text.isEmpty) return;
+                    Navigator.pop(ctx, text);
+                  } else {
+                    if (selectedRepo == null) return;
+                    Navigator.pop(ctx, selectedRepo);
+                  }
+                },
+                child: const Text('确定'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
   Future<void> _onPush({bool force = false}) async {
     if (!await _ensureToken()) {
       setState(() => error = '请先登录');
@@ -1009,6 +1137,22 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       setState(() => error = '请输入本地仓库路径');
       return;
     }
+
+    // Determine default name
+    String defaultName = currentProjectName ?? '';
+    if (defaultName.isEmpty) {
+      // split by / or \
+      defaultName = repoPath.split(RegExp(r'[/\\]')).last;
+    }
+
+    // Ask user for target repo
+    final targetRepoName = await _showRepoSelectionDialog(
+      allowNew: true,
+      defaultName: defaultName,
+    );
+
+    if (targetRepoName == null) return; // User cancelled
+
     setState(() {
       loading = true;
       error = null;
@@ -1019,6 +1163,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         'username': _username,
         'token': _token,
         'force': force,
+        'targetRepoName': targetRepoName,
       });
       if (!mounted) return;
       ScaffoldMessenger.of(context)
@@ -1145,92 +1290,68 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             child: const Text('取消'),
           ),
           OutlinedButton(
-            onPressed: () async {
-              if (currentProjectName == null ||
-                  _username == null ||
-                  _token == null) return;
-              final ok = await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (_) => PullPreviewPage(
-                            repoName: currentProjectName!,
-                            username: _username!,
-                            token: _token!,
-                            type: 'fork',
-                          )));
-              if (ok == true && ctx.mounted) Navigator.pop(ctx, 'fork');
-            },
+            onPressed: () => Navigator.pop(ctx, 'preview_fork'),
             child: const Text('分叉 (Fork)'),
           ),
           ElevatedButton(
-            onPressed: () async {
-              if (currentProjectName == null ||
-                  _username == null ||
-                  _token == null) return;
-              final ok = await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (_) => PullPreviewPage(
-                            repoName: currentProjectName!,
-                            username: _username!,
-                            token: _token!,
-                            type: 'rebase',
-                          )));
-              if (ok == true && ctx.mounted) Navigator.pop(ctx, 'rebase');
-            },
+            onPressed: () => Navigator.pop(ctx, 'preview_rebase'),
             child: const Text('在远程提交后附着 (Rebase)'),
           ),
           if (!isPush)
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-              onPressed: () async {
-                if (currentProjectName == null ||
-                    _username == null ||
-                    _token == null) return;
-                final ok = await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) => PullPreviewPage(
-                              repoName: currentProjectName!,
-                              username: _username!,
-                              token: _token!,
-                              type: 'force',
-                            )));
-                if (ok == true && ctx.mounted) Navigator.pop(ctx, 'force');
-              },
+              onPressed: () => Navigator.pop(ctx, 'preview_force'),
               child: const Text('强制覆盖 (Force Overwrite)'),
             ),
           const SizedBox(height: 16),
           TextButton.icon(
             icon: const Icon(Icons.compare_arrows),
             label: const Text('预览冲突差异 (Preview Differences)'),
-            onPressed: () async {
-              if (currentProjectName == null ||
-                  _username == null ||
-                  _token == null) return;
-              // Use 'force' preview type which shows side-by-side comparison
-              // This is effectively what "preview conflict" means (mine vs theirs)
-              await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (_) => PullPreviewPage(
-                            repoName: currentProjectName!,
-                            username: _username!,
-                            token: _token!,
-                            type: 'force',
-                          )));
-            },
+            onPressed: () => Navigator.pop(ctx, 'preview_diff'),
           ),
         ],
       ),
     );
 
-    if (choice == 'rebase') {
-      await _doRebasePull(isPush: isPush);
-    } else if (choice == 'fork') {
-      await _doForkLocal(isPush: isPush);
-    } else if (choice == 'force') {
-      await _doForcePull();
+    if (!mounted) return;
+    if (choice == null || choice == 'cancel') return;
+
+    if (choice.startsWith('preview_')) {
+      if (currentProjectName == null || _username == null || _token == null) {
+        return;
+      }
+
+      String type = 'force'; // default for diff
+      if (choice == 'preview_fork') type = 'fork';
+      if (choice == 'preview_rebase') type = 'rebase';
+      if (choice == 'preview_force') type = 'force';
+
+      final ok = await Navigator.push(
+          context,
+          MaterialPageRoute(
+              builder: (_) => PullPreviewPage(
+                    repoName: currentProjectName!,
+                    username: _username!,
+                    token: _token!,
+                    type: type,
+                  )));
+
+      if (!mounted) return;
+
+      // 如果是预览差异，或者用户在预览页取消了操作，则重新显示对话框
+      if (choice == 'preview_diff' || ok != true) {
+        await _showResolveConflictDialog(isPush: isPush);
+        return;
+      }
+
+      // 如果用户在预览页确认了操作
+      if (choice == 'preview_fork') {
+        await _doForkLocal(isPush: isPush);
+      } else if (choice == 'preview_rebase') {
+        await _doRebasePull(isPush: isPush);
+      } else if (choice == 'preview_force') {
+        await _doForcePull();
+      }
     }
   }
 
@@ -1446,12 +1567,17 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       return;
     }
 
-    // 直接使用当前打开的项目名称，不再让用户选择
     if (currentProjectName == null || currentProjectName!.isEmpty) {
       setState(() => error = '当前未打开任何项目，无法拉取');
       return;
     }
     final repoName = currentProjectName!;
+
+    // Ask user for target repo to pull from
+    final targetRepoName = await _showRepoSelectionDialog(
+      allowNew: false,
+    );
+    if (targetRepoName == null) return;
 
     setState(() {
       loading = true;
@@ -1462,6 +1588,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         'repoName': repoName,
         'username': _username,
         'token': _token,
+        'targetRepoName': targetRepoName,
       });
 
       final status = resp['status'] as String?;
@@ -2604,10 +2731,20 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                             OutlinedButton.icon(
                               onPressed: loading
                                   ? null
-                                  : () {
+                                  : () async {
                                       setState(() {
                                         showRemotePreview = !showRemotePreview;
                                       });
+                                      try {
+                                        final prefs = await SharedPreferences
+                                            .getInstance();
+                                        await prefs.setBool(
+                                            'show_remote_preview',
+                                            showRemotePreview);
+                                      } catch (e) {
+                                        print('Error saving prefs: $e');
+                                      }
+
                                       if (showRemotePreview) {
                                         _load();
                                       } else {
