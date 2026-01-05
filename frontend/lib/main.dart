@@ -1028,7 +1028,15 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     if (!mounted) return null;
 
     String? selectedRepo;
+    bool isCreatingNew = false;
     final nameCtrl = TextEditingController(text: defaultName);
+
+    // Initial selection logic
+    if (defaultName != null && repos.contains(defaultName)) {
+      selectedRepo = defaultName;
+    } else if (allowNew) {
+      isCreatingNew = true;
+    }
 
     return showDialog<String>(
       context: context,
@@ -1038,56 +1046,58 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             title: Text(allowNew ? '选择或新建远程仓库' : '选择远程仓库'),
             content: SizedBox(
               width: 400,
+              height: 400,
               child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if (repos.isNotEmpty) ...[
-                    const Text('远程仓库列表:'),
-                    DropdownButton<String>(
-                      isExpanded: true,
-                      value: selectedRepo,
-                      hint: const Text('请选择...'),
-                      items: repos.map((r) {
-                        return DropdownMenuItem(
-                          value: r,
-                          child: Text(r),
-                        );
-                      }).toList(),
-                      onChanged: (v) {
-                        setState(() {
-                          selectedRepo = v;
-                          if (v != null) {
-                            nameCtrl.text = v;
-                          }
-                        });
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: repos.length + (allowNew ? 1 : 0),
+                      itemBuilder: (context, index) {
+                        if (index < repos.length) {
+                          final repo = repos[index];
+                          return RadioListTile<String>(
+                            title: Text(repo),
+                            value: repo,
+                            groupValue: isCreatingNew ? null : selectedRepo,
+                            onChanged: (val) {
+                              setState(() {
+                                isCreatingNew = false;
+                                selectedRepo = val;
+                              });
+                            },
+                          );
+                        } else {
+                          // Create New option
+                          return RadioListTile<bool>(
+                            title: const Text('新建远程仓库',
+                                style: TextStyle(fontWeight: FontWeight.bold)),
+                            value: true,
+                            groupValue: isCreatingNew ? true : null,
+                            onChanged: (val) {
+                              setState(() {
+                                isCreatingNew = true;
+                                selectedRepo = null;
+                              });
+                            },
+                            secondary: const Icon(Icons.add_circle_outline),
+                          );
+                        }
                       },
                     ),
-                    const SizedBox(height: 16),
-                  ],
-                  if (allowNew) ...[
-                    const Text('仓库名称 (新建或覆盖):'),
-                    TextField(
-                      controller: nameCtrl,
-                      decoration: const InputDecoration(
-                        hintText: '输入仓库名称',
+                  ),
+                  if (isCreatingNew) ...[
+                    const Divider(),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8.0),
+                      child: TextField(
+                        controller: nameCtrl,
+                        decoration: const InputDecoration(
+                          labelText: '新仓库名称',
+                          border: OutlineInputBorder(),
+                          hintText: '请输入新仓库名称',
+                        ),
                       ),
-                      onChanged: (v) {
-                        setState(() {
-                          // If user types, clear dropdown selection if it doesn't match?
-                          // Or just let text field override.
-                          // We'll use text field value as final result.
-                          // But visually maybe keep dropdown if it matches?
-                          // For simplicity, just update text.
-                        });
-                      },
                     ),
-                  ] else ...[
-                     // If not allowNew, maybe we still want to show the selected name?
-                     // But we forced selection from dropdown?
-                     // Or should we allow selecting "Other" (manual input)?
-                     // User said "allow user to select one to pull".
-                     // So just dropdown is enough for pull.
                   ],
                 ],
               ),
@@ -1099,9 +1109,14 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
               ),
               ElevatedButton(
                 onPressed: () {
-                  final text = nameCtrl.text.trim();
-                  if (text.isEmpty) return;
-                  Navigator.pop(ctx, text);
+                  if (isCreatingNew) {
+                    final text = nameCtrl.text.trim();
+                    if (text.isEmpty) return;
+                    Navigator.pop(ctx, text);
+                  } else {
+                    if (selectedRepo == null) return;
+                    Navigator.pop(ctx, selectedRepo);
+                  }
                 },
                 child: const Text('确定'),
               ),
