@@ -9,9 +9,23 @@ import 'models.dart';
 bool _debugMode = false;
 void setDebugMode(bool value) => _debugMode = value;
 final scriptDir = p.dirname(Platform.script.toFilePath());
-String get _psScriptPath => _debugMode
-    ? r'c:\Users\m1369\Documents\gitbin\frontend\lib\doccmp.ps1'
-    : p.join(scriptDir, 'doccmp.ps1');
+List<String> workingIds = [];
+String get _psScriptPath {
+  final candidates = <String>[
+    if (_debugMode) r'c:\Users\m1369\Documents\gitbin\frontend\lib\doccmp.ps1',
+    p.join(scriptDir, 'doccmp.ps1'),
+    p.normalize(p.join(scriptDir, '..', '..', 'frontend', 'bin', 'doccmp.ps1')),
+    p.normalize(p.join(scriptDir, '..', '..', 'frontend', 'lib', 'doccmp.ps1')),
+    p.join(Directory.current.path, 'frontend', 'bin', 'doccmp.ps1'),
+    p.join(Directory.current.path, 'frontend', 'lib', 'doccmp.ps1'),
+  ];
+
+  for (final candidate in candidates) {
+    if (candidate.trim().isEmpty) continue;
+    if (File(candidate).existsSync()) return candidate;
+  }
+  return candidates.first;
+}
 
 class PullPreviewResult {
   final GraphResponse current;
@@ -58,6 +72,33 @@ class Mutex {
   }
 }
 
+class Semaphore {
+  final int max;
+  int _current = 0;
+  final List<Completer<void>> _waiters = [];
+
+  Semaphore(this.max);
+
+  Future<void> acquire() async {
+    if (_current < max) {
+      _current++;
+      return;
+    }
+    final completer = Completer<void>();
+    _waiters.add(completer);
+    await completer.future;
+  }
+
+  void release() {
+    if (_waiters.isNotEmpty) {
+      _waiters.removeAt(0).complete();
+    } else {
+      _current--;
+    }
+  }
+}
+
+final _previewSemaphore = Semaphore(20);
 final Map<String, Mutex> _repoLocks = {};
 
 Future<T> _withRepoLock<T>(String repoPath, Future<T> Function() block) async {
@@ -618,6 +659,13 @@ Future<void> commitChanges(
     final safeAuthor = author.trim().isEmpty ? 'Unknown' : author.trim();
     final authorArg = '$safeAuthor <$safeAuthor@gitdocx.local>';
     await _runGit(['commit', '--author=$authorArg', '-m', message], repoPath);
+
+    final headLines = await _runGit(['rev-parse', 'HEAD'], repoPath);
+    final head =
+        headLines.isNotEmpty ? headLines.first.trim().toLowerCase() : '';
+    if (head.isNotEmpty) {
+      unawaited(ensureCommitPreviewAssets(repoPath, head));
+    }
     clearCache();
   });
 }
@@ -696,21 +744,43 @@ Future<Uint8List> compareWorking(String repoPath) async {
 
       final ps1Path = _psScriptPath;
 
-      final res = await Process.run('powershell', [
-        '-ExecutionPolicy',
-        'Bypass',
-        '-File',
-        ps1Path,
-        '-OriginalPath',
-        p1,
-        '-RevisedPath',
-        p2,
-        '-PdfPath',
-        pdf
-      ]);
+      final res = await Process.run(
+          'powershell',
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-ExecutionPolicy',
+            'Bypass',
+            '-File',
+            ps1Path,
+            '-OriginalPath',
+            p1,
+            '-RevisedPath',
+            p2,
+            '-PdfPath',
+            pdf
+          ],
+          workingDirectory: p.dirname(ps1Path));
 
-      if (res.exitCode != 0 || !File(pdf).existsSync()) {
-        throw Exception('Compare failed: ${res.stdout}\n${res.stderr}');
+      final pdfFile = File(pdf);
+      if (!pdfFile.existsSync()) {
+        final until = DateTime.now().add(const Duration(seconds: 2));
+        while (DateTime.now().isBefore(until)) {
+          await Future.delayed(const Duration(milliseconds: 100));
+          if (pdfFile.existsSync()) break;
+        }
+      }
+
+      final pdfExists = pdfFile.existsSync();
+      final pdfLen = pdfExists ? pdfFile.lengthSync() : 0;
+      if (!pdfExists || pdfLen <= 0) {
+        throw Exception(
+            'Compare failed (exitCode=${res.exitCode}, pdfExists=$pdfExists, pdfLen=$pdfLen, cwd=${Directory.current.path}, ps1=$ps1Path): ${res.stdout}\n${res.stderr}');
+      }
+
+      if (res.exitCode != 0) {
+        print(
+            '[doccmp] warning: powershell exitCode=${res.exitCode} but pdf exists ($pdfLen bytes).');
       }
 
       return await File(pdf).readAsBytes();
@@ -889,6 +959,201 @@ String _baseDir() {
   return p.join(Directory.systemTemp.path, 'gitdocx');
 }
 
+Directory _globalPreviewCacheDir() {
+  final app = Platform.environment['APPDATA'];
+  if (app != null && app.isNotEmpty) {
+    return Directory(p.join(app, 'cache'));
+  }
+  return Directory(p.join(_baseDir(), 'cache'));
+}
+
+String _globalCachedPdfPath(String commitId) {
+  return p.join(_globalPreviewCacheDir().path, '$commitId.pdf');
+}
+
+String _repoRootDir() {
+  final scriptPath = p.fromUri(Platform.script);
+  return p.dirname(p.dirname(p.dirname(scriptPath)));
+}
+
+String _docx2pdfPs1Path() {
+  return p.join(_repoRootDir(), 'frontend', 'lib', 'docx2pdf.ps1');
+}
+
+Future<void> _docxToPdf(
+    String docxPath, String pdfPath, String commitId) async {
+  final psScript = _docx2pdfPs1Path();
+  if (!File(psScript).existsSync()) {
+    throw Exception('docx2pdf.ps1 not found at $psScript');
+  }
+  final res = await Process.run('powershell', [
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    psScript,
+    '-InputPath',
+    docxPath,
+    '-OutputPath',
+    pdfPath,
+  ]);
+  if (res.exitCode != 0 || !File(pdfPath).existsSync()) {
+    throw Exception('docx->pdf failed: ${res.stderr}');
+  }
+}
+
+String _doccmpPs1Path() {
+  return p.join(_repoRootDir(), 'frontend', 'lib', 'doccmp.ps1');
+}
+
+Future<void> _doccmpToPdf(
+    String oldDocx, String newDocx, String pdfPath) async {
+  final psScript = _doccmpPs1Path();
+  if (!File(psScript).existsSync()) {
+    throw Exception('doccmp.ps1 not found at $psScript');
+  }
+  final res = await Process.run('powershell', [
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    psScript,
+    '-OriginalPath',
+    oldDocx,
+    '-RevisedPath',
+    newDocx,
+    '-PdfPath',
+    pdfPath,
+  ]);
+  if (res.exitCode != 0 || !File(pdfPath).existsSync()) {
+    throw Exception('doccmp failed: ${res.stderr}');
+  }
+}
+
+Future<void> _generatePreviewInternal(
+  String repoPath,
+  String commitId,
+) async {
+  final cacheDir = _globalPreviewCacheDir();
+  if (!cacheDir.existsSync()) {
+    cacheDir.createSync(recursive: true);
+  }
+
+  final pdfPath = _globalCachedPdfPath(commitId);
+  final pdfFile = File(pdfPath);
+  if (pdfFile.existsSync()) {
+    return;
+  }
+
+  // Determine parent commit
+  String parentId = '';
+  try {
+    // Only lock for git command
+    await _withRepoLock(repoPath, () async {
+       final parents = await _runGit(['rev-parse', '$commitId^'], repoPath);
+       if (parents.isNotEmpty && parents.first.trim().isNotEmpty) {
+         parentId = parents.first.trim();
+       }
+    });
+  } catch (_) {
+    // Has no parent (initial commit) or error
+  }
+
+  final tmpDir = await Directory.systemTemp.createTemp('gitdocx_prev_diff_');
+  try {
+    final currentDocx = p.join(tmpDir.path, '$commitId.docx');
+    
+    // 1. Export current docx
+    await _withRepoLock(repoPath, () async {
+       await _gitArchiveToDocx(repoPath, commitId, currentDocx);
+    });
+    
+    if (parentId.isEmpty) {
+       // Initial commit: just convert to PDF directly using docx2pdf logic (or treat as diff against empty?)
+       // For consistency with user request "diff", if no parent, maybe just show the content.
+       // But user asked to use doccmp. Let's use docx2pdf for single file if no parent, 
+       // or we can simulate empty doc.
+       // Let's stick to simple conversion for initial commit to avoid complexity.
+       if (!pdfFile.existsSync()) {
+          final tmpPdfPath = p.join(tmpDir.path, '$commitId.pdf');
+          await _docxToPdf(currentDocx, tmpPdfPath, commitId);
+          await File(tmpPdfPath).copy(pdfPath);
+       }
+    } else {
+       // Has parent
+       final parentDocx = p.join(tmpDir.path, '$parentId.docx');
+       
+       // 2. Export parent docx
+       await _withRepoLock(repoPath, () async {
+          await _gitArchiveToDocx(repoPath, parentId, parentDocx);
+       });
+
+       // 3. Compare and generate PDF
+       if (!pdfFile.existsSync()) {
+          final tmpPdfPath = p.join(tmpDir.path, '$commitId.pdf');
+          await _doccmpToPdf(parentDocx, currentDocx, tmpPdfPath);
+          await File(tmpPdfPath).copy(pdfPath);
+       }
+    }
+  } finally {
+    try {
+      if (tmpDir.existsSync()) {
+        tmpDir.deleteSync(recursive: true);
+      }
+    } catch (_) {}
+  }
+}
+
+Future<Map<String, bool>> ensureCommitPreviewAssets(
+  String repoPath,
+  String commitId,
+) async {
+  print(workingIds);
+  
+  if (workingIds.contains(commitId)) {
+     return {
+       'pdf': File(_globalCachedPdfPath(commitId)).existsSync(),
+       'thumb': false,
+     };
+  }
+
+  // Fast check
+  if (File(_globalCachedPdfPath(commitId)).existsSync()) {
+     return {'pdf': true, 'thumb': false};
+  }
+
+  // Mark as working immediately to block other requests
+  workingIds.add(commitId);
+
+  try {
+     await _previewSemaphore.acquire();
+     try {
+        // Double check existence (optimization)
+        if (File(_globalCachedPdfPath(commitId)).existsSync()) {
+           return {'pdf': true, 'thumb': false};
+        }
+        
+        try {
+          await _generatePreviewInternal(repoPath, commitId);
+        } catch (e) {
+          print('Preview generation failed for $commitId: $e');
+        }
+        
+        return {
+          'pdf': File(_globalCachedPdfPath(commitId)).existsSync(),
+          'thumb': false,
+        };
+     } finally {
+        _previewSemaphore.release();
+     }
+  } finally {
+     // Remove from workingIds only after we are completely done (or failed)
+     workingIds.remove(commitId);
+  }
+}
+
 File _trackingFile(String name) {
   final dir = _projectDir(name);
   return File(p.join(dir, 'tracking.json'));
@@ -927,8 +1192,6 @@ String _getPreviewDir(String name) {
 // Deprecated: _findRepoDocx (we use kContentDirName now)
 // We still need to find external file/dir sometimes
 
-final Map<String, StreamSubscription<FileSystemEvent>> _watchers = {};
-final Map<String, Timer> _debounceTimers = {};
 final Map<String, bool> _isUpdating = {};
 
 Future<Uint8List> compareCommits(
@@ -953,30 +1216,50 @@ Future<Uint8List> compareCommits(
 
       await _gitArchiveToDocx(repoPath, commit1, p1);
       await _gitArchiveToDocx(repoPath, commit2, p2);
-
-      final scriptPath = p.fromUri(Platform.script);
-      final repoRoot = p.dirname(p.dirname(p.dirname(scriptPath)));
       final ps1Path = _psScriptPath;
 
       if (!File(ps1Path).existsSync()) {
-        throw Exception('doccmp.ps1 not found at $ps1Path and _debugMode=$_debugMode');
+        throw Exception(
+            'doccmp.ps1 not found at $ps1Path and _debugMode=$_debugMode');
       }
 
-      final res = await Process.run('powershell', [
-        '-ExecutionPolicy',
-        'Bypass',
-        '-File',
-        ps1Path,
-        '-OriginalPath',
-        p1,
-        '-RevisedPath',
-        p2,
-        '-PdfPath',
-        pdf
-      ]);
+      final res = await Process.run(
+          'powershell',
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-ExecutionPolicy',
+            'Bypass',
+            '-File',
+            ps1Path,
+            '-OriginalPath',
+            p1,
+            '-RevisedPath',
+            p2,
+            '-PdfPath',
+            pdf
+          ],
+          workingDirectory: p.dirname(ps1Path));
 
-      if (res.exitCode != 0 || !File(pdf).existsSync()) {
-        throw Exception('Compare failed: ${res.stdout}\n${res.stderr}');
+      final pdfFile = File(pdf);
+      if (!pdfFile.existsSync()) {
+        final until = DateTime.now().add(const Duration(seconds: 2));
+        while (DateTime.now().isBefore(until)) {
+          await Future.delayed(const Duration(milliseconds: 100));
+          if (pdfFile.existsSync()) break;
+        }
+      }
+
+      final pdfExists = pdfFile.existsSync();
+      final pdfLen = pdfExists ? pdfFile.lengthSync() : 0;
+      if (!pdfExists || pdfLen <= 0) {
+        throw Exception(
+            'Compare failed (exitCode=${res.exitCode}, pdfExists=$pdfExists, pdfLen=$pdfLen, cwd=${Directory.current.path}, ps1=$ps1Path): ${res.stdout}\n${res.stderr}');
+      }
+
+      if (res.exitCode != 0) {
+        print(
+            '[doccmp] warning: powershell exitCode=${res.exitCode} but pdf exists ($pdfLen bytes).');
       }
 
       await File(pdf).copy(cachePath);
@@ -1339,59 +1622,13 @@ void main() async {
 }
 
 Future<Uint8List> previewVersion(String repoPath, String commitId) async {
-  return _withRepoLock(repoPath, () async {
-    final cacheDir = Directory(p.join(_baseDir(), 'cache'));
-    if (!cacheDir.existsSync()) {
-      cacheDir.createSync(recursive: true);
-    }
-    final cacheName = '$commitId.pdf';
-    final cachePath = p.join(cacheDir.path, cacheName);
-    final cacheFile = File(cachePath);
-    if (cacheFile.existsSync()) {
-      return await cacheFile.readAsBytes();
-    }
-
-    final tmpDir = await Directory.systemTemp.createTemp('gitdocx_prev_');
-    try {
-      final p1 = p.join(tmpDir.path, 'preview.docx');
-      final pdf = p.join(tmpDir.path, 'preview.pdf');
-
-      await _gitArchiveToDocx(repoPath, commitId, p1);
-
-      final scriptPath = p.fromUri(Platform.script);
-      final repoRoot = p.dirname(p.dirname(p.dirname(scriptPath)));
-      final ps1Path = p.join(repoRoot, 'frontend', 'lib', 'docx2pdf.ps1');
-
-      if (!File(ps1Path).existsSync()) {
-        throw Exception('docx2pdf.ps1 not found at $ps1Path');
-      }
-
-      final res = await Process.run('powershell', [
-        '-ExecutionPolicy',
-        'Bypass',
-        '-File',
-        ps1Path,
-        '-InputPath',
-        p1,
-        '-OutputPath',
-        pdf
-      ]);
-
-      if (res.exitCode != 0 || !File(pdf).existsSync()) {
-        throw Exception(
-            'Preview generation failed: ${res.stdout}\n${res.stderr}');
-      }
-
-      await File(pdf).copy(cachePath);
-      return await File(pdf).readAsBytes();
-    } finally {
-      try {
-        if (tmpDir.existsSync()) {
-          tmpDir.deleteSync(recursive: true);
-        }
-      } catch (_) {}
-    }
-  });
+  await ensureCommitPreviewAssets(repoPath, commitId);
+  final pdfPath = _globalCachedPdfPath(commitId);
+  final f = File(pdfPath);
+  if (f.existsSync()) {
+    return await f.readAsBytes();
+  }
+  throw Exception('Preview generation failed');
 }
 
 Future<void> resetBranch(String projectName, String commitId) async {
@@ -1526,23 +1763,24 @@ Future<String> _resolveRepoOwner(String repoName, String token) async {
 }
 
 Future<void> pushToRemote(String repoPath, String username, String token,
-    {bool force = false}) async {
+    {bool force = false, String? targetRepoName}) async {
   return _withRepoLock(repoPath, () async {
     final repoName = p.basename(repoPath);
+    final effectiveRemoteRepoName = targetRepoName ?? repoName;
 
     String owner;
     try {
-      owner = await _resolveRepoOwner(repoName, token);
+      owner = await _resolveRepoOwner(effectiveRemoteRepoName, token);
     } catch (_) {
-      await ensureRemoteRepoExists(repoName, token);
+      await ensureRemoteRepoExists(effectiveRemoteRepoName, token);
       owner = username;
     }
 
     final remoteUrl =
-        'http://$username:$token@47.242.109.145:3000/$owner/$repoName.git';
+        'http://$username:$token@47.242.109.145:3000/$owner/$effectiveRemoteRepoName.git';
 
     // Ensure remote is added so fetch --all works
-    final remoteName = repoName.toLowerCase();
+    final remoteName = effectiveRemoteRepoName.toLowerCase();
     await addRemote(repoPath, remoteName, remoteUrl);
 
     final args = ['push'];
@@ -1658,17 +1896,18 @@ Future<void> _checkIfBehind(String repoPath, String remoteUrl) async {
 
 Future<Map<String, dynamic>> pullFromRemote(
     String repoName, String username, String token,
-    {bool force = false}) async {
+    {bool force = false, String? targetRepoName}) async {
   final projDir = _projectDir(repoName);
   return _withRepoLock(projDir, () async {
-    final remoteName = repoName.toLowerCase();
+    final effectiveRemoteRepoName = targetRepoName ?? repoName;
+    final remoteName = effectiveRemoteRepoName.toLowerCase();
     // final projDir = _projectDir(repoName); // Already calculated
     final dir = Directory(projDir);
     final gitDir = Directory(p.join(projDir, '.git'));
 
-    final owner = await _resolveRepoOwner(repoName, token);
+    final owner = await _resolveRepoOwner(effectiveRemoteRepoName, token);
     final remoteUrl =
-        'http://$username:$token@47.242.109.145:3000/$owner/$repoName.git';
+        'http://$username:$token@47.242.109.145:3000/$owner/$effectiveRemoteRepoName.git';
 
     // Map<String, dynamic>? savedTracking;
     // Map<String, dynamic>? savedTracking;
