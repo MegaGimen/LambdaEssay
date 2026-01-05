@@ -133,13 +133,13 @@ class EditingFieldStyle {
 
 // --- Logic Classes ---
 
-late bool isParentOpen;
-String? currentDir;
-
 /// Manages the state of the directory tree, handling folder expansion and file operations.
 class DirectoryTreeStateNotifier extends ChangeNotifier {
   ///// Tracks open/close state of folders
   final Map<String, bool> _folderStates = {};
+
+  bool isParentOpen = true;
+  String? currentDir;
 
   /// Path of the new entry being created
   String? newEntryPath;
@@ -291,12 +291,6 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
           },
           onTap: () {
             stateNotifier.toggleFolder(directory.path, widget.rootPath);
-            currentDir = directory.path;
-            if (directory.path == widget.rootPath) {
-              setState(() {
-                isParentOpen = !isParentOpen;
-              });
-            }
           },
           child: MouseRegion(
             cursor: SystemMouseCursors.click,
@@ -311,7 +305,7 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
                                   FolderStyle().folderOpenedicon
                             : widget.folderStyle?.folderClosedicon ??
                                   FolderStyle().folderClosedicon)
-                      : isParentOpen
+                      : stateNotifier.isParentOpen
                       ? widget.folderStyle?.rootFolderOpenedIcon ??
                             FolderStyle().rootFolderOpenedIcon
                       : widget.folderStyle?.rootFolderClosedIcon ??
@@ -335,7 +329,7 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
                   ),
                   if (widget.enableCreateFileOption &&
                       stateNotifier.isUnfolded(directory.path, widget.rootPath) &&
-                      currentDir == directory.path)
+                      stateNotifier.currentDir == directory.path)
                     IconButton(
                       onPressed: () =>
                           stateNotifier.startCreating(directory.path, false),
@@ -345,7 +339,7 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
                     ),
                   if (widget.enableCreateFolderOption &&
                       stateNotifier.isUnfolded(directory.path, widget.rootPath) &&
-                      currentDir == directory.path)
+                      stateNotifier.currentDir == directory.path)
                     IconButton(
                       onPressed: () =>
                           stateNotifier.startCreating(directory.path, true),
@@ -355,7 +349,7 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
                     ),
                   if (widget.enableDeleteFolderOption &&
                       stateNotifier.isUnfolded(directory.path, widget.rootPath) &&
-                      currentDir == directory.path)
+                      stateNotifier.currentDir == directory.path)
                     IconButton(
                       onPressed: () {
                         Directory(directory.path).delete(recursive: true);
