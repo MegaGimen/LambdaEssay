@@ -180,12 +180,9 @@ HRESULT AutoWrap(int autoType, VARIANT *pvResult, IDispatch *pDisp, LPOLESTR ptN
 // --- Word Automation ---
 class WordAutomation {
     IDispatch* pWordApp = NULL;
-    bool lastSavedState = true; 
     bool initialized = false;
 
 public:
-    std::function<void(string)> onSaveCallback;
-
     WordAutomation() {
         CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
     }
@@ -211,7 +208,6 @@ public:
 
         Log("Connected to Word Application");
         initialized = true;
-        CheckSavedState(); 
         return true;
     }
 
@@ -230,42 +226,6 @@ public:
         return true;
     }
 
-    void CheckSavedState() {
-        if (!IsConnected()) return;
-
-        VARIANT result;
-        VariantInit(&result);
-        HRESULT hr = AutoWrap(DISPATCH_PROPERTYGET, &result, pWordApp, (LPOLESTR)L"ActiveDocument", 0);
-        if (FAILED(hr) || result.vt != VT_DISPATCH) return;
-        IDispatch* pDoc = result.pdispVal;
-
-        VARIANT vSaved;
-        VariantInit(&vSaved);
-        hr = AutoWrap(DISPATCH_PROPERTYGET, &vSaved, pDoc, (LPOLESTR)L"Saved", 0);
-        
-        if (SUCCEEDED(hr)) {
-            bool currentSaved = (vSaved.boolVal != 0); 
-            if (lastSavedState == false && currentSaved == true) {
-                Log("Detected Save Event!");
-                OnSaved(pDoc);
-            }
-            lastSavedState = currentSaved;
-        }
-        pDoc->Release();
-    }
-
-    void OnSaved(IDispatch* pDoc) {
-        if (onSaveCallback) {
-             VARIANT vPath;
-             VariantInit(&vPath); 
-             HRESULT hr = AutoWrap(DISPATCH_PROPERTYGET, &vPath, pDoc, (LPOLESTR)L"FullName", 0);
-             if (SUCCEEDED(hr) && vPath.vt == VT_BSTR) {
-                 char buf[2048];
-                 WideCharToMultiByte(CP_UTF8, 0, vPath.bstrVal, -1, buf, 2048, NULL, NULL);
-                 onSaveCallback(string(buf));
-             }
-        }
-    }
 
     bool CheckPath(const string& targetPath) {
         if (!IsConnected()) return false;
@@ -544,17 +504,9 @@ int main() {
         }
     });
 
-    word.onSaveCallback = [&](string path) {
-        string json = "{\"type\":\"event\",\"event\":\"saved\",\"path\":\"" + escapeJson(path) + "\"}";
-        ws.Send(json);
-        Log("Sent Saved Event");
-    };
-
     while (running) {
         if (!word.IsConnected()) {
             word.Connect();
-        } else {
-            word.CheckSavedState();
         }
 
         {
