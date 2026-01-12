@@ -24,6 +24,7 @@ import 'pull_preview.dart';
 import 'graph_view.dart';
 import 'movable_panel.dart';
 import 'version.dart';
+import 'backend_manager.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -257,7 +258,8 @@ class _BootstrapAppState extends State<BootstrapApp> {
         }
 
         if (await File(serverPath).exists()) {
-          await Process.start(serverPath, [], mode: ProcessStartMode.detached);
+          // await Process.start(serverPath, [], mode: ProcessStartMode.detached);
+          await BackendManager().startProcess('Server', serverPath, []);
         } else {
           await _showErrorDialog(serverPath);
           return; // 如果仍然失败，终止后续操作
@@ -272,7 +274,8 @@ class _BootstrapAppState extends State<BootstrapApp> {
         }
 
         if (await File(comPath).exists()) {
-          await Process.start(comPath, [], mode: ProcessStartMode.detached);
+          // await Process.start(comPath, [], mode: ProcessStartMode.detached);
+          await BackendManager().startProcess('COM', comPath, []);
         } else {
           await _showErrorDialog(comPath);
           return;
@@ -338,6 +341,7 @@ class _BootstrapAppState extends State<BootstrapApp> {
       }
 
       // 尝试杀死进程
+      await BackendManager().stopAll();
       final processes = [
         'server.exe',
         'warden.exe',
@@ -601,6 +605,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   Set<String> _fetchingPaths = {};
   Map<String, bool> _repoUpdates = {};
   String? _selectedFilePath;
+  bool _comConnected = false;
  // path -> true if updated
   
   // For double-click detection
@@ -664,6 +669,10 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           if (data['type'] == 'loading_status') {
             setState(() {
               loading = data['loading'] == true;
+            });
+          } else if (data['type'] == 'com_status') {
+            setState(() {
+              _comConnected = data['status'] == 'connected';
             });
           } else if (data['type'] == 'repo_updated') {
             print("Received repo update notification");
@@ -2935,7 +2944,37 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       child: Stack(
         children: [
           Scaffold(
-            appBar: AppBar(title: const Text('LambdaEssay')),
+            appBar: AppBar(
+              title: const Text('LambdaEssay'),
+              actions: [
+                Row(
+                  children: [
+                    const Text('Server: ', style: TextStyle(fontSize: 12)),
+                    Icon(
+                      _channel != null ? Icons.circle : Icons.error,
+                      color: _channel != null ? Colors.green : Colors.red,
+                      size: 12,
+                    ),
+                    const SizedBox(width: 12),
+                    const Text('COM: ', style: TextStyle(fontSize: 12)),
+                    Icon(
+                      _comConnected ? Icons.circle : Icons.error,
+                      color: _comConnected ? Colors.green : Colors.red,
+                      size: 12,
+                    ),
+                  ],
+                ),
+                if (!kDebugMode) ...[
+                  const SizedBox(width: 12),
+                  IconButton(
+                    icon: const Icon(Icons.download),
+                    tooltip: '导出后端日志',
+                    onPressed: () => BackendManager().exportLogs(),
+                  ),
+                ],
+                const SizedBox(width: 16),
+              ],
+            ),
             body: Row(
               children: [
                 if (isFolderProject)

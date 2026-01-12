@@ -217,11 +217,29 @@ Future<void> main(List<String> args) async {
         if (_activePluginSockets.isEmpty) {
           pluginSender = null;
         }
+        // Notify frontend
+        for (final socket in _activeFrontendSockets) {
+           try {
+             socket.sink.add(jsonEncode({
+               'type': 'com_status',
+               'status': 'disconnected'
+             }));
+           } catch (_) {}
+        }
       }, onError: (e) {
         print('WebSocket error: $e');
         _activePluginSockets.remove(channel);
         if (_activePluginSockets.isEmpty) {
           pluginSender = null;
+        }
+        // Notify frontend
+        for (final socket in _activeFrontendSockets) {
+           try {
+             socket.sink.add(jsonEncode({
+               'type': 'com_status',
+               'status': 'disconnected'
+             }));
+           } catch (_) {}
         }
       });
     })(req);
