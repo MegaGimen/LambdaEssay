@@ -1446,7 +1446,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     final nameCtrl = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (ctx) => AlertDialog(
         title: const Text('分叉分支'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1460,11 +1460,11 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => Navigator.pop(ctx, false),
             child: const Text('取消'),
           ),
           ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(ctx, true),
             child: const Text('确定'),
           ),
         ],
@@ -1475,6 +1475,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     final newBranch = nameCtrl.text.trim();
     if (newBranch.isEmpty) return;
 
+    if (!mounted) return;
     setState(() => loading = true);
     try {
       await _postJson('http://localhost:8080/fork_local', {
