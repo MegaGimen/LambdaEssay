@@ -3823,6 +3823,10 @@ class _GraphViewState extends State<_GraphView>
     final authorCtrl = TextEditingController();
     final msgCtrl = TextEditingController();
 
+    // Load preference
+    final prefs = await SharedPreferences.getInstance();
+    bool autoAccept = prefs.getBool('auto_accept_revisions') ?? false;
+
     // Dialog state
     bool isPreviewing = false;
 
@@ -3850,6 +3854,16 @@ class _GraphViewState extends State<_GraphView>
                     ),
                     maxLines: 3,
                     enabled: !isPreviewing,
+                  ),
+                  const SizedBox(height: 8),
+                  SwitchListTile(
+                    title: const Text('自动同意所有批注'),
+                    value: autoAccept,
+                    onChanged: isPreviewing
+                        ? null
+                        : (v) {
+                            setState(() => autoAccept = v);
+                          },
                   ),
                 ],
               ),
@@ -3919,8 +3933,24 @@ class _GraphViewState extends State<_GraphView>
       return;
     }
 
+    // Save preference
+    await prefs.setBool('auto_accept_revisions', autoAccept);
+
     widget.onLoading?.call(true);
     try {
+      if (autoAccept) {
+        final saveResp = await http.post(
+          Uri.parse('http://localhost:8080/api/save'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'options': {'acceptRevisions': true}
+          }),
+        );
+        if (saveResp.statusCode != 200) {
+          throw Exception('自动同意批注失败: ${saveResp.body}');
+        }
+      }
+
       final resp = await http.post(
         Uri.parse('http://localhost:8080/commit'),
         headers: {'Content-Type': 'application/json'},

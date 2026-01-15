@@ -263,6 +263,19 @@ public:
         return true;
     }
 
+    bool AcceptAllRevisions() {
+        if (!IsConnected()) return false;
+        VARIANT result;
+        VariantInit(&result);
+        HRESULT hr = AutoWrap(DISPATCH_PROPERTYGET, &result, pWordApp, (LPOLESTR)L"ActiveDocument", 0);
+        if (FAILED(hr) || result.vt != VT_DISPATCH) return false;
+        IDispatch* pDoc = result.pdispVal;
+
+        hr = AutoWrap(DISPATCH_METHOD, NULL, pDoc, (LPOLESTR)L"AcceptAllRevisions", 0);
+        pDoc->Release();
+        return SUCCEEDED(hr);
+    }
+
     bool SaveDocument() {
         if (!IsConnected()) return false;
         VARIANT result;
@@ -447,6 +460,7 @@ struct Task {
     string content;
     string type;
     string checkPath;
+    bool acceptRevisions;
 };
 
 queue<Task> taskQueue;
@@ -481,6 +495,7 @@ int main() {
                     string content = "";
                     string type = "";
                     string checkPath = "";
+                    bool acceptRevisions = false;
 
                     if (action == "replace") {
                         JsonValue payload = data.o_val["payload"];
@@ -493,11 +508,18 @@ int main() {
                                 checkPath = options.o_val["checkPath"].s_val;
                             }
                         }
+                    } else if (action == "save") {
+                         if (data.o_val.count("options")) {
+                            JsonValue options = data.o_val["options"];
+                            if (options.type == J_OBJECT && options.o_val.count("acceptRevisions")) {
+                                acceptRevisions = options.o_val["acceptRevisions"].b_val;
+                            }
+                         }
                     }
 
                     if (!action.empty()) {
                         lock_guard<mutex> lock(taskMutex);
-                        taskQueue.push({action, id, content, type, checkPath});
+                        taskQueue.push({action, id, content, type, checkPath, acceptRevisions});
                     }
                 }
             }

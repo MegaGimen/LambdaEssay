@@ -280,7 +280,23 @@ Future<void> main(List<String> args) async {
           body: jsonEncode({'error': 'Plugin not connected'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
-    final success = await pluginSender!({'action': 'save'});
+
+    Map<String, dynamic> options = {};
+    try {
+      final body = await req.readAsString();
+      if (body.isNotEmpty) {
+        final data = jsonDecode(body) as Map<String, dynamic>;
+        if (data['options'] != null) {
+           options = data['options'] as Map<String, dynamic>;
+        }
+      }
+    } catch (_) {}
+
+    final success = await pluginSender!({
+      'action': 'save',
+      'options': options
+    });
+
     if (success) {
       return _cors(Response.ok(jsonEncode({'message': 'Save command sent'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
