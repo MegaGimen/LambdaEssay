@@ -1178,6 +1178,21 @@ Future<void> main(List<String> args) async {
 
         final repoNames = uniqueRepos.keys.toList();
 
+        // Check folder status for each repo
+        final results = await Future.wait(repoNames.map((name) async {
+           final r = uniqueRepos[name]!;
+           final owner = r['owner']['login'];
+           final checkUrl = '$giteaUrl/api/v1/repos/$owner/$name/contents/folder_meta.json';
+           bool isFolder = false;
+           try {
+             final checkResp = await http.get(Uri.parse(checkUrl), headers: headers);
+             if (checkResp.statusCode == 200) {
+               isFolder = true;
+             }
+           } catch (_) {}
+           return {'name': name, 'isFolder': isFolder};
+        }));
+
         if (repoPath != null && repoPath.isNotEmpty) {
           for (final r in uniqueRepos.values) {
             final name = (r['name'] as String).toLowerCase();
@@ -1188,7 +1203,7 @@ Future<void> main(List<String> args) async {
           }
         }
 
-        return _cors(Response.ok(jsonEncode(repoNames), headers: {
+        return _cors(Response.ok(jsonEncode(results), headers: {
           'Content-Type': 'application/json; charset=utf-8',
         }));
       } else if (respOwned.statusCode != 200) {

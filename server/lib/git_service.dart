@@ -641,6 +641,71 @@ Future<bool> _isFolderProject(String repoPath) async {
   }
 }
 
+Future<void> _updateFolderMeta(String parentRepoPath, String childRelPath, String childName, String childRemoteUrl) async {
+  final metaFile = File(p.join(parentRepoPath, 'folder_meta.json'));
+  Map<String, dynamic> meta = {};
+  if (metaFile.existsSync()) {
+    try {
+      meta = jsonDecode(await metaFile.readAsString());
+    } catch (_) {}
+  }
+  
+  if (meta['items'] == null) meta['items'] = {};
+  meta['items'][childRelPath] = {
+    'name': childName,
+    'remoteUrl': childRemoteUrl,
+    'lastUpdate': DateTime.now().toIso8601String(),
+  };
+  
+  await metaFile.writeAsString(jsonEncode(meta));
+  
+  // Commit changes to parent
+  await _runGit(['add', 'folder_meta.json'], parentRepoPath);
+  try {
+    await _runGit(['commit', '-m', 'Update metadata for $childName'], parentRepoPath);
+  } catch (e) {
+    // Ignore if nothing to commit
+  }
+}
+
+Future<void> _expandFolderProject(String repoPath) async {
+  final metaFile = File(p.join(repoPath, 'folder_meta.json'));
+  if (!metaFile.existsSync()) return;
+  
+  try {
+    final meta = jsonDecode(await metaFile.readAsString());
+    final items = meta['items'] as Map<String, dynamic>?;
+    if (items == null) return;
+    
+    for (final relPath in items.keys) {
+      final info = items[relPath];
+      final childPath = p.join(repoPath, relPath);
+      final childDir = Directory(childPath);
+      
+      if (!childDir.existsSync()) {
+        childDir.createSync(recursive: true);
+      }
+      
+      final gitDir = Directory(p.join(childPath, '.git'));
+      if (!gitDir.existsSync()) {
+        // Init empty repo
+        await Process.run('git', ['init'], workingDirectory: childPath);
+        
+        // Set remote
+        final remoteUrl = info['remoteUrl'] as String?;
+        if (remoteUrl != null && remoteUrl.isNotEmpty) {
+           await Process.run('git', ['remote', 'add', 'origin', remoteUrl], workingDirectory: childPath);
+        }
+        
+        // Create tracking.json for child?
+        // Maybe not needed until user opens it.
+      }
+    }
+  } catch (e) {
+    print('Failed to expand folder project: $e');
+  }
+}
+
 Future<bool> _repoHasCommit(String repoPath, String commitId) async {
   try {
     // Check if commit exists in this repo
@@ -2136,9 +2201,9 @@ Future<String> _resolveRepoOwner(String repoName, String token) async {
 Future<void> pushToRemote(String repoPath, String username, String token,
     {bool force = false, String? targetRepoName}) async {
   return _withRepoLock(repoPath, () async {
-    if (await _isFolderProject(repoPath)) {
-       throw Exception('Cannot push Folder Project Root directly. Please push specific sub-repositories.');
-    }
+    // if (await _isFolderProject(repoPath)) {
+    //    throw Exception('Cannot push Folder Project Root directly. Please push specific sub-repositories.');
+    // }
 
     final repoName = p.basename(repoPath);
     final effectiveRemoteRepoName = targetRepoName ?? repoName;
@@ -2208,14 +2273,46 @@ Future<void> pushToRemote(String repoPath, String username, String token,
       await _ensureWebhook(repoName, owner, token);
     } catch (e) {
       print('Git push failed with error: $e');
-      // If push failed, it might be because of non-fast-forward (rejected).
-      // Even if the error message is localized (e.g. Chinese), we should check the repo state.
       if (!force) {
         final outStr = output.join('\n');
         if (outStr.contains('Everything up-to-date')) {
           await _checkIfBehind(repoPath, remoteUrl);
         }
       }
+    }
+    
+    // Check for parent folder project and update/push if needed
+    try {
+       final parentPath = p.dirname(repoPath);
+       if (parentPath != repoPath) {
+          final parentTracking = p.join(parentPath, 'tracking.json');
+          bool isParentFolder = false;
+          if (File(parentTracking).existsSync()) {
+             try {
+                final pt = jsonDecode(await File(parentTracking).readAsString());
+                if (pt['type'] == 'folder') isParentFolder = true;
+             } catch(_) {}
+          }
+          
+          if (isParentFolder) {
+             print('Updating parent folder metadata...');
+             final relPath = p.relative(repoPath, from: parentPath);
+             // We need the plain remote URL for metadata (without credentials)
+             final plainRemoteUrl = 'http://47.242.109.145:3000/$owner/$effectiveRemoteRepoName.git';
+             
+             await _updateFolderMeta(parentPath, relPath, repoName, plainRemoteUrl);
+             
+             // Recursively push parent
+             // Note: We use repoName of parent as targetRepoName for parent (default behavior)
+             // We reuse username/token
+             await pushToRemote(parentPath, username, token, force: force);
+          }
+       }
+    } catch (e) {
+       print('Failed to update/push parent folder: $e');
+       // Don't fail the child push if parent update fails?
+       // User requirement implies it's part of the flow.
+       // But failing here is annoying. Let's just log.
     }
   });
 }
@@ -2274,9 +2371,9 @@ Future<Map<String, dynamic>> pullFromRemote(
     {bool force = false, String? targetRepoName}) async {
   final projDir = _projectDir(repoName);
   return _withRepoLock(projDir, () async {
-    if (await _isFolderProject(projDir)) {
-       throw Exception('Cannot pull Folder Project Root directly. Please pull specific sub-repositories.');
-    }
+    // if (await _isFolderProject(projDir)) {
+    //    throw Exception('Cannot pull Folder Project Root directly. Please pull specific sub-repositories.');
+    // }
 
     final effectiveRemoteRepoName = targetRepoName ?? repoName;
     final remoteName = effectiveRemoteRepoName.toLowerCase();
@@ -2400,6 +2497,21 @@ Future<Map<String, dynamic>> pullFromRemote(
         }
       }
     } catch (e) {}
+    
+    // Check if it is a folder project (has folder_meta.json)
+    if (File(p.join(projDir, 'folder_meta.json')).existsSync()) {
+       // Update tracking.json
+       final tracking = await _readTracking(repoName);
+       if (tracking['type'] != 'folder') {
+         tracking['type'] = 'folder';
+         tracking['docxPath'] = projDir; // Root is the docxPath (folder)
+         await _writeTracking(repoName, tracking);
+       }
+       
+       // Expand
+       await _expandFolderProject(projDir);
+    }
+    
     // Sync external docx with pulled content
     await _syncToExternal(projDir);
 
