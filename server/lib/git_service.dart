@@ -642,30 +642,82 @@ Future<bool> _isFolderProject(String repoPath) async {
 }
 
 Future<void> _updateFolderMeta(String parentRepoPath, String childRelPath, String childName, String childRemoteUrl) async {
-  final metaFile = File(p.join(parentRepoPath, 'folder_meta.json'));
-  Map<String, dynamic> meta = {};
-  if (metaFile.existsSync()) {
+  return _withRepoLock(parentRepoPath, () async {
+    final metaFile = File(p.join(parentRepoPath, 'folder_meta.json'));
+    Map<String, dynamic> meta = {};
+    if (metaFile.existsSync()) {
+      try {
+        meta = jsonDecode(await metaFile.readAsString());
+      } catch (_) {}
+    }
+    
+    if (meta['items'] == null) meta['items'] = {};
+    meta['items'][childRelPath] = {
+      'name': childName,
+      'remoteUrl': childRemoteUrl,
+      'lastUpdate': DateTime.now().toIso8601String(),
+    };
+    
+    await metaFile.writeAsString(jsonEncode(meta));
+    
+    // Commit changes to parent
+    await _runGit(['add', 'folder_meta.json'], parentRepoPath);
     try {
-      meta = jsonDecode(await metaFile.readAsString());
-    } catch (_) {}
-  }
-  
-  if (meta['items'] == null) meta['items'] = {};
-  meta['items'][childRelPath] = {
-    'name': childName,
-    'remoteUrl': childRemoteUrl,
-    'lastUpdate': DateTime.now().toIso8601String(),
-  };
-  
-  await metaFile.writeAsString(jsonEncode(meta));
-  
-  // Commit changes to parent
-  await _runGit(['add', 'folder_meta.json'], parentRepoPath);
+      await _runGit(['commit', '-m', 'Update metadata for $childName'], parentRepoPath);
+    } catch (e) {
+      // Ignore if nothing to commit
+    }
+  });
+}
+
+String _stripCredentials(String url) {
   try {
-    await _runGit(['commit', '-m', 'Update metadata for $childName'], parentRepoPath);
-  } catch (e) {
-    // Ignore if nothing to commit
+    final uri = Uri.parse(url);
+    if (uri.userInfo.isNotEmpty) {
+       return uri.replace(userInfo: '').toString();
+    }
+    return url;
+  } catch (_) {
+    return url;
   }
+}
+
+Future<void> _notifyParentFolderProject(String repoPath) async {
+   try {
+      final baseDir = _baseDir();
+      Directory current = Directory(p.dirname(repoPath));
+      
+      // Safety: repo must be inside baseDir
+      // Note: isWithin returns true only if strictly inside
+      if (!p.isWithin(baseDir, repoPath)) return;
+
+      while (true) {
+         final path = current.path;
+         // Stop if we reach baseDir or go above it
+         if (path == baseDir || !p.isWithin(baseDir, path)) break;
+         
+         if (await _isFolderProject(path)) {
+             final relPath = p.relative(repoPath, from: path);
+             final childName = p.basename(repoPath);
+             String remoteUrl = '';
+             try {
+                final remotes = await _runGit(['remote', 'get-url', 'origin'], repoPath);
+                if (remotes.isNotEmpty) {
+                   remoteUrl = _stripCredentials(remotes.first.trim());
+                }
+             } catch (_) {}
+             
+             await _updateFolderMeta(path, relPath, childName, remoteUrl);
+             break; // Found the parent folder project, stop.
+         }
+         
+         final parent = current.parent;
+         if (parent.path == current.path) break; // System root
+         current = parent;
+      }
+   } catch (e) {
+      print('Failed to notify parent folder project: $e');
+   }
 }
 
 Future<void> _expandFolderProject(String repoPath) async {
@@ -760,6 +812,10 @@ Future<void> commitChanges(
     if (head.isNotEmpty) {
       unawaited(ensureCommitPreviewAssets(repoPath, head));
     }
+    
+    // Notify parent folder project if applicable
+    await _notifyParentFolderProject(repoPath);
+
     clearCache();
   });
 }
@@ -830,6 +886,9 @@ Future<void> addRemote(String repoPath, String name, String url) async {
     } else {
       await _runGit(['remote', 'add', name, url], repoPath);
     }
+    
+    // Notify parent folder project if applicable
+    await _notifyParentFolderProject(repoPath);
   } catch (e) {
     print('Failed to add/update remote $name: $e');
   }
@@ -2549,6 +2608,9 @@ Future<Map<String, dynamic>> pullFromRemote(
     
     // Sync external docx with pulled content
     await _syncToExternal(projDir);
+
+    // Notify parent folder project if applicable
+    await _notifyParentFolderProject(projDir);
 
     clearCache();
     return {
