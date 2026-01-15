@@ -3626,6 +3626,7 @@ class _GraphViewState extends State<_GraphView>
   bool _legendPanelCollapsed = false;
 
   Timer? _bgPollTimer;
+  final Set<String> _requestedPreviews = {};
 
   Future<void> _startPdfPolling() async {
     if (widget.data.commits.isEmpty) return;
@@ -3637,25 +3638,36 @@ class _GraphViewState extends State<_GraphView>
       }
       if (widget.data.commits.isEmpty) return;
 
-      //print('正在轮询检查PDF预览...');
-
       await ensureAppDataCacheDir();
+
+      final missingIds = <String>[];
 
       for (final commit in widget.data.commits) {
         final pdfPath = cachePdfPathForSha(commit.id);
         final f = File(pdfPath);
         if (!f.existsSync()) {
-          print('节点 ${commit.id.substring(0, 7)} 缺少预览，正在请求生成...');
-          try {
-            http.post(
-              Uri.parse('http://localhost:8080/preview_cache'),
-              headers: {'Content-Type': 'application/json'},
-              body: jsonEncode(
-                  {'repoPath': widget.repoPath, 'commitId': commit.id}),
-            );
-          } catch (e) {
-            print('请求生成失败: $e');
+          if (!_requestedPreviews.contains(commit.id)) {
+            missingIds.add(commit.id);
           }
+        } else {
+          _requestedPreviews.remove(commit.id);
+        }
+      }
+
+      if (missingIds.isNotEmpty) {
+        print('发现 ${missingIds.length} 个节点缺少预览，正在批量请求生成...');
+        _requestedPreviews.addAll(missingIds);
+        try {
+          await http.post(
+            Uri.parse('http://localhost:8080/preview_cache'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(
+                {'repoPath': widget.repoPath, 'commitIds': missingIds}),
+          );
+        } catch (e) {
+          print('批量请求生成失败: $e');
+          // 失败后允许重试
+          _requestedPreviews.removeAll(missingIds);
         }
       }
     });

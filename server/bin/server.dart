@@ -770,17 +770,37 @@ Future<void> main(List<String> args) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
     final repoPath = _sanitizePath(data['repoPath'] as String?);
-    final commitId = data['commitId'] as String?;
+    
+    final ids = <String>{};
+    if (data['commitIds'] != null) {
+      for (final item in (data['commitIds'] as List)) {
+        if (item is String && item.trim().isNotEmpty) {
+          ids.add(item.trim());
+        }
+      }
+    }
+    if (data['commitId'] != null) {
+      final single = data['commitId'] as String;
+      if (single.trim().isNotEmpty) {
+        ids.add(single.trim());
+      }
+    }
 
-    if (repoPath.isEmpty || commitId == null || commitId.trim().isEmpty) {
+    if (repoPath.isEmpty || ids.isEmpty) {
       return _cors(Response(400,
-          body: jsonEncode({'error': 'repoPath, commitId required'}),
+          body: jsonEncode({'error': 'repoPath and commitId/commitIds required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
 
-    unawaited(ensureCommitPreviewAssets(repoPath, commitId.trim()));
+    // Process all IDs asynchronously
+    unawaited(() async {
+      for (final id in ids) {
+        // ensureCommitPreviewAssets handles concurrency with semaphore internally
+        await ensureCommitPreviewAssets(repoPath, id);
+      }
+    }());
 
-    return _cors(Response.ok(jsonEncode({'status': 'scheduled'}), headers: {
+    return _cors(Response.ok(jsonEncode({'status': 'scheduled', 'count': ids.length}), headers: {
       'Content-Type': 'application/json; charset=utf-8',
     }));
   });

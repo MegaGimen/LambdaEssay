@@ -9,7 +9,7 @@ import 'models.dart';
 bool _debugMode = false;
 void setDebugMode(bool value) => _debugMode = value;
 final scriptDir = p.dirname(Platform.script.toFilePath());
-List<String> workingIds = [];
+Set<String> workingIds = {};
 String get _psScriptPath {
   final candidates = <String>[
     if (_debugMode) r'c:\Users\m1369\Documents\gitbin\frontend\lib\doccmp.ps1',
