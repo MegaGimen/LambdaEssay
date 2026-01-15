@@ -701,14 +701,24 @@ Future<void> _notifyParentFolderProject(String repoPath) async {
              final childName = p.basename(repoPath);
              String remoteUrl = '';
              try {
-                final remotes = await _runGit(['remote', 'get-url', 'origin'], repoPath);
+                // Try to find ANY remote
+                final remotes = await _runGit(['remote'], repoPath);
                 if (remotes.isNotEmpty) {
-                   remoteUrl = _stripCredentials(remotes.first.trim());
+                    // Default to the first remote as requested
+                    final targetRemote = remotes.first.trim();
+                    
+                    final urls = await _runGit(['remote', 'get-url', targetRemote], repoPath);
+                    if (urls.isNotEmpty) {
+                       remoteUrl = _stripCredentials(urls.first.trim());
+                    }
                 }
              } catch (_) {}
              
              await _updateFolderMeta(path, relPath, childName, remoteUrl);
-             break; // Found the parent folder project, stop.
+             
+             // Recursive: Now treat 'path' (parent) as the child and notify its parent
+             await _notifyParentFolderProject(path);
+             break; // Found the parent folder project and notified, stop this branch.
          }
          
          final parent = current.parent;
@@ -2377,36 +2387,27 @@ Future<void> pushToRemote(String repoPath, String username, String token,
     
     // Check for parent folder project and update/push if needed
     try {
-       final parentPath = p.dirname(repoPath);
-       if (parentPath != repoPath) {
-          final parentTracking = p.join(parentPath, 'tracking.json');
-          bool isParentFolder = false;
-          if (File(parentTracking).existsSync()) {
-             try {
-                final pt = jsonDecode(await File(parentTracking).readAsString());
-                if (pt['type'] == 'folder') isParentFolder = true;
-             } catch(_) {}
-          }
-          
-          if (isParentFolder) {
-             print('Updating parent folder metadata...');
-             final relPath = p.relative(repoPath, from: parentPath);
-             // We need the plain remote URL for metadata (without credentials)
-             final plainRemoteUrl = 'http://47.242.109.145:3000/$owner/$effectiveRemoteRepoName.git';
-             
-             await _updateFolderMeta(parentPath, relPath, repoName, plainRemoteUrl);
-             
-             // Recursively push parent
-             // Note: We use repoName of parent as targetRepoName for parent (default behavior)
-             // We reuse username/token
-             await pushToRemote(parentPath, username, token, force: force);
-          }
-       }
+        final baseDir = _baseDir();
+        Directory current = Directory(p.dirname(repoPath));
+        if (p.isWithin(baseDir, repoPath)) {
+            while (true) {
+                final path = current.path;
+                if (path == baseDir || !p.isWithin(baseDir, path)) break;
+
+                if (await _isFolderProject(path)) {
+                     print('Found parent folder project: $path');
+                     // Recursively push parent
+                     await pushToRemote(path, username, token, force: force);
+                     break; 
+                }
+                
+                final parent = current.parent;
+                if (parent.path == current.path) break;
+                current = parent;
+            }
+        }
     } catch (e) {
-       print('Failed to update/push parent folder: $e');
-       // Don't fail the child push if parent update fails?
-       // User requirement implies it's part of the flow.
-       // But failing here is annoying. Let's just log.
+       print('Failed to push parent folder: $e');
     }
   });
 }
