@@ -463,6 +463,7 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
   /// Builds the widget for a single file item.
   Widget _buildFileItem(File file) {
     final extension = path.extension(file.path).toLowerCase();
+    final isDocx = extension == '.docx';
     final customIcon = widget.fileIconBuilder?.call(extension) ??
         widget.fileStyle?.fileIcon ??
         FileStyle().fileIcon;
@@ -473,30 +474,44 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
     final bool hasUpdate = widget.updatedPaths != null && 
         widget.updatedPaths!.contains(file.path);
 
+    final displayName = isDocx 
+        ? path.basename(file.path) 
+        : '${path.basename(file.path)} (不支持的文件类型)';
+
     return GestureDetector(
       onTapDown: (details) {
+        if (!isDocx) return; // Ignore non-docx
         if (widget.onFileTap != null) {
           widget.onFileTap!(file, details);
         }
       },
       onSecondaryTapDown: (details) {
+        // Allow right click even on non-docx? Maybe to delete?
+        // User didn't specify, but safer to allow or restrict.
+        // Let's allow it, so user can "Import" to a non-docx file?
+        // "把一个已经有了的追踪项目...放进这个文件夹式的追踪中（可替换原文件）"
+        // If I have a .txt file and I want to import a docx project to it (replacing it with docx), that makes sense.
+        // So I allow right click.
         if (widget.onFileSecondaryTap != null) {
           widget.onFileSecondaryTap!(file, details);
         }
       },
       child: MouseRegion(
-        cursor: SystemMouseCursors.click,
+        cursor: isDocx ? SystemMouseCursors.click : SystemMouseCursors.forbidden,
         child: Container(
            color: isSelected ? Colors.blue.withOpacity(0.1) : Colors.transparent,
            padding: const EdgeInsets.symmetric(vertical: 2),
            child: Row(
             children: [
-              customIcon,
+              isDocx ? customIcon : const Icon(Icons.error_outline, size: 16, color: Colors.grey),
               const SizedBox(width: 8),
               Text(
-                path.basename(file.path),
-                style:
-                    widget.fileStyle?.fileNameStyle ?? FileStyle().fileNameStyle,
+                displayName,
+                style: (widget.fileStyle?.fileNameStyle ?? FileStyle().fileNameStyle)
+                    ?.copyWith(
+                        color: isDocx ? null : Colors.grey,
+                        fontStyle: isDocx ? null : FontStyle.italic,
+                    ),
               ),
               if (hasUpdate) ...[
                  const SizedBox(width: 8),
