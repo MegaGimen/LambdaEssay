@@ -1065,6 +1065,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     if (_token == null) return null;
 
     // Fetch repos
+    List<Map<String, dynamic>> repoList = [];
     List<String> repos = [];
     try {
       final resp = await http.post(
@@ -1073,7 +1074,14 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         body: jsonEncode({'token': _token}),
       );
       if (resp.statusCode == 200) {
-        repos = (jsonDecode(resp.body) as List).cast<String>();
+        final list = jsonDecode(resp.body) as List;
+        // Check format: older server might return List<String>, newer returns List<Map>
+        if (list.isNotEmpty && list.first is String) {
+           repos = list.cast<String>();
+        } else {
+           repoList = list.cast<Map<String, dynamic>>();
+           repos = repoList.map((e) => e['name'] as String).toList();
+        }
       }
     } catch (e) {
       if (!mounted) return null;
@@ -1114,8 +1122,32 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                       itemBuilder: (context, index) {
                         if (index < repos.length) {
                           final repo = repos[index];
+                          bool isFolder = false;
+                          if (repoList.isNotEmpty) {
+                             final info = repoList.firstWhere((e) => e['name'] == repo, orElse: () => {});
+                             isFolder = info['isFolder'] == true;
+                          }
+                          
                           return RadioListTile<String>(
-                            title: Text(repo),
+                            title: Row(
+                              children: [
+                                Text(repo),
+                                if (isFolder) ...[
+                                  const SizedBox(width: 8),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: Colors.blue.shade100,
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: const Text(
+                                      '文件夹项目',
+                                      style: TextStyle(fontSize: 10, color: Colors.blue),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
                             value: repo,
                             groupValue: isCreatingNew ? null : selectedRepo,
                             onChanged: (val) {
