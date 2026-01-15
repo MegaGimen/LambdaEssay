@@ -653,7 +653,7 @@ Future<void> main(List<String> args) async {
     // Attempt to save Word document if plugin is connected
     if (pluginSender != null) {
       print('Executing Word save before commit...');
-      final saved = await pluginSender!({'action': 'save'});
+      await pluginSender!({'action': 'save'});
       //if (!saved) {
       //  return _cors(Response(500,
       //      body: jsonEncode({'error': 'Word save failed. Commit aborted.'}),

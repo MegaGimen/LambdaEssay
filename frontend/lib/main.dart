@@ -2829,7 +2829,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
          
          String targetRepoPath;
          if (targetRepo != null) {
-            targetRepoPath = targetRepo!['repoPath'];
+            targetRepoPath = targetRepo['repoPath'];
          } else {
             final name = p.basenameWithoutExtension(targetFilePath);
             final hash = md5.convert(utf8.encode(targetFilePath)).toString().substring(0, 8);
@@ -3054,7 +3054,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           if (currentProjectName != null)
              Container(
                 width: double.infinity,
-                color: Colors.blue.withOpacity(0.1),
+                color: Colors.blue.withValues(alpha: 0.1),
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                 child: Row(children: [
                    const Icon(Icons.folder_open, size: 16, color: Colors.blue),
@@ -3065,7 +3065,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           if (_repoUpdates.isNotEmpty)
              Container(
                 width: double.infinity,
-                color: Colors.red.withOpacity(0.05),
+                color: Colors.red.withValues(alpha: 0.05),
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                 child: Column(
                    crossAxisAlignment: CrossAxisAlignment.start,
