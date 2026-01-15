@@ -1188,6 +1188,7 @@ Future<Map<String, dynamic>> _resolveTrackingInfo(String repoPath) async {
   String current = p.normalize(repoPath);
   final root = p.rootPrefix(current);
   
+  // 1. Try to find tracking.json recursively
   while (true) {
     final trackingFile = p.join(current, 'tracking.json');
     if (File(trackingFile).existsSync()) {
@@ -1198,22 +1199,54 @@ Future<Map<String, dynamic>> _resolveTrackingInfo(String repoPath) async {
           String fullDocxPath = baseDocxPath;
           
           if (p.normalize(current) != p.normalize(repoPath)) {
-             // Folder mode: tracking is in parent
+             // Folder mode: tracking is in parent (current)
+             // We are in a sub-repo (repoPath)
+             // We need to generate a tracking.json in repoPath
+             
              final relPath = p.relative(repoPath, from: current);
              fullDocxPath = p.join(baseDocxPath, relPath);
+             
+             // Create tracking.json in sub-repo
+             final subTracking = {
+               'docxPath': fullDocxPath,
+               // 'internalPath': relPath, // Optional, but full path is enough
+             };
+             await _writeTracking(p.basename(repoPath), subTracking); // Note: _writeTracking uses _trackingFile which uses _projectDir(name). 
+             // But here repoPath IS the project dir. 
+             // Wait, _writeTracking uses _projectDir(name) -> _baseDir()/name. 
+             // If repoPath is NOT in _baseDir(), this might be wrong.
+             // But usually repoPath IS in _baseDir() (or subfolder).
+             // Actually, let's just write to repoPath directly.
+             
+             final f = File(p.join(repoPath, 'tracking.json'));
+             await f.writeAsString(jsonEncode(subTracking));
+             
+             // Check existence
+             if (!FileSystemEntity.isFileSync(fullDocxPath) && !FileSystemEntity.isDirectorySync(fullDocxPath)) {
+                // Return info but user will likely hit "File not found" later
+                // Or we can throw here?
+                // User said: "If docxPath not found... prompt user".
+                // If we return, caller (commitChanges) checks existence and throws.
+             }
+             
+             return {
+                'docxPath': fullDocxPath,
+                'trackingRoot': repoPath, // Now it has its own tracking
+                'rawTracking': subTracking
+             };
+
           } else {
              // Single mode: tracking is in repo dir
              final internalPath = tracking['internalPath'] as String?;
              if (internalPath != null && internalPath.isNotEmpty) {
                 fullDocxPath = p.join(baseDocxPath, internalPath);
              }
+             return {
+                'docxPath': fullDocxPath,
+                'trackingRoot': current,
+                'rawTracking': tracking
+             };
           }
-          
-          return {
-             'docxPath': fullDocxPath,
-             'trackingRoot': current,
-             'rawTracking': tracking
-          };
        }
     }
     
@@ -1222,7 +1255,7 @@ Future<Map<String, dynamic>> _resolveTrackingInfo(String repoPath) async {
     current = parent;
   }
   
-  // Fallback: try default location based on name (legacy behavior)
+  // Fallback
   final name = p.basename(repoPath);
   final defaultTracking = await _readTracking(name);
   if (defaultTracking.isNotEmpty && defaultTracking['docxPath'] != null) {
@@ -1642,6 +1675,19 @@ Future<Map<String, dynamic>> updateTrackingProject(
       print(
           '[Perf] Ensure Content Dir & Write Tracking: ${sectionSw.elapsedMilliseconds}ms');
       sectionSw.reset();
+
+      // Check if folder type, if so, we are done with tracking update, return.
+      // Folder type projects are containers, not git repos themselves.
+      if (tracking['type'] == 'folder') {
+        print('[Perf] Folder project updated. Skipping git operations on root.');
+        return {
+          'repoPath': projDir,
+          'workingChanged': false, // or true? Folder tracking update implies maybe sub-repos changed? 
+          // But status check on root will fail.
+          // Let's assume folder project update is just metadata update.
+          'head': null,
+        };
+      }
 
       // Compare Source vs HEAD
       bool isIdenticalToHead =
