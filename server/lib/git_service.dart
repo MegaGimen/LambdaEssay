@@ -164,17 +164,10 @@ Future<void> _updateContentDocx(String repoPath, String sourceDocxPath) async {
 }
 
 Future<void> _writeExternalDocx(String repoPath, String sourcePath) async {
-  final name = p.basename(repoPath);
-  final tracking = await _readTracking(name);
-  final docxPath = tracking['docxPath'] as String?;
-  final internalPath = tracking['internalPath'] as String?;
+  final info = await _resolveTrackingInfo(repoPath);
+  final targetPath = info['docxPath'] as String?;
 
-  if (docxPath == null) return;
-
-  String targetPath = docxPath;
-  if (internalPath != null && internalPath.isNotEmpty) {
-    targetPath = p.join(docxPath, internalPath);
-  }
+  if (targetPath == null) return;
 
   bool diskWriteSuccess = false;
   Object? diskError;
@@ -642,20 +635,12 @@ Future<GraphResponse> _getGraphUnlocked(String repoPath,
 Future<void> commitChanges(
     String repoPath, String author, String message) async {
   return _withRepoLock(repoPath, () async {
-    final repoName = p.basename(repoPath);
-    print("repoName=$repoName");
     print("repoPath=$repoPath");
-    final tracking = await _readTracking(repoName);
-    final docxPath = tracking['docxPath'] as String?;
-    final internalPath = tracking['internalPath'] as String?;
+    final info = await _resolveTrackingInfo(repoPath);
+    final targetPath = info['docxPath'] as String?;
 
-    if (docxPath == null) {
-       throw Exception('Missing "docxPath" in tracking.json. Please re-configure the project or check tracking.json.');
-    }
-
-    String targetPath = docxPath;
-    if (internalPath != null && internalPath.isNotEmpty) {
-      targetPath = p.join(docxPath, internalPath);
+    if (targetPath == null) {
+       throw Exception('Missing "docxPath" in tracking.json (or tracking.json not found). Please re-configure the project.');
     }
 
     if (!FileSystemEntity.isDirectorySync(targetPath) && !FileSystemEntity.isFileSync(targetPath)) {
@@ -740,18 +725,11 @@ Future<Uint8List> compareWorking(String repoPath) async {
     }
 
     final tmpDir = await Directory.systemTemp.createTemp('gitdocx_cmp_work_');
-    final repoName = p.basename(repoPath);
-    final tracking = await _readTracking(repoName);
-    final docxPath = tracking['docxPath'] as String?;
-    final internalPath = tracking['internalPath'] as String?;
+    final info = await _resolveTrackingInfo(repoPath);
+    final targetPath = info['docxPath'] as String?;
 
-    if (docxPath == null) {
+    if (targetPath == null) {
        throw Exception('Missing "docxPath" in tracking.json. Please re-configure the project.');
-    }
-
-    String targetPath = docxPath;
-    if (internalPath != null && internalPath.isNotEmpty) {
-      targetPath = p.join(docxPath, internalPath);
     }
     
     if (!FileSystemEntity.isDirectorySync(targetPath) && !FileSystemEntity.isFileSync(targetPath)) {
@@ -1191,6 +1169,74 @@ Future<Map<String, bool>> ensureCommitPreviewAssets(
 File _trackingFile(String name) {
   final dir = _projectDir(name);
   return File(p.join(dir, 'tracking.json'));
+}
+
+Future<Map<String, dynamic>> _readTrackingJson(String jsonPath) async {
+  final f = File(jsonPath);
+  if (f.existsSync()) {
+    try {
+      final s = await f.readAsString();
+      return jsonDecode(s) as Map<String, dynamic>;
+    } catch (_) {
+      return <String, dynamic>{};
+    }
+  }
+  return <String, dynamic>{};
+}
+
+Future<Map<String, dynamic>> _resolveTrackingInfo(String repoPath) async {
+  String current = p.normalize(repoPath);
+  final root = p.rootPrefix(current);
+  
+  while (true) {
+    final trackingFile = p.join(current, 'tracking.json');
+    if (File(trackingFile).existsSync()) {
+       final tracking = await _readTrackingJson(trackingFile);
+       final baseDocxPath = tracking['docxPath'] as String?;
+       
+       if (baseDocxPath != null) {
+          String fullDocxPath = baseDocxPath;
+          
+          if (p.normalize(current) != p.normalize(repoPath)) {
+             // Folder mode: tracking is in parent
+             final relPath = p.relative(repoPath, from: current);
+             fullDocxPath = p.join(baseDocxPath, relPath);
+          } else {
+             // Single mode: tracking is in repo dir
+             final internalPath = tracking['internalPath'] as String?;
+             if (internalPath != null && internalPath.isNotEmpty) {
+                fullDocxPath = p.join(baseDocxPath, internalPath);
+             }
+          }
+          
+          return {
+             'docxPath': fullDocxPath,
+             'trackingRoot': current,
+             'rawTracking': tracking
+          };
+       }
+    }
+    
+    final parent = p.dirname(current);
+    if (parent == current || parent == root) break;
+    current = parent;
+  }
+  
+  // Fallback: try default location based on name (legacy behavior)
+  final name = p.basename(repoPath);
+  final defaultTracking = await _readTracking(name);
+  if (defaultTracking.isNotEmpty && defaultTracking['docxPath'] != null) {
+      String fullDocxPath = defaultTracking['docxPath'];
+      final internalPath = defaultTracking['internalPath'] as String?;
+      if (internalPath != null && internalPath.isNotEmpty) {
+        fullDocxPath = p.join(fullDocxPath, internalPath);
+      }
+      return {
+         'docxPath': fullDocxPath,
+      };
+  }
+  
+  return {};
 }
 
 Future<Map<String, dynamic>> _readTracking(String name) async {
