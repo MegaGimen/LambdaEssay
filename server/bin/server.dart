@@ -170,6 +170,10 @@ Future<void> main(List<String> args) async {
                       }
                    } else {
                       print('Plugin reported error/mismatch: ${data['message']}');
+                      // Fail fast
+                      if (!_pendingRequests[id]!.isCompleted) {
+                         _pendingRequests[id]!.complete(data); // Complete with error data
+                      }
                    }
                 }
              } else if (data['type'] == 'event' && data['event'] == 'saved') {
@@ -797,6 +801,8 @@ Future<void> main(List<String> args) async {
       for (final id in ids) {
         // ensureCommitPreviewAssets handles concurrency with semaphore internally
         await ensureCommitPreviewAssets(repoPath, id);
+        // Yield to event loop and give some breathing room
+        await Future.delayed(const Duration(milliseconds: 100));
       }
     }());
 
