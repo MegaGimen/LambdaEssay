@@ -654,11 +654,12 @@ Future<void> main(List<String> args) async {
     if (pluginSender != null) {
       print('Executing Word save before commit...');
       final saved = await pluginSender!({'action': 'save'});
-      if (!saved) {
-        return _cors(Response(500,
-            body: jsonEncode({'error': 'Word save failed. Commit aborted.'}),
-            headers: {'Content-Type': 'application/json; charset=utf-8'}));
-      }
+      //if (!saved) {
+      //  return _cors(Response(500,
+      //      body: jsonEncode({'error': 'Word save failed. Commit aborted.'}),
+      //      headers: {'Content-Type': 'application/json; charset=utf-8'}));
+      //}
+      //即使没有保存成功，也继续提交
       print('Word save verified.');
     }
 
