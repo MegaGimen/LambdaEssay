@@ -167,35 +167,41 @@ Future<void> _writeExternalDocx(String repoPath, String sourcePath) async {
   final name = p.basename(repoPath);
   final tracking = await _readTracking(name);
   final docxPath = tracking['docxPath'] as String?;
+  final internalPath = tracking['internalPath'] as String?;
 
   if (docxPath == null) return;
+
+  String targetPath = docxPath;
+  if (internalPath != null && internalPath.isNotEmpty) {
+    targetPath = p.join(docxPath, internalPath);
+  }
 
   bool diskWriteSuccess = false;
   Object? diskError;
 
   // 1. Try disk write first
-  print('Updating external docx via disk write: $docxPath');
+  print('Updating external docx via disk write: $targetPath');
   try {
-    if (FileSystemEntity.isDirectorySync(docxPath)) {
+    if (FileSystemEntity.isDirectorySync(targetPath)) {
       if (FileSystemEntity.isDirectorySync(sourcePath)) {
-        await _copyDir(sourcePath, docxPath);
+        await _copyDir(sourcePath, targetPath);
       } else {
         // Unzip source file to target dir
-        if (Directory(docxPath).existsSync()) {
-          Directory(docxPath).deleteSync(recursive: true);
+        if (Directory(targetPath).existsSync()) {
+          Directory(targetPath).deleteSync(recursive: true);
         }
-        Directory(docxPath).createSync();
-        await _unzipDocx(sourcePath, docxPath);
+        Directory(targetPath).createSync();
+        await _unzipDocx(sourcePath, targetPath);
       }
     } else {
       if (FileSystemEntity.isDirectorySync(sourcePath)) {
         // Zip source dir to target file
-        await _zipDir(sourcePath, docxPath);
+        await _zipDir(sourcePath, targetPath);
       } else {
         // Safer copy: read bytes and write bytes to avoid 183
-        // File(sourcePath).copySync(docxPath);
+        // File(sourcePath).copySync(targetPath);
         final bytes = File(sourcePath).readAsBytesSync();
-        File(docxPath).writeAsBytesSync(bytes, flush: true);
+        File(targetPath).writeAsBytesSync(bytes, flush: true);
       }
     }
     diskWriteSuccess = true;
@@ -218,13 +224,13 @@ Future<void> _writeExternalDocx(String repoPath, String sourcePath) async {
         'payload': {
           'content': base64Content,
           'type': 'base64',
-          'options': {'checkPath': docxPath}
+          'options': {'checkPath': targetPath}
         }
       });
 
       if (result == true) {
         handled = true;
-        print('Updated external docx via plugin: $docxPath');
+        print('Updated external docx via plugin: $targetPath');
       } else {
         print('Plugin update skipped/failed (result: $result)');
       }
@@ -641,8 +647,22 @@ Future<void> commitChanges(
     print("repoPath=$repoPath");
     final tracking = await _readTracking(repoName);
     final docxPath = tracking['docxPath'] as String?;
+    final internalPath = tracking['internalPath'] as String?;
 
-    await _updateContentDocx(repoPath, docxPath!);
+    if (docxPath == null) {
+       throw Exception('Missing "docxPath" in tracking.json. Please re-configure the project or check tracking.json.');
+    }
+
+    String targetPath = docxPath;
+    if (internalPath != null && internalPath.isNotEmpty) {
+      targetPath = p.join(docxPath, internalPath);
+    }
+
+    if (!FileSystemEntity.isDirectorySync(targetPath) && !FileSystemEntity.isFileSync(targetPath)) {
+       throw Exception('File not found: $targetPath. Has the file in the folder been deleted?');
+    }
+
+    await _updateContentDocx(repoPath, targetPath);
     // 1. Unzip content.docx -> doc_content
     await _flushDocxToContent(repoPath);
 
@@ -723,8 +743,22 @@ Future<Uint8List> compareWorking(String repoPath) async {
     final repoName = p.basename(repoPath);
     final tracking = await _readTracking(repoName);
     final docxPath = tracking['docxPath'] as String?;
+    final internalPath = tracking['internalPath'] as String?;
 
-    await _updateContentDocx(repoPath, docxPath!); //保证外部更新内部。
+    if (docxPath == null) {
+       throw Exception('Missing "docxPath" in tracking.json. Please re-configure the project.');
+    }
+
+    String targetPath = docxPath;
+    if (internalPath != null && internalPath.isNotEmpty) {
+      targetPath = p.join(docxPath, internalPath);
+    }
+    
+    if (!FileSystemEntity.isDirectorySync(targetPath) && !FileSystemEntity.isFileSync(targetPath)) {
+       throw Exception('File not found: $targetPath. Has the file in the folder been deleted?');
+    }
+
+    await _updateContentDocx(repoPath, targetPath); //保证外部更新内部。
 
     try {
       // If content.docx doesn't exist, create it from doc_content

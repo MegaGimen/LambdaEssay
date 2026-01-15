@@ -298,7 +298,7 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
           child: MouseRegion(
             cursor: SystemMouseCursors.click,
             child: Container(
-              color: isSelected ? Colors.blue.withOpacity(0.1) : Colors.transparent,
+              color: isSelected ? Colors.blue.withValues(alpha: 0.1) : Colors.transparent,
               padding: const EdgeInsets.symmetric(vertical: 2),
               child: Row(
                 children: [
@@ -499,7 +499,7 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
       child: MouseRegion(
         cursor: isDocx ? SystemMouseCursors.click : SystemMouseCursors.forbidden,
         child: Container(
-           color: isSelected ? Colors.blue.withOpacity(0.1) : Colors.transparent,
+           color: isSelected ? Colors.blue.withValues(alpha: 0.1) : Colors.transparent,
            padding: const EdgeInsets.symmetric(vertical: 2),
            child: Row(
             children: [
