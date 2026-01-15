@@ -632,10 +632,34 @@ Future<GraphResponse> _getGraphUnlocked(String repoPath,
   return resp;
 }
 
+Future<bool> _isFolderProject(String repoPath) async {
+  try {
+    final t = await _readTrackingJson(p.join(repoPath, 'tracking.json'));
+    return t['type'] == 'folder';
+  } catch (_) {
+    return false;
+  }
+}
+
+Future<bool> _repoHasCommit(String repoPath, String commitId) async {
+  try {
+    // Check if commit exists in this repo
+    await _runGit(['rev-parse', '--verify', '$commitId^{commit}'], repoPath);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 Future<void> commitChanges(
     String repoPath, String author, String message) async {
   return _withRepoLock(repoPath, () async {
     print("repoPath=$repoPath");
+
+    if (await _isFolderProject(repoPath)) {
+       throw Exception('Cannot commit on a Folder Project Root. Please commit in specific sub-repositories.');
+    }
+
     final info = await _resolveTrackingInfo(repoPath);
     final targetPath = info['docxPath'] as String?;
 
@@ -677,6 +701,22 @@ Future<void> commitChanges(
 
 Future<void> createBranch(String repoPath, String branchName) async {
   return _withRepoLock(repoPath, () async {
+    if (await _isFolderProject(repoPath)) {
+        final name = p.basename(repoPath);
+        final repos = await listProjectRepos(name);
+        int success = 0;
+        for (final r in repos) {
+           try {
+             await _runGit(['checkout', '-b', branchName], r['repoPath']);
+             success++;
+           } catch (e) {
+             print('Failed to create branch in ${r['repoPath']}: $e');
+           }
+        }
+        if (success == 0) throw Exception('Failed to create branch in any sub-repo');
+        clearCache();
+        return;
+    }
     await _runGit(['checkout', '-b', branchName], repoPath);
     clearCache();
   });
@@ -686,6 +726,19 @@ Future<void> switchBranch(String projectName, String branchName) async {
   final repoPath = _projectDir(projectName);
   return _withRepoLock(repoPath, () async {
     final sw = Stopwatch()..start();
+
+    if (await _isFolderProject(repoPath)) {
+        final repos = await listProjectRepos(projectName);
+        for (final r in repos) {
+           try {
+             await _runGit(['checkout', '-f', branchName], r['repoPath']);
+           } catch (e) {
+             print('Failed to switch branch in ${r['repoPath']}: $e');
+           }
+        }
+        clearCache();
+        return;
+    }
 
     await _runGit(['checkout', '-f', branchName], repoPath);
     print(
@@ -1924,6 +1977,20 @@ Future<Uint8List> previewVersion(String repoPath, String commitId) async {
 Future<void> resetBranch(String projectName, String commitId) async {
   final repoPath = _projectDir(projectName);
   return _withRepoLock(repoPath, () async {
+    if (await _isFolderProject(repoPath)) {
+        final repos = await listProjectRepos(projectName);
+        for (final r in repos) {
+            final subPath = r['repoPath'] as String;
+            if (await _repoHasCommit(subPath, commitId)) {
+                print('Found commit $commitId in sub-repo $subPath. Resetting...');
+                await _runGit(['reset', '--hard', commitId], subPath);
+                clearCache();
+                return;
+            }
+        }
+        throw Exception('Commit $commitId not found in any sub-repository of $projectName');
+    }
+
     await _runGit(['reset', '--hard', commitId], repoPath);
     //await _syncToExternal(repoPath);
     clearCache();
@@ -1933,6 +2000,20 @@ Future<void> resetBranch(String projectName, String commitId) async {
 Future<void> rollbackVersion(String projectName, String commitId) async {
   final repoPath = _projectDir(projectName);
   return _withRepoLock(repoPath, () async {
+    if (await _isFolderProject(repoPath)) {
+        final repos = await listProjectRepos(projectName);
+        for (final r in repos) {
+            final subPath = r['repoPath'] as String;
+            if (await _repoHasCommit(subPath, commitId)) {
+                print('Found commit $commitId in sub-repo $subPath. Rolling back...');
+                await _runGit(['checkout', commitId, '--', kContentDirName], subPath);
+                await _syncToExternal(subPath);
+                return;
+            }
+        }
+        throw Exception('Commit $commitId not found in any sub-repository of $projectName');
+    }
+
     // Checkout doc_content from commitId to working dir
     // git checkout commitId -- doc_content
     await _runGit(['checkout', commitId, '--', kContentDirName], repoPath);
@@ -2055,6 +2136,10 @@ Future<String> _resolveRepoOwner(String repoName, String token) async {
 Future<void> pushToRemote(String repoPath, String username, String token,
     {bool force = false, String? targetRepoName}) async {
   return _withRepoLock(repoPath, () async {
+    if (await _isFolderProject(repoPath)) {
+       throw Exception('Cannot push Folder Project Root directly. Please push specific sub-repositories.');
+    }
+
     final repoName = p.basename(repoPath);
     final effectiveRemoteRepoName = targetRepoName ?? repoName;
 
@@ -2189,6 +2274,10 @@ Future<Map<String, dynamic>> pullFromRemote(
     {bool force = false, String? targetRepoName}) async {
   final projDir = _projectDir(repoName);
   return _withRepoLock(projDir, () async {
+    if (await _isFolderProject(projDir)) {
+       throw Exception('Cannot pull Folder Project Root directly. Please pull specific sub-repositories.');
+    }
+
     final effectiveRemoteRepoName = targetRepoName ?? repoName;
     final remoteName = effectiveRemoteRepoName.toLowerCase();
     // final projDir = _projectDir(repoName); // Already calculated
@@ -2327,6 +2416,10 @@ Future<Map<String, dynamic>> checkPullStatus(
     String repoName, String username, String token) async {
   final projDir = _projectDir(repoName);
   return _withRepoLock(projDir, () async {
+    if (await _isFolderProject(projDir)) {
+       return {'status': 'error', 'message': 'Cannot check pull status on Folder Project Root.'};
+    }
+
     final remoteName = repoName.toLowerCase();
     final owner = await _resolveRepoOwner(repoName, token);
     final remoteUrl =
@@ -2416,8 +2509,12 @@ Future<String?> findProjectByDocxPath(String docxPath) async {
 }
 
 Future<void> rebasePull(String repoName, String username, String token) async {
-  final remoteName = repoName.toLowerCase();
   final projDir = _projectDir(repoName);
+  if (await _isFolderProject(projDir)) {
+     throw Exception('Cannot rebase on Folder Project Root.');
+  }
+
+  final remoteName = repoName.toLowerCase();
   final owner = await _resolveRepoOwner(repoName, token);
   final remoteUrl =
       'http://$username:$token@47.242.109.145:3000/$owner/$repoName.git';
@@ -2586,6 +2683,10 @@ Future<PullPreviewResult> previewPull(
 Future<void> forkLocal(String repoName, String newBranchName) async {
   final repoPath = _projectDir(repoName);
   return _withRepoLock(repoPath, () async {
+    if (await _isFolderProject(repoPath)) {
+        throw Exception('Forking local branch on Folder Root is not supported yet.');
+    }
+
     final currentBranch = await getCurrentBranch(repoPath);
     final remoteName = repoName.toLowerCase();
 
@@ -2616,6 +2717,10 @@ Future<void> forkLocal(String repoName, String newBranchName) async {
 Future<void> prepareMerge(String repoName, String targetBranch) async {
   final projDir = _projectDir(repoName);
   return _withRepoLock(projDir, () async {
+    if (await _isFolderProject(projDir)) {
+       throw Exception('Cannot merge on Folder Project Root.');
+    }
+
     final trackingFile = File(p.join(projDir, 'tracking.json'));
     if (!trackingFile.existsSync()) {
       throw Exception('No tracking project found');
@@ -2696,6 +2801,10 @@ Future<void> restoreDocx(String repoName) async {
 Future<void> completeMerge(String repoName, String targetBranch) async {
   final projDir = _projectDir(repoName);
   return _withRepoLock(projDir, () async {
+    if (await _isFolderProject(projDir)) {
+       throw Exception('Cannot complete merge on Folder Project Root.');
+    }
+
     // 1. Sync External -> Repo Content
     final tracking = await _readTracking(repoName);
     final docxPath = tracking['docxPath'] as String?;
