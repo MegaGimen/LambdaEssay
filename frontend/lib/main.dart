@@ -2708,6 +2708,160 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   }
 
 
+  Future<void> _handleFileSecondaryTap(File file, TapDownDetails details) async {
+    final position = RelativeRect.fromLTRB(
+      details.globalPosition.dx,
+      details.globalPosition.dy,
+      details.globalPosition.dx,
+      details.globalPosition.dy,
+    );
+
+    final result = await showMenu<String>(
+      context: context,
+      position: position,
+      items: [
+        const PopupMenuItem(
+          value: 'import',
+          child: Text('导入已有追踪项目'),
+        ),
+      ],
+    );
+
+    if (result == 'import') {
+      await _importProjectTo(file);
+    }
+  }
+
+  Future<void> _importProjectTo(File file) async {
+    setState(() => loading = true);
+    final projects = await _fetchProjectList();
+    setState(() => loading = false);
+
+    String? selectedProject;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(builder: (context, setState) {
+        return AlertDialog(
+          title: const Text('选择要导入的项目'),
+          content: SizedBox(
+            width: 300,
+            height: 300,
+            child: ListView.builder(
+              itemCount: projects.length,
+              itemBuilder: (ctx, i) {
+                final pName = projects[i];
+                if (pName == currentProjectName) return const SizedBox.shrink();
+                return ListTile(
+                  title: Text(pName),
+                  selected: selectedProject == pName,
+                  onTap: () {
+                    setState(() => selectedProject = pName);
+                  },
+                );
+              },
+            ),
+          ),
+          actions: [
+             TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+             TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('确定')),
+          ],
+        );
+      }),
+    );
+
+    if (ok == true && selectedProject != null) {
+       await _doImportProject(file, selectedProject!);
+    }
+  }
+
+  Future<void> _doImportProject(File targetFile, String sourceProjectName) async {
+      try {
+         setState(() => loading = true);
+         final appData = Platform.environment['APPDATA'];
+         if (appData == null) throw Exception('APPDATA not found');
+         final gitdocxDir = p.join(appData, 'gitdocx');
+         final sourceRepoPath = p.join(gitdocxDir, sourceProjectName);
+         
+         final targetFilePath = targetFile.path;
+         Map<String, dynamic>? targetRepo;
+         
+         for (final repo in subRepos) {
+            final dPath = repo['docxPath'] as String?;
+            if (dPath != null && (p.equals(dPath, targetFilePath) || dPath == targetFilePath)) {
+               targetRepo = repo;
+               break;
+            }
+         }
+         
+         String targetRepoPath;
+         if (targetRepo != null) {
+            targetRepoPath = targetRepo!['repoPath'];
+         } else {
+            final name = p.basenameWithoutExtension(targetFilePath);
+            final hash = md5.convert(utf8.encode(targetFilePath)).toString().substring(0, 8);
+            targetRepoPath = p.join(gitdocxDir, currentProjectName!, '${name}_$hash');
+         }
+
+         final sourceDir = Directory(sourceRepoPath);
+         final targetDir = Directory(targetRepoPath);
+         
+         if (targetDir.existsSync()) {
+            targetDir.deleteSync(recursive: true);
+         }
+         targetDir.createSync(recursive: true);
+         
+         await _copyDirectory(sourceDir, targetDir);
+         
+         final trackingFile = File(p.join(targetRepoPath, 'tracking.json'));
+         Map<String, dynamic> trackingData = {};
+         if (trackingFile.existsSync()) {
+            try {
+              trackingData = jsonDecode(await trackingFile.readAsString());
+            } catch (_) {}
+         }
+         trackingData['docxPath'] = targetFilePath;
+         await trackingFile.writeAsString(jsonEncode(trackingData));
+         
+         final contentDocx = File(p.join(targetRepoPath, 'content.docx'));
+         if (contentDocx.existsSync()) {
+            contentDocx.copySync(targetFilePath);
+         }
+         
+         final reposResp = await _postJson('http://localhost:8080/track/repos', {
+            'name': currentProjectName!,
+         });
+         final repos = (reposResp['repos'] as List).cast<Map<String, dynamic>>();
+         setState(() {
+            subRepos = repos;
+         });
+         
+         if (mounted) {
+           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('导入成功')));
+         }
+      } catch (e) {
+         if (mounted) {
+           ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('导入失败: $e')));
+         }
+      } finally {
+         if (mounted) {
+           setState(() => loading = false);
+         }
+      }
+  }
+
+  Future<void> _copyDirectory(Directory source, Directory destination) async {
+    await for (var entity in source.list(recursive: false)) {
+      if (entity is Directory) {
+        var newDirectory = Directory(
+            p.join(destination.absolute.path, p.basename(entity.path)));
+        await newDirectory.create();
+        await _copyDirectory(entity.absolute, newDirectory);
+      } else if (entity is File) {
+        await entity.copy(p.join(destination.path, p.basename(entity.path)));
+      }
+    }
+  }
+
   Future<void> _handleFileTap(File file, TapDownDetails details) async {
     final now = DateTime.now();
     final filePath = file.path;
@@ -2915,6 +3069,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                     fileIconBuilder: (extension) =>
                         const Icon(Icons.description, size: 16, color: Colors.blueGrey),
                     onFileTap: _handleFileTap,
+                    onFileSecondaryTap: _handleFileSecondaryTap,
                   ),
                 ),
               ),
