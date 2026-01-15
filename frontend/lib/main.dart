@@ -10,6 +10,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:web_socket_channel/io.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 // import 'package:file_tree_view/file_tree_view.dart';
 import 'widgets/custom_file_tree.dart';
@@ -615,6 +616,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   @override
   void dispose() {
     _channel?.sink.close();
+    _reconnectTimer?.cancel();
     _sidebarFlashCtrl.dispose();
     _sharedController.dispose();
     pathCtrl.dispose();
@@ -649,19 +651,42 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   static const String baseUrl = 'http://localhost:8080';
 
   WebSocketChannel? _channel;
+  Timer? _reconnectTimer;
+  bool _isConnecting = false;
 
   @override
   void initState() {
     super.initState();
+    _sidebarFlashCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 1),
+    )..repeat(reverse: true);
     _checkLogin();
     _connectWebSocket();
   }
 
-  void _connectWebSocket() {
+  Future<void> _connectWebSocket() async {
     if (!mounted) return;
+    if (_isConnecting) return; // Prevent concurrent connection attempts
+    _isConnecting = true;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+
     try {
-      _channel =
-          WebSocketChannel.connect(Uri.parse('ws://localhost:8080/ws/client'));
+      // Use dart:io WebSocket to catch connection errors properly
+      final ws = await WebSocket.connect('ws://localhost:8080/ws/client');
+      if (!mounted) {
+        ws.close();
+        _isConnecting = false;
+        return;
+      }
+      
+      _channel = IOWebSocketChannel(ws);
+      // Update UI to show success state
+      setState(() {
+        _comConnected = true; // Assume connected if websocket is open, server will send updates
+      });
+      
       _channel!.stream.listen((message) {
         if (!mounted) return;
         try {
@@ -690,23 +715,32 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           print("WebSocket message error: $e");
         }
       }, onError: (e) {
-        print("WebSocket connection error: $e");
-        if (mounted)
-          Future.delayed(const Duration(seconds: 5), _connectWebSocket);
+        print("WebSocket connection error: ${e.toString().split('\n').first}");
+        _scheduleReconnect();
       }, onDone: () {
         print("WebSocket connection closed");
-        if (mounted)
-          Future.delayed(const Duration(seconds: 5), _connectWebSocket);
+        _scheduleReconnect();
       });
     } catch (e) {
-      print("WebSocket connection failed: $e");
-      if (mounted)
-        Future.delayed(const Duration(seconds: 5), _connectWebSocket);
+      print("WebSocket connection failed: ${e.toString().split('\n').first}");
+      _scheduleReconnect();
+    } finally {
+      if (mounted) {
+        _isConnecting = false;
+      }
     }
-    _sidebarFlashCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 1),
-    )..repeat(reverse: true);
+  }
+
+  void _scheduleReconnect() {
+    if (!mounted) return;
+    if (_reconnectTimer != null && _reconnectTimer!.isActive) return;
+    
+    setState(() {
+      _channel = null;
+      _comConnected = false;
+    });
+    
+    _reconnectTimer = Timer(const Duration(seconds: 5), _connectWebSocket);
   }
 
   // void _onScaleChanged() { ... } // Removed
