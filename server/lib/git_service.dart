@@ -1505,6 +1505,48 @@ Future<Uint8List> compareCommits(
   });
 }
 
+Future<void> _ensureFolderProjectStructure(String projDir, String docxPath, {bool forceUpdate = false}) async {
+  // 1. Ensure Root is a Git Repo (for metadata like folder_meta.json, edges)
+  final rootDir = Directory(projDir);
+  if (!rootDir.existsSync()) {
+    rootDir.createSync(recursive: true);
+  }
+  
+  final rootGitDir = Directory(p.join(projDir, '.git'));
+  if (!rootGitDir.existsSync()) {
+    await _runGit(['init'], projDir);
+    // Ignore everything in root repo except metadata files
+    final gitignore = File(p.join(projDir, '.gitignore'));
+    await gitignore.writeAsString('''
+*
+!tracking.json
+!folder_meta.json
+!edges
+!.gitignore
+''');
+  }
+
+  // 2. Scan Source and Init Sub Repos
+  final sourceDir = Directory(docxPath);
+  if (!sourceDir.existsSync()) return;
+
+  final files = sourceDir.listSync(recursive: true).whereType<File>();
+  for (final file in files) {
+     if (p.extension(file.path).toLowerCase() != '.docx') continue;
+     if (p.basename(file.path).startsWith('~\$')) continue;
+
+     final relPath = p.relative(file.path, from: docxPath);
+     final targetRepoPath = p.join(projDir, relPath);
+     
+     if (!forceUpdate) {
+        final gitDir = Directory(p.join(targetRepoPath, '.git'));
+        if (gitDir.existsSync()) continue;
+     }
+    
+    await _initSingleRepo(targetRepoPath, file.path);
+  }
+}
+
 Future<Map<String, dynamic>> createTrackingProject(
     String name, String? docxPath) async {
   final projDir = _projectDir(name);
@@ -1531,20 +1573,7 @@ Future<Map<String, dynamic>> createTrackingProject(
   }
 
   if (isFolderMode) {
-    final rootDir = Directory(docxPath!);
-    final files = rootDir.listSync(recursive: true).whereType<File>();
-    for (final file in files) {
-       if (p.extension(file.path).toLowerCase() != '.docx') continue;
-       if (p.basename(file.path).startsWith('~\$')) continue;
- 
-       final relPath = p.relative(file.path, from: docxPath);
-      // Construct target repo path: projDir/relPath
-      // relPath is like "sub/a.docx"
-      // We want repo to be at "projDir/sub/a.docx" (as a directory)
-      final targetRepoPath = p.join(projDir, relPath);
-      
-      await _initSingleRepo(targetRepoPath, file.path);
-    }
+    await _ensureFolderProjectStructure(projDir, docxPath!, forceUpdate: true);
   } else {
     // Single file mode (legacy or file selection)
     // Here projDir IS the repo path
@@ -1701,6 +1730,12 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
     throw Exception('project not found');
   }
   final tracking = await _readTracking(name);
+
+  // Check and auto-init structure for folder projects if needed
+  if (tracking['type'] == 'folder' && tracking['docxPath'] != null) {
+      await _ensureFolderProjectStructure(projDir, tracking['docxPath']);
+  }
+
   return {
     'name': name,
     'repoPath': projDir,
