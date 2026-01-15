@@ -641,7 +641,8 @@ Future<bool> _isFolderProject(String repoPath) async {
   }
 }
 
-Future<void> _updateFolderMeta(String parentRepoPath, String childRelPath, String childName, String childRemoteUrl) async {
+Future<void> _updateFolderMeta(String parentRepoPath, String childRelPath,
+    String childName, String childRemoteUrl) async {
   return _withRepoLock(parentRepoPath, () async {
     final metaFile = File(p.join(parentRepoPath, 'folder_meta.json'));
     Map<String, dynamic> meta = {};
@@ -650,20 +651,21 @@ Future<void> _updateFolderMeta(String parentRepoPath, String childRelPath, Strin
         meta = jsonDecode(await metaFile.readAsString());
       } catch (_) {}
     }
-    
+
     if (meta['items'] == null) meta['items'] = {};
     meta['items'][childRelPath] = {
       'name': childName,
       'remoteUrl': childRemoteUrl,
       'lastUpdate': DateTime.now().toIso8601String(),
     };
-    
+
     await metaFile.writeAsString(jsonEncode(meta));
-    
+
     // Commit changes to parent
     await _runGit(['add', 'folder_meta.json'], parentRepoPath);
     try {
-      await _runGit(['commit', '-m', 'Update metadata for $childName'], parentRepoPath);
+      await _runGit(
+          ['commit', '-m', 'Update metadata for $childName'], parentRepoPath);
     } catch (e) {
       // Ignore if nothing to commit
     }
@@ -674,7 +676,7 @@ String _stripCredentials(String url) {
   try {
     final uri = Uri.parse(url);
     if (uri.userInfo.isNotEmpty) {
-       return uri.replace(userInfo: '').toString();
+      return uri.replace(userInfo: '').toString();
     }
     return url;
   } catch (_) {
@@ -683,82 +685,87 @@ String _stripCredentials(String url) {
 }
 
 Future<void> _notifyParentFolderProject(String repoPath) async {
-   try {
-      final baseDir = _baseDir();
-      Directory current = Directory(p.dirname(repoPath));
-      
-      // Safety: repo must be inside baseDir
-      // Note: isWithin returns true only if strictly inside
-      if (!p.isWithin(baseDir, repoPath)) return;
+  print("Calling _notifyParentFolderProject!");
+  try {
+    final baseDir = _baseDir();
+    Directory current = Directory(p.dirname(repoPath));
 
-      while (true) {
-         final path = current.path;
-         // Stop if we reach baseDir or go above it
-         if (path == baseDir || !p.isWithin(baseDir, path)) break;
-         
-         if (await _isFolderProject(path)) {
-             final relPath = p.relative(repoPath, from: path);
-             final childName = p.basename(repoPath);
-             String remoteUrl = '';
-             try {
-                // Try to find ANY remote
-                final remotes = await _runGit(['remote'], repoPath);
-                if (remotes.isNotEmpty) {
-                    // Default to the first remote as requested
-                    final targetRemote = remotes.first.trim();
-                    
-                    final urls = await _runGit(['remote', 'get-url', targetRemote], repoPath);
-                    if (urls.isNotEmpty) {
-                       remoteUrl = _stripCredentials(urls.first.trim());
-                    }
-                }
-             } catch (_) {}
-             
-             await _updateFolderMeta(path, relPath, childName, remoteUrl);
-             
-             // Recursive: Now treat 'path' (parent) as the child and notify its parent
-             await _notifyParentFolderProject(path);
-             break; // Found the parent folder project and notified, stop this branch.
-         }
-         
-         final parent = current.parent;
-         if (parent.path == current.path) break; // System root
-         current = parent;
+    // Safety: repo must be inside baseDir
+    // Note: isWithin returns true only if strictly inside
+    if (!p.isWithin(baseDir, repoPath)) return;
+
+    while (true) {
+      final path = current.path;
+      // Stop if we reach baseDir or go above it
+      if (path == baseDir || !p.isWithin(baseDir, path)) break;
+
+      if (await _isFolderProject(path)) {
+        final relPath = p.relative(repoPath, from: path);
+        final childName = p.basename(repoPath);
+        String remoteUrl = '';
+        try {
+          // Try to find ANY remote
+          print("repoPath: $repoPath");
+          final remotes = await _runGit(['remote'], repoPath);
+          print("remotes: $remotes");
+          if (remotes.isNotEmpty) {
+            // Default to the first remote as requested
+            final targetRemote = remotes.first.trim();
+
+            final urls =
+                await _runGit(['remote', 'get-url', targetRemote], repoPath);
+            if (urls.isNotEmpty) {
+              remoteUrl = _stripCredentials(urls.first.trim());
+            }
+          }
+        } catch (_) {}
+
+        await _updateFolderMeta(path, relPath, childName, remoteUrl);
+
+        // Recursive: Now treat 'path' (parent) as the child and notify its parent
+        await _notifyParentFolderProject(path);
+        break; // Found the parent folder project and notified, stop this branch.
       }
-   } catch (e) {
-      print('Failed to notify parent folder project: $e');
-   }
+
+      final parent = current.parent;
+      if (parent.path == current.path) break; // System root
+      current = parent;
+    }
+  } catch (e) {
+    print('Failed to notify parent folder project: $e');
+  }
 }
 
 Future<void> _expandFolderProject(String repoPath) async {
   final metaFile = File(p.join(repoPath, 'folder_meta.json'));
   if (!metaFile.existsSync()) return;
-  
+
   try {
     final meta = jsonDecode(await metaFile.readAsString());
     final items = meta['items'] as Map<String, dynamic>?;
     if (items == null) return;
-    
+
     for (final relPath in items.keys) {
       final info = items[relPath];
       final childPath = p.join(repoPath, relPath);
       final childDir = Directory(childPath);
-      
+
       if (!childDir.existsSync()) {
         childDir.createSync(recursive: true);
       }
-      
+
       final gitDir = Directory(p.join(childPath, '.git'));
       if (!gitDir.existsSync()) {
         // Init empty repo
         await Process.run('git', ['init'], workingDirectory: childPath);
-        
+
         // Set remote
         final remoteUrl = info['remoteUrl'] as String?;
         if (remoteUrl != null && remoteUrl.isNotEmpty) {
-           await Process.run('git', ['remote', 'add', 'origin', remoteUrl], workingDirectory: childPath);
+          await Process.run('git', ['remote', 'add', 'origin', remoteUrl],
+              workingDirectory: childPath);
         }
-        
+
         // Create tracking.json for child?
         // Maybe not needed until user opens it.
       }
@@ -784,18 +791,22 @@ Future<void> commitChanges(
     print("repoPath=$repoPath");
 
     if (await _isFolderProject(repoPath)) {
-       throw Exception('Cannot commit on a Folder Project Root. Please commit in specific sub-repositories.');
+      throw Exception(
+          'Cannot commit on a Folder Project Root. Please commit in specific sub-repositories.');
     }
 
     final info = await _resolveTrackingInfo(repoPath);
     final targetPath = info['docxPath'] as String?;
 
     if (targetPath == null) {
-       throw Exception('Missing "docxPath" in tracking.json (or tracking.json not found). Please re-configure the project.');
+      throw Exception(
+          'Missing "docxPath" in tracking.json (or tracking.json not found). Please re-configure the project.');
     }
 
-    if (!FileSystemEntity.isDirectorySync(targetPath) && !FileSystemEntity.isFileSync(targetPath)) {
-       throw Exception('File not found: $targetPath. Has the file in the folder been deleted?');
+    if (!FileSystemEntity.isDirectorySync(targetPath) &&
+        !FileSystemEntity.isFileSync(targetPath)) {
+      throw Exception(
+          'File not found: $targetPath. Has the file in the folder been deleted?');
     }
 
     await _updateContentDocx(repoPath, targetPath);
@@ -822,7 +833,7 @@ Future<void> commitChanges(
     if (head.isNotEmpty) {
       unawaited(ensureCommitPreviewAssets(repoPath, head));
     }
-    
+
     // Notify parent folder project if applicable
     await _notifyParentFolderProject(repoPath);
 
@@ -833,20 +844,21 @@ Future<void> commitChanges(
 Future<void> createBranch(String repoPath, String branchName) async {
   return _withRepoLock(repoPath, () async {
     if (await _isFolderProject(repoPath)) {
-        final name = p.basename(repoPath);
-        final repos = await listProjectRepos(name);
-        int success = 0;
-        for (final r in repos) {
-           try {
-             await _runGit(['checkout', '-b', branchName], r['repoPath']);
-             success++;
-           } catch (e) {
-             print('Failed to create branch in ${r['repoPath']}: $e');
-           }
+      final name = p.basename(repoPath);
+      final repos = await listProjectRepos(name);
+      int success = 0;
+      for (final r in repos) {
+        try {
+          await _runGit(['checkout', '-b', branchName], r['repoPath']);
+          success++;
+        } catch (e) {
+          print('Failed to create branch in ${r['repoPath']}: $e');
         }
-        if (success == 0) throw Exception('Failed to create branch in any sub-repo');
-        clearCache();
-        return;
+      }
+      if (success == 0)
+        throw Exception('Failed to create branch in any sub-repo');
+      clearCache();
+      return;
     }
     await _runGit(['checkout', '-b', branchName], repoPath);
     clearCache();
@@ -859,16 +871,16 @@ Future<void> switchBranch(String projectName, String branchName) async {
     final sw = Stopwatch()..start();
 
     if (await _isFolderProject(repoPath)) {
-        final repos = await listProjectRepos(projectName);
-        for (final r in repos) {
-           try {
-             await _runGit(['checkout', '-f', branchName], r['repoPath']);
-           } catch (e) {
-             print('Failed to switch branch in ${r['repoPath']}: $e');
-           }
+      final repos = await listProjectRepos(projectName);
+      for (final r in repos) {
+        try {
+          await _runGit(['checkout', '-f', branchName], r['repoPath']);
+        } catch (e) {
+          print('Failed to switch branch in ${r['repoPath']}: $e');
         }
-        clearCache();
-        return;
+      }
+      clearCache();
+      return;
     }
 
     await _runGit(['checkout', '-f', branchName], repoPath);
@@ -896,7 +908,7 @@ Future<void> addRemote(String repoPath, String name, String url) async {
     } else {
       await _runGit(['remote', 'add', name, url], repoPath);
     }
-    
+
     // Notify parent folder project if applicable
     await _notifyParentFolderProject(repoPath);
   } catch (e) {
@@ -916,11 +928,14 @@ Future<Uint8List> compareWorking(String repoPath) async {
     final targetPath = info['docxPath'] as String?;
 
     if (targetPath == null) {
-       throw Exception('Missing "docxPath" in tracking.json. Please re-configure the project.');
+      throw Exception(
+          'Missing "docxPath" in tracking.json. Please re-configure the project.');
     }
-    
-    if (!FileSystemEntity.isDirectorySync(targetPath) && !FileSystemEntity.isFileSync(targetPath)) {
-       throw Exception('File not found: $targetPath. Has the file in the folder been deleted?');
+
+    if (!FileSystemEntity.isDirectorySync(targetPath) &&
+        !FileSystemEntity.isFileSync(targetPath)) {
+      throw Exception(
+          'File not found: $targetPath. Has the file in the folder been deleted?');
     }
 
     await _updateContentDocx(repoPath, targetPath); //保证外部更新内部。
@@ -1251,10 +1266,10 @@ Future<void> _generatePreviewInternal(
   try {
     // Only lock for git command
     await _withRepoLock(repoPath, () async {
-       final parents = await _runGit(['rev-parse', '$commitId^'], repoPath);
-       if (parents.isNotEmpty && parents.first.trim().isNotEmpty) {
-         parentId = parents.first.trim();
-       }
+      final parents = await _runGit(['rev-parse', '$commitId^'], repoPath);
+      if (parents.isNotEmpty && parents.first.trim().isNotEmpty) {
+        parentId = parents.first.trim();
+      }
     });
   } catch (_) {
     // Has no parent (initial commit) or error
@@ -1263,38 +1278,38 @@ Future<void> _generatePreviewInternal(
   final tmpDir = await Directory.systemTemp.createTemp('gitdocx_prev_diff_');
   try {
     final currentDocx = p.join(tmpDir.path, '$commitId.docx');
-    
+
     // 1. Export current docx
     await _withRepoLock(repoPath, () async {
-       await _gitArchiveToDocx(repoPath, commitId, currentDocx);
+      await _gitArchiveToDocx(repoPath, commitId, currentDocx);
     });
-    
-    if (parentId.isEmpty) {
-       // Initial commit: just convert to PDF directly using docx2pdf logic (or treat as diff against empty?)
-       // For consistency with user request "diff", if no parent, maybe just show the content.
-       // But user asked to use doccmp. Let's use docx2pdf for single file if no parent, 
-       // or we can simulate empty doc.
-       // Let's stick to simple conversion for initial commit to avoid complexity.
-       if (!pdfFile.existsSync()) {
-          final tmpPdfPath = p.join(tmpDir.path, '$commitId.pdf');
-          await _docxToPdf(currentDocx, tmpPdfPath, commitId);
-          await File(tmpPdfPath).copy(pdfPath);
-       }
-    } else {
-       // Has parent
-       final parentDocx = p.join(tmpDir.path, '$parentId.docx');
-       
-       // 2. Export parent docx
-       await _withRepoLock(repoPath, () async {
-          await _gitArchiveToDocx(repoPath, parentId, parentDocx);
-       });
 
-       // 3. Compare and generate PDF
-       if (!pdfFile.existsSync()) {
-          final tmpPdfPath = p.join(tmpDir.path, '$commitId.pdf');
-          await _doccmpToPdf(parentDocx, currentDocx, tmpPdfPath);
-          await File(tmpPdfPath).copy(pdfPath);
-       }
+    if (parentId.isEmpty) {
+      // Initial commit: just convert to PDF directly using docx2pdf logic (or treat as diff against empty?)
+      // For consistency with user request "diff", if no parent, maybe just show the content.
+      // But user asked to use doccmp. Let's use docx2pdf for single file if no parent,
+      // or we can simulate empty doc.
+      // Let's stick to simple conversion for initial commit to avoid complexity.
+      if (!pdfFile.existsSync()) {
+        final tmpPdfPath = p.join(tmpDir.path, '$commitId.pdf');
+        await _docxToPdf(currentDocx, tmpPdfPath, commitId);
+        await File(tmpPdfPath).copy(pdfPath);
+      }
+    } else {
+      // Has parent
+      final parentDocx = p.join(tmpDir.path, '$parentId.docx');
+
+      // 2. Export parent docx
+      await _withRepoLock(repoPath, () async {
+        await _gitArchiveToDocx(repoPath, parentId, parentDocx);
+      });
+
+      // 3. Compare and generate PDF
+      if (!pdfFile.existsSync()) {
+        final tmpPdfPath = p.join(tmpDir.path, '$commitId.pdf');
+        await _doccmpToPdf(parentDocx, currentDocx, tmpPdfPath);
+        await File(tmpPdfPath).copy(pdfPath);
+      }
     }
   } finally {
     try {
@@ -1310,46 +1325,46 @@ Future<Map<String, bool>> ensureCommitPreviewAssets(
   String commitId,
 ) async {
   print(workingIds);
-  
+
   if (workingIds.contains(commitId)) {
-     return {
-       'pdf': File(_globalCachedPdfPath(commitId)).existsSync(),
-       'thumb': false,
-     };
+    return {
+      'pdf': File(_globalCachedPdfPath(commitId)).existsSync(),
+      'thumb': false,
+    };
   }
 
   // Fast check
   if (File(_globalCachedPdfPath(commitId)).existsSync()) {
-     return {'pdf': true, 'thumb': false};
+    return {'pdf': true, 'thumb': false};
   }
 
   // Mark as working immediately to block other requests
   workingIds.add(commitId);
 
   try {
-     await _previewSemaphore.acquire();
-     try {
-        // Double check existence (optimization)
-        if (File(_globalCachedPdfPath(commitId)).existsSync()) {
-           return {'pdf': true, 'thumb': false};
-        }
-        
-        try {
-          await _generatePreviewInternal(repoPath, commitId);
-        } catch (e) {
-          print('Preview generation failed for $commitId: $e');
-        }
-        
-        return {
-          'pdf': File(_globalCachedPdfPath(commitId)).existsSync(),
-          'thumb': false,
-        };
-     } finally {
-        _previewSemaphore.release();
-     }
+    await _previewSemaphore.acquire();
+    try {
+      // Double check existence (optimization)
+      if (File(_globalCachedPdfPath(commitId)).existsSync()) {
+        return {'pdf': true, 'thumb': false};
+      }
+
+      try {
+        await _generatePreviewInternal(repoPath, commitId);
+      } catch (e) {
+        print('Preview generation failed for $commitId: $e');
+      }
+
+      return {
+        'pdf': File(_globalCachedPdfPath(commitId)).existsSync(),
+        'thumb': false,
+      };
+    } finally {
+      _previewSemaphore.release();
+    }
   } finally {
-     // Remove from workingIds only after we are completely done (or failed)
-     workingIds.remove(commitId);
+    // Remove from workingIds only after we are completely done (or failed)
+    workingIds.remove(commitId);
   }
 }
 
@@ -1374,88 +1389,89 @@ Future<Map<String, dynamic>> _readTrackingJson(String jsonPath) async {
 Future<Map<String, dynamic>> _resolveTrackingInfo(String repoPath) async {
   String current = p.normalize(repoPath);
   final root = p.rootPrefix(current);
-  
+
   // 1. Try to find tracking.json recursively
   while (true) {
     final trackingFile = p.join(current, 'tracking.json');
     if (File(trackingFile).existsSync()) {
-       final tracking = await _readTrackingJson(trackingFile);
-       final baseDocxPath = tracking['docxPath'] as String?;
-       
-       if (baseDocxPath != null) {
-          String fullDocxPath = baseDocxPath;
-          
-          if (p.normalize(current) != p.normalize(repoPath)) {
-             // Folder mode: tracking is in parent (current)
-             // We are in a sub-repo (repoPath)
-             // We need to generate a tracking.json in repoPath
-             
-             final relPath = p.relative(repoPath, from: current);
-             fullDocxPath = p.join(baseDocxPath, relPath);
-             
-             // Create tracking.json in sub-repo
-             final subTracking = {
-               'docxPath': fullDocxPath,
-               // 'internalPath': relPath, // Optional, but full path is enough
-             };
-             await _writeTracking(p.basename(repoPath), subTracking); // Note: _writeTracking uses _trackingFile which uses _projectDir(name). 
-             // But here repoPath IS the project dir. 
-             // Wait, _writeTracking uses _projectDir(name) -> _baseDir()/name. 
-             // If repoPath is NOT in _baseDir(), this might be wrong.
-             // But usually repoPath IS in _baseDir() (or subfolder).
-             // Actually, let's just write to repoPath directly.
-             
-             final f = File(p.join(repoPath, 'tracking.json'));
-             await f.writeAsString(jsonEncode(subTracking));
-             
-             // Check existence
-             if (!FileSystemEntity.isFileSync(fullDocxPath) && !FileSystemEntity.isDirectorySync(fullDocxPath)) {
-                // Return info but user will likely hit "File not found" later
-                // Or we can throw here?
-                // User said: "If docxPath not found... prompt user".
-                // If we return, caller (commitChanges) checks existence and throws.
-             }
-             
-             return {
-                'docxPath': fullDocxPath,
-                'trackingRoot': repoPath, // Now it has its own tracking
-                'rawTracking': subTracking
-             };
+      final tracking = await _readTrackingJson(trackingFile);
+      final baseDocxPath = tracking['docxPath'] as String?;
 
-          } else {
-             // Single mode: tracking is in repo dir
-             final internalPath = tracking['internalPath'] as String?;
-             if (internalPath != null && internalPath.isNotEmpty) {
-                fullDocxPath = p.join(baseDocxPath, internalPath);
-             }
-             return {
-                'docxPath': fullDocxPath,
-                'trackingRoot': current,
-                'rawTracking': tracking
-             };
+      if (baseDocxPath != null) {
+        String fullDocxPath = baseDocxPath;
+
+        if (p.normalize(current) != p.normalize(repoPath)) {
+          // Folder mode: tracking is in parent (current)
+          // We are in a sub-repo (repoPath)
+          // We need to generate a tracking.json in repoPath
+
+          final relPath = p.relative(repoPath, from: current);
+          fullDocxPath = p.join(baseDocxPath, relPath);
+
+          // Create tracking.json in sub-repo
+          final subTracking = {
+            'docxPath': fullDocxPath,
+            // 'internalPath': relPath, // Optional, but full path is enough
+          };
+          await _writeTracking(p.basename(repoPath),
+              subTracking); // Note: _writeTracking uses _trackingFile which uses _projectDir(name).
+          // But here repoPath IS the project dir.
+          // Wait, _writeTracking uses _projectDir(name) -> _baseDir()/name.
+          // If repoPath is NOT in _baseDir(), this might be wrong.
+          // But usually repoPath IS in _baseDir() (or subfolder).
+          // Actually, let's just write to repoPath directly.
+
+          final f = File(p.join(repoPath, 'tracking.json'));
+          await f.writeAsString(jsonEncode(subTracking));
+
+          // Check existence
+          if (!FileSystemEntity.isFileSync(fullDocxPath) &&
+              !FileSystemEntity.isDirectorySync(fullDocxPath)) {
+            // Return info but user will likely hit "File not found" later
+            // Or we can throw here?
+            // User said: "If docxPath not found... prompt user".
+            // If we return, caller (commitChanges) checks existence and throws.
           }
-       }
+
+          return {
+            'docxPath': fullDocxPath,
+            'trackingRoot': repoPath, // Now it has its own tracking
+            'rawTracking': subTracking
+          };
+        } else {
+          // Single mode: tracking is in repo dir
+          final internalPath = tracking['internalPath'] as String?;
+          if (internalPath != null && internalPath.isNotEmpty) {
+            fullDocxPath = p.join(baseDocxPath, internalPath);
+          }
+          return {
+            'docxPath': fullDocxPath,
+            'trackingRoot': current,
+            'rawTracking': tracking
+          };
+        }
+      }
     }
-    
+
     final parent = p.dirname(current);
     if (parent == current || parent == root) break;
     current = parent;
   }
-  
+
   // Fallback
   final name = p.basename(repoPath);
   final defaultTracking = await _readTracking(name);
   if (defaultTracking.isNotEmpty && defaultTracking['docxPath'] != null) {
-      String fullDocxPath = defaultTracking['docxPath'];
-      final internalPath = defaultTracking['internalPath'] as String?;
-      if (internalPath != null && internalPath.isNotEmpty) {
-        fullDocxPath = p.join(fullDocxPath, internalPath);
-      }
-      return {
-         'docxPath': fullDocxPath,
-      };
+    String fullDocxPath = defaultTracking['docxPath'];
+    final internalPath = defaultTracking['internalPath'] as String?;
+    if (internalPath != null && internalPath.isNotEmpty) {
+      fullDocxPath = p.join(fullDocxPath, internalPath);
+    }
+    return {
+      'docxPath': fullDocxPath,
+    };
   }
-  
+
   return {};
 }
 
@@ -1574,13 +1590,14 @@ Future<Uint8List> compareCommits(
   });
 }
 
-Future<void> _ensureFolderProjectStructure(String projDir, String docxPath, {bool forceUpdate = false}) async {
+Future<void> _ensureFolderProjectStructure(String projDir, String docxPath,
+    {bool forceUpdate = false}) async {
   // 1. Ensure Root is a Git Repo (for metadata like folder_meta.json, edges)
   final rootDir = Directory(projDir);
   if (!rootDir.existsSync()) {
     rootDir.createSync(recursive: true);
   }
-  
+
   final rootGitDir = Directory(p.join(projDir, '.git'));
   if (!rootGitDir.existsSync()) {
     await _runGit(['init'], projDir);
@@ -1601,17 +1618,17 @@ Future<void> _ensureFolderProjectStructure(String projDir, String docxPath, {boo
 
   final files = sourceDir.listSync(recursive: true).whereType<File>();
   for (final file in files) {
-     if (p.extension(file.path).toLowerCase() != '.docx') continue;
-     if (p.basename(file.path).startsWith('~\$')) continue;
+    if (p.extension(file.path).toLowerCase() != '.docx') continue;
+    if (p.basename(file.path).startsWith('~\$')) continue;
 
-     final relPath = p.relative(file.path, from: docxPath);
-     final targetRepoPath = p.join(projDir, relPath);
-     
-     if (!forceUpdate) {
-        final gitDir = Directory(p.join(targetRepoPath, '.git'));
-        if (gitDir.existsSync()) continue;
-     }
-    
+    final relPath = p.relative(file.path, from: docxPath);
+    final targetRepoPath = p.join(projDir, relPath);
+
+    if (!forceUpdate) {
+      final gitDir = Directory(p.join(targetRepoPath, '.git'));
+      if (gitDir.existsSync()) continue;
+    }
+
     await _initSingleRepo(targetRepoPath, file.path);
   }
 }
@@ -1620,7 +1637,7 @@ Future<Map<String, dynamic>> createTrackingProject(
     String name, String? docxPath) async {
   final projDir = _projectDir(name);
   final dir = Directory(projDir);
-  
+
   // Clean up existing if any (or maybe we should fail if exists?)
   // For now, assume fresh creation or overwrite
   if (dir.existsSync()) {
@@ -1655,10 +1672,11 @@ Future<Map<String, dynamic>> createTrackingProject(
     tracking['docxPath'] = _sanitizeFsPath(docxPath);
     tracking['type'] = isFolderMode ? 'folder' : 'file';
   } else {
-    tracking['type'] = 'file'; // Default to file if no path provided (empty repo)
+    tracking['type'] =
+        'file'; // Default to file if no path provided (empty repo)
   }
   // repoDocxPath is ambiguous for folder mode, maybe point to root?
-  tracking['repoDocxPath'] = p.join(projDir, kContentDirName); 
+  tracking['repoDocxPath'] = p.join(projDir, kContentDirName);
 
   await _writeTracking(name, tracking);
   return {
@@ -1673,7 +1691,7 @@ Future<void> _initSingleRepo(String repoPath, String? sourceDocxPath) async {
   if (!dir.existsSync()) {
     dir.createSync(recursive: true);
   }
-  
+
   final gitDir = Directory(p.join(repoPath, '.git'));
   if (!gitDir.existsSync()) {
     await _runGit(['init'], repoPath);
@@ -1692,13 +1710,11 @@ Future<void> _initSingleRepo(String repoPath, String? sourceDocxPath) async {
 Future<List<Map<String, dynamic>>> listProjectRepos(String name) async {
   final projDir = _projectDir(name);
   final tracking = await _readTracking(name);
-  
+
   if (tracking['type'] != 'folder') {
-    return [{
-       'relPath': '.',
-       'repoPath': projDir,
-       'docxPath': tracking['docxPath']
-    }];
+    return [
+      {'relPath': '.', 'repoPath': projDir, 'docxPath': tracking['docxPath']}
+    ];
   }
 
   final results = <Map<String, dynamic>>[];
@@ -1710,19 +1726,19 @@ Future<List<Map<String, dynamic>>> listProjectRepos(String name) async {
     final entities = dir.listSync(recursive: true);
     for (final entity in entities) {
       if (entity is Directory && p.basename(entity.path) == '.git') {
-         final repoPath = entity.parent.path;
-         final relPath = p.relative(repoPath, from: projDir);
-         
-         String? subDocxPath;
-         if (rootDocxPath != null) {
-            subDocxPath = p.join(rootDocxPath, relPath);
-         }
+        final repoPath = entity.parent.path;
+        final relPath = p.relative(repoPath, from: projDir);
 
-         results.add({
-            'relPath': relPath,
-            'repoPath': repoPath,
-            'docxPath': subDocxPath,
-         });
+        String? subDocxPath;
+        if (rootDocxPath != null) {
+          subDocxPath = p.join(rootDocxPath, relPath);
+        }
+
+        results.add({
+          'relPath': relPath,
+          'repoPath': repoPath,
+          'docxPath': subDocxPath,
+        });
       }
     }
   }
@@ -1740,9 +1756,9 @@ Future<void> syncFolderProject(String name) async {
   }
 
   if (!Directory(sourceRoot).existsSync()) {
-     // Source folder deleted? We might want to warn or do nothing, but user said sync.
-     // If source is gone, maybe we should delete everything? Safer to throw for now.
-     throw Exception('Source folder not found: $sourceRoot');
+    // Source folder deleted? We might want to warn or do nothing, but user said sync.
+    // If source is gone, maybe we should delete everything? Safer to throw for now.
+    throw Exception('Source folder not found: $sourceRoot');
   }
 
   // 1. Scan source folder for .docx files
@@ -1754,12 +1770,12 @@ Future<void> syncFolderProject(String name) async {
       .toList();
 
   final sourceRelPaths = <String>{};
-  
+
   // 2. Update or Create repos
   for (final file in sourceFiles) {
     final relPath = p.relative(file.path, from: sourceRoot);
     sourceRelPaths.add(relPath);
-    
+
     final targetRepoPath = p.join(projDir, relPath);
     // This will create if not exists, or update content.docx if exists
     await _initSingleRepo(targetRepoPath, file.path);
@@ -1769,26 +1785,26 @@ Future<void> syncFolderProject(String name) async {
   // We need to be careful not to delete the root projDir itself if it happens to be a repo (unlikely in folder mode)
   final targetDir = Directory(projDir);
   if (targetDir.existsSync()) {
-     final entities = targetDir.listSync(recursive: true);
-     for (final entity in entities) {
-        if (entity is Directory && p.basename(entity.path) == '.git') {
-           final repoPath = entity.parent.path;
-           // If repoPath is the project root, skip? Folder mode structure: projDir/sub/a.docx/.git
-           if (p.equals(p.normalize(repoPath), p.normalize(projDir))) continue;
+    final entities = targetDir.listSync(recursive: true);
+    for (final entity in entities) {
+      if (entity is Directory && p.basename(entity.path) == '.git') {
+        final repoPath = entity.parent.path;
+        // If repoPath is the project root, skip? Folder mode structure: projDir/sub/a.docx/.git
+        if (p.equals(p.normalize(repoPath), p.normalize(projDir))) continue;
 
-           final relPath = p.relative(repoPath, from: projDir);
-           
-           // Check if this relPath exists in source
-           if (!sourceRelPaths.contains(relPath)) {
-              print('Deleting orphaned repo: $repoPath');
-              try {
-                 entity.parent.deleteSync(recursive: true);
-              } catch (e) {
-                 print('Failed to delete orphaned repo: $e');
-              }
-           }
+        final relPath = p.relative(repoPath, from: projDir);
+
+        // Check if this relPath exists in source
+        if (!sourceRelPaths.contains(relPath)) {
+          print('Deleting orphaned repo: $repoPath');
+          try {
+            entity.parent.deleteSync(recursive: true);
+          } catch (e) {
+            print('Failed to delete orphaned repo: $e');
+          }
         }
-     }
+      }
+    }
   }
 }
 
@@ -1802,8 +1818,12 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
 
   // Check and auto-init structure for folder projects if needed
   if (tracking['type'] == 'folder' && tracking['docxPath'] != null) {
-      await _ensureFolderProjectStructure(projDir, tracking['docxPath']);
+    await _ensureFolderProjectStructure(projDir, tracking['docxPath']);
   }
+
+  // Always try to notify parent folder project (if any) to keep metadata fresh
+  // This covers the case where we open a sub-project directly
+  await _notifyParentFolderProject(projDir);
 
   return {
     'name': name,
@@ -1849,17 +1869,17 @@ Future<Map<String, dynamic>> updateTrackingProject(
       if (!dir.existsSync()) {
         throw Exception('project not found');
       }
-      
+
       Map<String, dynamic> tracking;
       if (repoPath != null) {
         tracking = {
-           'name': name,
-           'docxPath': docxPath,
+          'name': name,
+          'docxPath': docxPath,
         };
       } else {
         tracking = await _readTracking(name);
       }
-      
+
       String? sourcePath = tracking['docxPath'] as String?;
       if (newDocxPath != null && newDocxPath.trim().isNotEmpty) {
         sourcePath = _sanitizeFsPath(newDocxPath);
@@ -1889,9 +1909,9 @@ Future<Map<String, dynamic>> updateTrackingProject(
         contentDir.createSync();
       }
       tracking['repoDocxPath'] = contentDir.path;
-      
+
       if (repoPath == null) {
-         await _writeTracking(name, tracking);
+        await _writeTracking(name, tracking);
       }
 
       print(
@@ -1901,10 +1921,15 @@ Future<Map<String, dynamic>> updateTrackingProject(
       // Check if folder type, if so, we are done with tracking update, return.
       // Folder type projects are containers, not git repos themselves.
       if (tracking['type'] == 'folder') {
-        print('[Perf] Folder project updated. Skipping git operations on root.');
+        print(
+            '[Perf] Folder project updated. Skipping git operations on root.');
+        
+        await _notifyParentFolderProject(projDir);
+
         return {
           'repoPath': projDir,
-          'workingChanged': false, // or true? Folder tracking update implies maybe sub-repos changed? 
+          'workingChanged':
+              false, // or true? Folder tracking update implies maybe sub-repos changed?
           // But status check on root will fail.
           // Let's assume folder project update is just metadata update.
           'head': null,
@@ -1982,6 +2007,8 @@ Future<Map<String, dynamic>> updateTrackingProject(
       totalSw.stop();
       print(
           '[Perf] updateTrackingProject Total Time: ${totalSw.elapsedMilliseconds}ms');
+
+      await _notifyParentFolderProject(projDir);
 
       return {
         'repoPath': projDir,
@@ -2147,17 +2174,18 @@ Future<void> resetBranch(String projectName, String commitId) async {
   final repoPath = _projectDir(projectName);
   return _withRepoLock(repoPath, () async {
     if (await _isFolderProject(repoPath)) {
-        final repos = await listProjectRepos(projectName);
-        for (final r in repos) {
-            final subPath = r['repoPath'] as String;
-            if (await _repoHasCommit(subPath, commitId)) {
-                print('Found commit $commitId in sub-repo $subPath. Resetting...');
-                await _runGit(['reset', '--hard', commitId], subPath);
-                clearCache();
-                return;
-            }
+      final repos = await listProjectRepos(projectName);
+      for (final r in repos) {
+        final subPath = r['repoPath'] as String;
+        if (await _repoHasCommit(subPath, commitId)) {
+          print('Found commit $commitId in sub-repo $subPath. Resetting...');
+          await _runGit(['reset', '--hard', commitId], subPath);
+          clearCache();
+          return;
         }
-        throw Exception('Commit $commitId not found in any sub-repository of $projectName');
+      }
+      throw Exception(
+          'Commit $commitId not found in any sub-repository of $projectName');
     }
 
     await _runGit(['reset', '--hard', commitId], repoPath);
@@ -2170,17 +2198,18 @@ Future<void> rollbackVersion(String projectName, String commitId) async {
   final repoPath = _projectDir(projectName);
   return _withRepoLock(repoPath, () async {
     if (await _isFolderProject(repoPath)) {
-        final repos = await listProjectRepos(projectName);
-        for (final r in repos) {
-            final subPath = r['repoPath'] as String;
-            if (await _repoHasCommit(subPath, commitId)) {
-                print('Found commit $commitId in sub-repo $subPath. Rolling back...');
-                await _runGit(['checkout', commitId, '--', kContentDirName], subPath);
-                await _syncToExternal(subPath);
-                return;
-            }
+      final repos = await listProjectRepos(projectName);
+      for (final r in repos) {
+        final subPath = r['repoPath'] as String;
+        if (await _repoHasCommit(subPath, commitId)) {
+          print('Found commit $commitId in sub-repo $subPath. Rolling back...');
+          await _runGit(['checkout', commitId, '--', kContentDirName], subPath);
+          await _syncToExternal(subPath);
+          return;
         }
-        throw Exception('Commit $commitId not found in any sub-repository of $projectName');
+      }
+      throw Exception(
+          'Commit $commitId not found in any sub-repository of $projectName');
     }
 
     // Checkout doc_content from commitId to working dir
@@ -2384,30 +2413,30 @@ Future<void> pushToRemote(String repoPath, String username, String token,
         }
       }
     }
-    
+
     // Check for parent folder project and update/push if needed
     try {
-        final baseDir = _baseDir();
-        Directory current = Directory(p.dirname(repoPath));
-        if (p.isWithin(baseDir, repoPath)) {
-            while (true) {
-                final path = current.path;
-                if (path == baseDir || !p.isWithin(baseDir, path)) break;
+      final baseDir = _baseDir();
+      Directory current = Directory(p.dirname(repoPath));
+      if (p.isWithin(baseDir, repoPath)) {
+        while (true) {
+          final path = current.path;
+          if (path == baseDir || !p.isWithin(baseDir, path)) break;
 
-                if (await _isFolderProject(path)) {
-                     print('Found parent folder project: $path');
-                     // Recursively push parent
-                     await pushToRemote(path, username, token, force: force);
-                     break; 
-                }
-                
-                final parent = current.parent;
-                if (parent.path == current.path) break;
-                current = parent;
-            }
+          if (await _isFolderProject(path)) {
+            print('Found parent folder project: $path');
+            // Recursively push parent
+            await pushToRemote(path, username, token, force: force);
+            break;
+          }
+
+          final parent = current.parent;
+          if (parent.path == current.path) break;
+          current = parent;
         }
+      }
     } catch (e) {
-       print('Failed to push parent folder: $e');
+      print('Failed to push parent folder: $e');
     }
   });
 }
@@ -2592,21 +2621,21 @@ Future<Map<String, dynamic>> pullFromRemote(
         }
       }
     } catch (e) {}
-    
+
     // Check if it is a folder project (has folder_meta.json)
     if (File(p.join(projDir, 'folder_meta.json')).existsSync()) {
-       // Update tracking.json
-       final tracking = await _readTracking(repoName);
-       if (tracking['type'] != 'folder') {
-         tracking['type'] = 'folder';
-         tracking['docxPath'] = projDir; // Root is the docxPath (folder)
-         await _writeTracking(repoName, tracking);
-       }
-       
-       // Expand
-       await _expandFolderProject(projDir);
+      // Update tracking.json
+      final tracking = await _readTracking(repoName);
+      if (tracking['type'] != 'folder') {
+        tracking['type'] = 'folder';
+        tracking['docxPath'] = projDir; // Root is the docxPath (folder)
+        await _writeTracking(repoName, tracking);
+      }
+
+      // Expand
+      await _expandFolderProject(projDir);
     }
-    
+
     // Sync external docx with pulled content
     await _syncToExternal(projDir);
 
@@ -2627,7 +2656,10 @@ Future<Map<String, dynamic>> checkPullStatus(
   final projDir = _projectDir(repoName);
   return _withRepoLock(projDir, () async {
     if (await _isFolderProject(projDir)) {
-       return {'status': 'error', 'message': 'Cannot check pull status on Folder Project Root.'};
+      return {
+        'status': 'error',
+        'message': 'Cannot check pull status on Folder Project Root.'
+      };
     }
 
     final remoteName = repoName.toLowerCase();
@@ -2721,7 +2753,7 @@ Future<String?> findProjectByDocxPath(String docxPath) async {
 Future<void> rebasePull(String repoName, String username, String token) async {
   final projDir = _projectDir(repoName);
   if (await _isFolderProject(projDir)) {
-     throw Exception('Cannot rebase on Folder Project Root.');
+    throw Exception('Cannot rebase on Folder Project Root.');
   }
 
   final remoteName = repoName.toLowerCase();
@@ -2894,7 +2926,8 @@ Future<void> forkLocal(String repoName, String newBranchName) async {
   final repoPath = _projectDir(repoName);
   return _withRepoLock(repoPath, () async {
     if (await _isFolderProject(repoPath)) {
-        throw Exception('Forking local branch on Folder Root is not supported yet.');
+      throw Exception(
+          'Forking local branch on Folder Root is not supported yet.');
     }
 
     final currentBranch = await getCurrentBranch(repoPath);
@@ -2928,7 +2961,7 @@ Future<void> prepareMerge(String repoName, String targetBranch) async {
   final projDir = _projectDir(repoName);
   return _withRepoLock(projDir, () async {
     if (await _isFolderProject(projDir)) {
-       throw Exception('Cannot merge on Folder Project Root.');
+      throw Exception('Cannot merge on Folder Project Root.');
     }
 
     final trackingFile = File(p.join(projDir, 'tracking.json'));
@@ -3012,7 +3045,7 @@ Future<void> completeMerge(String repoName, String targetBranch) async {
   final projDir = _projectDir(repoName);
   return _withRepoLock(projDir, () async {
     if (await _isFolderProject(projDir)) {
-       throw Exception('Cannot complete merge on Folder Project Root.');
+      throw Exception('Cannot complete merge on Folder Project Root.');
     }
 
     // 1. Sync External -> Repo Content
