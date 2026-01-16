@@ -1229,6 +1229,21 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       return;
     }
 
+    // Determine default name
+    String defaultName = currentProjectName ?? '';
+    if (defaultName.isEmpty) {
+      // split by / or \
+      defaultName = repoPath.split(RegExp(r'[/\\]')).last;
+    }
+
+    // Ask user for target repo
+    final targetRepoName = await _showRepoSelectionDialog(
+      allowNew: true,
+      defaultName: defaultName,
+    );
+
+    if (targetRepoName == null) return; // User cancelled
+
     setState(() {
       loading = true;
       error = null;
@@ -1239,6 +1254,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         'username': _username,
         'token': _token,
         'force': force,
+        'targetRepoName': targetRepoName,
       });
       if (!mounted) return;
       ScaffoldMessenger.of(context)
@@ -3378,15 +3394,15 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                                   ? null
                                   : () =>
                                       _onUpdateRepoAction(opIdentical: false),
-                              child: const Text('如果文档没同步就点我'),
+                              child: const Text('同步'),
                             ),
                             ElevatedButton(
                               onPressed: loading ? null : _onPush,
-                              child: const Text('推送本地追踪项目到远程'),
+                              child: const Text('推送'),
                             ),
                             ElevatedButton(
                               onPressed: loading ? null : _onPull,
-                              child: const Text('从远程拉取追踪项目到本地'),
+                              child: const Text('拉取'),
                             ),
                             OutlinedButton.icon(
                               onPressed: loading
