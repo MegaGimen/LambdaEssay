@@ -1580,42 +1580,61 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     });
 
     if (isFresh) {
+      // Check if folder_meta.json exists to determine if it is a folder project
+      bool isFolderProject = false;
+      try {
+        final appData = Platform.environment['APPDATA'];
+        if (appData != null) {
+          final repoPath = p.join(appData, 'gitdocx', repoName);
+          isFolderProject = File(p.join(repoPath, 'folder_meta.json')).existsSync();
+        }
+      } catch (_) {}
+
       final docxCtrl = TextEditingController();
       final ok = await showDialog<bool>(
         context: context,
         builder: (_) => StatefulBuilder(
           builder: (context, setState) => AlertDialog(
-            title: const Text('设置追踪文档'),
+            title: Text(isFolderProject ? '设置追踪文件夹' : '设置追踪文档'),
             content: SizedBox(
               width: 500,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text('这是一个新的克隆（或已被重置），请重新设置要追踪的Word文档(.docx)或解包文件夹'),
+                  Text(isFolderProject 
+                      ? '这是一个新的克隆（或已被重置），请重新设置要追踪的文件夹'
+                      : '这是一个新的克隆（或已被重置），请重新设置要追踪的Word文档(.docx)或解包文件夹'),
                   const SizedBox(height: 8),
                   Row(
                     children: [
                       Expanded(
                         child: TextField(
                           controller: docxCtrl,
-                          decoration: const InputDecoration(
-                            labelText: 'docx文件路径或解包文件夹路径',
+                          decoration: InputDecoration(
+                            labelText: isFolderProject ? '文件夹路径' : 'docx文件路径或解包文件夹路径',
                           ),
                         ),
                       ),
                       IconButton(
-                        icon: const Icon(Icons.insert_drive_file),
-                        tooltip: '选择文件',
+                        icon: Icon(isFolderProject ? Icons.folder : Icons.insert_drive_file),
+                        tooltip: isFolderProject ? '选择文件夹' : '选择文件',
                         onPressed: () async {
-                          FilePickerResult? result =
-                              await FilePicker.platform.pickFiles(
-                            type: FileType.custom,
-                            allowedExtensions: ['docx'],
-                          );
-                          if (result != null &&
-                              result.files.single.path != null) {
-                            docxCtrl.text = result.files.single.path!;
-                          }
+                            if (isFolderProject) {
+                                String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
+                                if (selectedDirectory != null) {
+                                    docxCtrl.text = selectedDirectory;
+                                }
+                            } else {
+                                FilePickerResult? result =
+                                    await FilePicker.platform.pickFiles(
+                                type: FileType.custom,
+                                allowedExtensions: ['docx'],
+                                );
+                                if (result != null &&
+                                    result.files.single.path != null) {
+                                docxCtrl.text = result.files.single.path!;
+                                }
+                            }
                         },
                       ),
                     ],
@@ -1646,10 +1665,15 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             setState(() {
               docxPathCtrl.text = docx;
             });
+            
+            if (isFolderProject) {
+                // Refresh project to load sub-repos
+                await _openProject(repoName, isFolderProject: true);
+            }
           } catch (e) {
             if (mounted) {
               ScaffoldMessenger.of(context)
-                  .showSnackBar(SnackBar(content: Text('设置文档失败: $e')));
+                  .showSnackBar(SnackBar(content: Text('设置失败: $e')));
             }
           }
         }
@@ -2016,8 +2040,12 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     final remoteIds = remoteData!.commits.map((c) => c.id).toSet();
 
     final allCommits = <String, CommitNode>{};
-    for (final c in data!.commits) allCommits[c.id] = c;
-    for (final c in remoteData!.commits) allCommits[c.id] = c;
+    for (final c in data!.commits) {
+      allCommits[c.id] = c;
+    }
+    for (final c in remoteData!.commits) {
+      allCommits[c.id] = c;
+    }
 
     final sorted = allCommits.values.toList();
     sorted.sort((a, b) {
@@ -3168,31 +3196,6 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     }
   }
 
-  Future<void> _handleFolderDrop(Directory dir, List<XFile> files) async {
-    bool hasDocx = false;
-    for (final xfile in files) {
-      if (p.extension(xfile.path).toLowerCase() == '.docx') {
-        final targetPath = p.join(dir.path, xfile.name);
-        try {
-          await xfile.saveTo(targetPath);
-          hasDocx = true;
-        } catch (e) {
-          print('Error copying file: $e');
-        }
-      }
-    }
-
-    if (hasDocx) {
-       if (mounted) {
-         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('文件已添加，正在同步...')));
-       }
-       await _onSyncFolder();
-    }
-  }
-
-  Future<void> _handleFileDrop(File file, List<XFile> files) async {
-    await _handleFolderDrop(file.parent, files);
-  }
 
   Widget _buildSidebar() {
     final rootPath = docxPathCtrl.text.trim();
@@ -3289,8 +3292,6 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                         const Icon(Icons.description, size: 16, color: Colors.blueGrey),
                     onFileTap: _handleFileTap,
                     onFileSecondaryTap: _handleFileSecondaryTap,
-                    onFolderDrop: _handleFolderDrop,
-                    onFileDrop: _handleFileDrop,
                   ),
                 ),
               ),
@@ -5880,8 +5881,9 @@ class _GraphViewState extends State<_GraphView>
       final laneC = laneOf[child];
       final rowP = rowOf[parent];
       final laneP = laneOf[parent];
-      if (rowC == null || laneC == null || rowP == null || laneP == null)
+      if (rowC == null || laneC == null || rowP == null || laneP == null) {
         continue;
+      }
 
       final x = laneC * laneWidth + laneWidth / 2;
       final y = rowC * rowHeight + rowHeight / 2;

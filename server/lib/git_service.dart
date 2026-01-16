@@ -1635,10 +1635,10 @@ Future<void> _ensureFolderProjectStructure(String projDir, String docxPath,
   }
 
   // 3. Update folder_meta.json
-  await _updateFolderMeta(projDir, docxPath);
+  await _scanAndUpdateFolderMeta(projDir, docxPath);
 }
 
-Future<void> _updateFolderMeta(String projDir, String docxPath) async {
+Future<void> _scanAndUpdateFolderMeta(String projDir, String docxPath) async {
   final metaFile = File(p.join(projDir, 'folder_meta.json'));
   Map<String, dynamic> meta = {};
   if (metaFile.existsSync()) {
@@ -1836,7 +1836,7 @@ Future<void> syncFolderProject(String name) async {
   }
 
   // 3. Update folder_meta.json
-  await _updateFolderMeta(projDir, sourceRoot);
+  await _scanAndUpdateFolderMeta(projDir, sourceRoot);
 
   // 4. Scan target folder for repos (directories with .git)
   // We need to be careful not to delete the root projDir itself if it happens to be a repo (unlikely in folder mode)
@@ -1982,6 +1982,7 @@ Future<Map<String, dynamic>> updateTrackingProject(
             '[Perf] Folder project updated. Skipping git operations on root.');
         
         await _notifyParentFolderProject(projDir);
+        await syncFolderProject(name);
 
         return {
           'repoPath': projDir,

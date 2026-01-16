@@ -1,11 +1,7 @@
 import 'dart:async';
 import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path;
 import 'package:flutter/material.dart';
-import 'package:flutter/gestures.dart';
-import 'package:desktop_drop/desktop_drop.dart';
-import 'package:cross_file/cross_file.dart';
 
 // --- Style Classes (Merged from style.dart) ---
 
@@ -228,8 +224,6 @@ class FoldableDirectoryTree extends StatefulWidget {
   final void Function(File, TapDownDetails)? onFileSecondaryTap;
   final void Function(Directory, TapDownDetails)? onDirTap;
   final void Function(Directory, TapDownDetails)? onDirSecondaryTap;
-  final void Function(Directory, List<XFile>)? onFolderDrop;
-  final void Function(File, List<XFile>)? onFileDrop;
   final List<Widget>? folderActions;
   final List<Widget>? fileActions;
   final Widget Function(String fileExtension)? fileIconBuilder;
@@ -245,8 +239,6 @@ class FoldableDirectoryTree extends StatefulWidget {
     this.onFileSecondaryTap,
     this.onDirTap,
     this.onDirSecondaryTap,
-    this.onFolderDrop,
-    this.onFileDrop,
     this.folderStyle,
     this.fileStyle,
     this.folderActions,
@@ -284,13 +276,7 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
     final bool hasUpdate = widget.updatedPaths != null && 
         widget.updatedPaths!.contains(directory.path);
 
-    return DropTarget(
-      onDragDone: (details) {
-        if (widget.onFolderDrop != null) {
-          widget.onFolderDrop!(directory, details.files);
-        }
-      },
-      child: Column(
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         GestureDetector(
@@ -490,13 +476,7 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
         ? path.basename(file.path) 
         : '${path.basename(file.path)} (不支持的文件类型)';
 
-    return DropTarget(
-      onDragDone: (details) {
-        if (widget.onFileDrop != null) {
-          widget.onFileDrop!(file, details.files);
-        }
-      },
-      child: GestureDetector(
+    return GestureDetector(
         onTapDown: (details) {
           // if (!isDocx) return; // Removed restriction to allow selection
           if (widget.onFileTap != null) {
@@ -544,7 +524,6 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
             ),
           ),
         ),
-      ),
     );
   }
 
