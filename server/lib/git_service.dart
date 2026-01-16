@@ -6,6 +6,8 @@ import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'models.dart';
 
+import 'package:crypto/crypto.dart';
+
 bool _debugMode = false;
 void setDebugMode(bool value) => _debugMode = value;
 final scriptDir = p.dirname(Platform.script.toFilePath());
@@ -2331,15 +2333,59 @@ Future<String> _resolveRepoOwner(String repoName, String token) async {
       'Repository $repoName not found in your account access list.');
 }
 
-Future<void> pushToRemote(String repoPath, String username, String token,
-    {bool force = false, String? targetRepoName}) async {
-  return _withRepoLock(repoPath, () async {
-    // if (await _isFolderProject(repoPath)) {
-    //    throw Exception('Cannot push Folder Project Root directly. Please push specific sub-repositories.');
-    // }
+String _calculateHash(String input) {
+  var bytes = utf8.encode(input);
+  var digest = sha1.convert(bytes);
+  return digest.toString();
+}
 
+Future<String?> _findParentFolderProject(String path) async {
+  final baseDir = Directory(_baseDir());
+  final target = Directory(path);
+
+  try {
+    if (p.equals(path, baseDir.path)) return null;
+    if (!p.isWithin(baseDir.path, path)) return null;
+
+    Directory current = target.parent;
+    while (true) {
+      if (p.equals(current.path, baseDir.path)) break;
+      if (!p.isWithin(baseDir.path, current.path)) break;
+
+      if (File(p.join(current.path, 'folder_meta.json')).existsSync()) {
+        return current.path;
+      }
+
+      final parent = current.parent;
+      if (parent.path == current.path) break;
+      current = parent;
+    }
+  } catch (e) {
+    print('Error finding parent folder project: $e');
+  }
+  return null;
+}
+
+Future<void> pushToRemote(String repoPath, String username, String token,
+    {bool force = false}) async {
+  return _withRepoLock(repoPath, () async {
     final repoName = p.basename(repoPath);
-    final effectiveRemoteRepoName = targetRepoName ?? repoName;
+    String effectiveRemoteRepoName;
+
+    if (await _isFolderProject(repoPath)) {
+      effectiveRemoteRepoName = repoName;
+    } else {
+      final parentFolder = await _findParentFolderProject(repoPath);
+      if (parentFolder != null) {
+        final relativePath = p.relative(repoPath, from: parentFolder);
+        final normalizedRelPath = relativePath.replaceAll(r'\', '/');
+        effectiveRemoteRepoName = _calculateHash(normalizedRelPath);
+        print(
+            'Pushing sub-repo "\$repoName" as hashed remote: \$effectiveRemoteRepoName (rel: \$normalizedRelPath)');
+      } else {
+        effectiveRemoteRepoName = repoName;
+      }
+    }
 
     String owner;
     try {
@@ -2655,12 +2701,7 @@ Future<Map<String, dynamic>> checkPullStatus(
     String repoName, String username, String token) async {
   final projDir = _projectDir(repoName);
   return _withRepoLock(projDir, () async {
-    if (await _isFolderProject(projDir)) {
-      return {
-        'status': 'error',
-        'message': 'Cannot check pull status on Folder Project Root.'
-      };
-    }
+    // Folder project check removed to allow root pull status check
 
     final remoteName = repoName.toLowerCase();
     final owner = await _resolveRepoOwner(repoName, token);

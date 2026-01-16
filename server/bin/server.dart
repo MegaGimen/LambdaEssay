@@ -1113,16 +1113,13 @@ Future<void> main(List<String> args) async {
     final username = (data['username'] as String?)?.trim() ?? '';
     final token = (data['token'] as String?)?.trim() ?? '';
     final force = data['force'] == true;
-    final targetRepoName = (data['targetRepoName'] as String?)?.trim();
-
     if (repoPath.isEmpty || username.isEmpty || token.isEmpty) {
       return _cors(Response(400,
           body: jsonEncode({'error': 'repoPath, username, token required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
-      await pushToRemote(repoPath, username, token,
-          force: force, targetRepoName: targetRepoName);
+      await pushToRemote(repoPath, username, token, force: force);
       return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
         'Content-Type': 'application/json; charset=utf-8',
       }));
