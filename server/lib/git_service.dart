@@ -2566,17 +2566,32 @@ Future<void> _checkIfBehind(String repoPath, String remoteUrl) async {
   }
 
 Future<Map<String, dynamic>> pullFromRemote(
-    String repoName, String username, String token,
+    String nameOrPath, String username, String token,
     {bool force = false, String? targetRepoName}) async {
-  final projDir = _projectDir(repoName);
-  return _withRepoLock(projDir, () async {
-    // if (await _isFolderProject(projDir)) {
-    //    throw Exception('Cannot pull Folder Project Root directly. Please pull specific sub-repositories.');
-    // }
+  final repoPath = p.isAbsolute(nameOrPath) ? nameOrPath : _projectDir(nameOrPath);
+  return _withRepoLock(repoPath, () async {
+    String effectiveRemoteRepoName;
+    if (targetRepoName != null && targetRepoName.isNotEmpty) {
+      effectiveRemoteRepoName = targetRepoName;
+    } else {
+      if (await _isFolderProject(repoPath)) {
+        effectiveRemoteRepoName = p.basename(repoPath);
+      } else {
+        final parentFolder = await _findParentFolderProject(repoPath);
+        if (parentFolder != null) {
+          final relativePath = p.relative(repoPath, from: parentFolder);
+          final normalizedRelPath = relativePath.replaceAll(r'\', '/');
+          effectiveRemoteRepoName = _calculateHash(normalizedRelPath);
+          print(
+              'Pulling sub-repo as hashed remote: $effectiveRemoteRepoName (rel: $normalizedRelPath)');
+        } else {
+          effectiveRemoteRepoName = p.basename(repoPath);
+        }
+      }
+    }
 
-    final effectiveRemoteRepoName = targetRepoName ?? repoName;
     final remoteName = effectiveRemoteRepoName.toLowerCase();
-    // final projDir = _projectDir(repoName); // Already calculated
+    final projDir = repoPath;
     final dir = Directory(projDir);
     final gitDir = Directory(p.join(projDir, '.git'));
 
@@ -2605,7 +2620,7 @@ Future<Map<String, dynamic>> pullFromRemote(
     if (!isFresh) {
       if (!force) {
         try {
-          final trackingFile = _trackingFile(repoName);
+          final trackingFile = File(p.join(projDir, 'tracking.json'));
           if (trackingFile.existsSync()) {
             try {
               await _runGit(['checkout', 'HEAD', '--', '.'], projDir);
@@ -2700,11 +2715,12 @@ Future<Map<String, dynamic>> pullFromRemote(
     // Check if it is a folder project (has folder_meta.json)
     if (File(p.join(projDir, 'folder_meta.json')).existsSync()) {
       // Update tracking.json
-      final tracking = await _readTracking(repoName);
+      final trackingJsonPath = p.join(projDir, 'tracking.json');
+      final tracking = await _readTrackingJson(trackingJsonPath);
       if (tracking['type'] != 'folder') {
         tracking['type'] = 'folder';
         tracking['docxPath'] = projDir; // Root is the docxPath (folder)
-        await _writeTracking(repoName, tracking);
+        await File(trackingJsonPath).writeAsString(jsonEncode(tracking));
       }
 
       // Expand
