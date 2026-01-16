@@ -3168,6 +3168,32 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     }
   }
 
+  Future<void> _handleFolderDrop(Directory dir, List<XFile> files) async {
+    bool hasDocx = false;
+    for (final xfile in files) {
+      if (p.extension(xfile.path).toLowerCase() == '.docx') {
+        final targetPath = p.join(dir.path, xfile.name);
+        try {
+          await xfile.saveTo(targetPath);
+          hasDocx = true;
+        } catch (e) {
+          print('Error copying file: $e');
+        }
+      }
+    }
+
+    if (hasDocx) {
+       if (mounted) {
+         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('文件已添加，正在同步...')));
+       }
+       await _onSyncFolder();
+    }
+  }
+
+  Future<void> _handleFileDrop(File file, List<XFile> files) async {
+    await _handleFolderDrop(file.parent, files);
+  }
+
   Widget _buildSidebar() {
     final rootPath = docxPathCtrl.text.trim();
     bool isValid = rootPath.isNotEmpty;
@@ -3263,6 +3289,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                         const Icon(Icons.description, size: 16, color: Colors.blueGrey),
                     onFileTap: _handleFileTap,
                     onFileSecondaryTap: _handleFileSecondaryTap,
+                    onFolderDrop: _handleFolderDrop,
+                    onFileDrop: _handleFileDrop,
                   ),
                 ),
               ),

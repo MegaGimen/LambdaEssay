@@ -1633,6 +1633,58 @@ Future<void> _ensureFolderProjectStructure(String projDir, String docxPath,
 
     await _initSingleRepo(targetRepoPath, file.path);
   }
+
+  // 3. Update folder_meta.json
+  await _updateFolderMeta(projDir, docxPath);
+}
+
+Future<void> _updateFolderMeta(String projDir, String docxPath) async {
+  final metaFile = File(p.join(projDir, 'folder_meta.json'));
+  Map<String, dynamic> meta = {};
+  if (metaFile.existsSync()) {
+    try {
+      meta = jsonDecode(await metaFile.readAsString());
+    } catch (_) {}
+  }
+  if (meta['items'] == null) meta['items'] = {};
+
+  final sourceDir = Directory(docxPath);
+  if (!sourceDir.existsSync()) return;
+  final files = sourceDir.listSync(recursive: true).whereType<File>();
+
+  for (final file in files) {
+    if (p.extension(file.path).toLowerCase() != '.docx') continue;
+    if (p.basename(file.path).startsWith('~\$')) continue;
+
+    final relPath = p.relative(file.path, from: docxPath);
+    final childName = p.basenameWithoutExtension(file.path);
+
+    // Keep existing remote info if available
+    String existingRemote = '';
+    
+    if (meta['items'][relPath] != null) {
+      existingRemote = meta['items'][relPath]['remoteUrl'] ?? '';
+    }
+
+    meta['items'][relPath] = {
+      'name': childName,
+      'remoteUrl': existingRemote,
+      'lastUpdate': DateTime.now().toIso8601String(),
+    };
+  }
+
+  await metaFile.writeAsString(jsonEncode(meta));
+
+  // Commit folder_meta.json if root is a git repo
+  final rootGitDir = Directory(p.join(projDir, '.git'));
+  if (rootGitDir.existsSync()) {
+    try {
+      await _runGit(['add', 'folder_meta.json'], projDir);
+      await _runGit(['commit', '-m', 'Update folder metadata'], projDir);
+    } catch (_) {
+      // Ignore commit errors (e.g. nothing to commit)
+    }
+  }
 }
 
 Future<Map<String, dynamic>> createTrackingProject(
@@ -1783,7 +1835,10 @@ Future<void> syncFolderProject(String name) async {
     await _initSingleRepo(targetRepoPath, file.path);
   }
 
-  // 3. Scan target folder for repos (directories with .git)
+  // 3. Update folder_meta.json
+  await _updateFolderMeta(projDir, sourceRoot);
+
+  // 4. Scan target folder for repos (directories with .git)
   // We need to be careful not to delete the root projDir itself if it happens to be a repo (unlikely in folder mode)
   final targetDir = Directory(projDir);
   if (targetDir.existsSync()) {

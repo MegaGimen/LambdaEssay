@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path;
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
+import 'package:desktop_drop/desktop_drop.dart';
+import 'package:cross_file/cross_file.dart';
 
 // --- Style Classes (Merged from style.dart) ---
 
@@ -226,6 +228,8 @@ class FoldableDirectoryTree extends StatefulWidget {
   final void Function(File, TapDownDetails)? onFileSecondaryTap;
   final void Function(Directory, TapDownDetails)? onDirTap;
   final void Function(Directory, TapDownDetails)? onDirSecondaryTap;
+  final void Function(Directory, List<XFile>)? onFolderDrop;
+  final void Function(File, List<XFile>)? onFileDrop;
   final List<Widget>? folderActions;
   final List<Widget>? fileActions;
   final Widget Function(String fileExtension)? fileIconBuilder;
@@ -241,6 +245,8 @@ class FoldableDirectoryTree extends StatefulWidget {
     this.onFileSecondaryTap,
     this.onDirTap,
     this.onDirSecondaryTap,
+    this.onFolderDrop,
+    this.onFileDrop,
     this.folderStyle,
     this.fileStyle,
     this.folderActions,
@@ -278,7 +284,13 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
     final bool hasUpdate = widget.updatedPaths != null && 
         widget.updatedPaths!.contains(directory.path);
 
-    return Column(
+    return DropTarget(
+      onDragDone: (details) {
+        if (widget.onFolderDrop != null) {
+          widget.onFolderDrop!(directory, details.files);
+        }
+      },
+      child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         GestureDetector(
@@ -478,57 +490,58 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
         ? path.basename(file.path) 
         : '${path.basename(file.path)} (不支持的文件类型)';
 
-    return GestureDetector(
-      onTapDown: (details) {
-        if (!isDocx) return; // Ignore non-docx
-        if (widget.onFileTap != null) {
-          widget.onFileTap!(file, details);
+    return DropTarget(
+      onDragDone: (details) {
+        if (widget.onFileDrop != null) {
+          widget.onFileDrop!(file, details.files);
         }
       },
-      onSecondaryTapDown: (details) {
-        // Allow right click even on non-docx? Maybe to delete?
-        // User didn't specify, but safer to allow or restrict.
-        // Let's allow it, so user can "Import" to a non-docx file?
-        // "把一个已经有了的追踪项目...放进这个文件夹式的追踪中（可替换原文件）"
-        // If I have a .txt file and I want to import a docx project to it (replacing it with docx), that makes sense.
-        // So I allow right click.
-        if (widget.onFileSecondaryTap != null) {
-          widget.onFileSecondaryTap!(file, details);
-        }
-      },
-      child: MouseRegion(
-        cursor: isDocx ? SystemMouseCursors.click : SystemMouseCursors.forbidden,
-        child: Container(
-           color: isSelected ? Colors.blue.withValues(alpha: 0.1) : Colors.transparent,
-           padding: const EdgeInsets.symmetric(vertical: 2),
-           child: Row(
-            children: [
-              isDocx ? customIcon : const Icon(Icons.error_outline, size: 16, color: Colors.grey),
-              const SizedBox(width: 8),
-              Text(
-                displayName,
-                style: (widget.fileStyle?.fileNameStyle ?? FileStyle().fileNameStyle)
-                    ?.copyWith(
-                        color: isDocx ? null : Colors.grey,
-                        fontStyle: isDocx ? null : FontStyle.italic,
-                    ),
-              ),
-              if (hasUpdate) ...[
-                 const SizedBox(width: 8),
-                 const Icon(Icons.circle, color: Colors.red, size: 8),
-              ],
-              ...widget.fileActions ?? [],
-              if (widget.enableDeleteFileOption)
-                IconButton(
-                  onPressed: () {
-                    file.deleteSync(recursive: true);
-                    setState(() {});
-                  },
-                  icon:
-                      widget.fileStyle?.iconForDeleteFile ??
-                      FileStyle().iconForDeleteFile,
+      child: GestureDetector(
+        onTapDown: (details) {
+          // if (!isDocx) return; // Removed restriction to allow selection
+          if (widget.onFileTap != null) {
+            widget.onFileTap!(file, details);
+          }
+        },
+        onSecondaryTapDown: (details) {
+          if (widget.onFileSecondaryTap != null) {
+            widget.onFileSecondaryTap!(file, details);
+          }
+        },
+        child: MouseRegion(
+          cursor: isDocx ? SystemMouseCursors.click : SystemMouseCursors.forbidden,
+          child: Container(
+             color: isSelected ? Colors.blue.withValues(alpha: 0.1) : Colors.transparent,
+             padding: const EdgeInsets.symmetric(vertical: 2),
+             child: Row(
+              children: [
+                isDocx ? customIcon : const Icon(Icons.error_outline, size: 16, color: Colors.grey),
+                const SizedBox(width: 8),
+                Text(
+                  displayName,
+                  style: (widget.fileStyle?.fileNameStyle ?? FileStyle().fileNameStyle)
+                      ?.copyWith(
+                          color: isDocx ? null : Colors.grey,
+                          fontStyle: isDocx ? null : FontStyle.italic,
+                      ),
                 ),
-            ],
+                if (hasUpdate) ...[
+                   const SizedBox(width: 8),
+                   const Icon(Icons.circle, color: Colors.red, size: 8),
+                ],
+                ...widget.fileActions ?? [],
+                if (widget.enableDeleteFileOption)
+                  IconButton(
+                    onPressed: () {
+                      file.deleteSync(recursive: true);
+                      setState(() {});
+                    },
+                    icon:
+                        widget.fileStyle?.iconForDeleteFile ??
+                        FileStyle().iconForDeleteFile,
+                  ),
+              ],
+            ),
           ),
         ),
       ),
