@@ -998,11 +998,12 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       setState(() => error = '请先登录并打开一个项目');
       return;
     }
+    if (!mounted) return;
 
     final userCtrl = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (ctx) => AlertDialog(
         title: const Text('分享追踪项目'),
         content: SizedBox(
           width: 400,
@@ -1020,11 +1021,11 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => Navigator.pop(ctx, false),
             child: const Text('取消'),
           ),
           ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(ctx, true),
             child: const Text('分享'),
           ),
         ],
@@ -1052,9 +1053,10 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           SnackBar(content: Text('已成功分享给 $targetUser')),
         );
       } catch (e) {
+        if (!mounted) return;
         setState(() => error = '分享失败: $e');
       } finally {
-        setState(() => loading = false);
+        if (mounted) setState(() => loading = false);
       }
     }
   }
@@ -1264,9 +1266,10 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         await _showPushRejectedDialog(msg);
         return;
       }
+      if (!mounted) return;
       setState(() => error = '推送失败: $e');
     } finally {
-      setState(() => loading = false);
+      if (mounted) setState(() => loading = false);
     }
   }
 
@@ -1297,6 +1300,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       ),
     );
 
+    if (!mounted) return;
     if (choice == 'force') {
       // Proceed with existing force push logic (3 confirmations)
       // We can just recall _onPush(force: true) but that skips the 3 confirmations?
@@ -1316,47 +1320,50 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     // 第一重确认
     final ok1 = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (ctx) => AlertDialog(
         title: const Text('危险操作确认'),
         content: const Text('您选择了强制推送。\n'
             '此操作将【永久覆盖】远程仓库的历史记录，无法撤销！\n'
             '建议您先尝试“解决冲突”选项。'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => Navigator.pop(ctx, false),
             child: const Text('取消'),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(ctx, true),
             child: const Text('我确定要覆盖'),
           ),
         ],
       ),
     );
     if (ok1 != true) return;
+    if (!mounted) return;
 
     // 第二重确认
     final ok2 = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (ctx) => AlertDialog(
         title: const Text('最后一次确认'),
         content: const Text('请再次确认：\n'
             '您是否清楚这会导致远程仓库的提交丢失？\n'
             '如果这是多人协作项目，请务必通知其他成员！'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => Navigator.pop(ctx, false),
             child: const Text('取消'),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(ctx, true),
             child: const Text('执行强制推送'),
           ),
         ],
       ),
     );
+
+    if (!mounted) return;
 
     if (ok2 == true) {
       await _onPush(force: true);
@@ -1626,6 +1633,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         ),
       );
       if (ok == true) {
+        if (!mounted) return;
         final docx = docxCtrl.text.trim();
         if (docx.isNotEmpty) {
           try {
@@ -1634,6 +1642,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
               'newDocxPath': docx,
               'opIdentical': false,
             });
+            if (!mounted) return;
             setState(() {
               docxPathCtrl.text = docx;
             });
@@ -1678,6 +1687,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       allowNew: false,
     );
     if (selection == null) return;
+    if (!mounted) return;
     
     final targetRepoName = selection['name'] as String;
     final isRemoteFolder = selection['isFolder'] == true;
@@ -1686,6 +1696,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     if (isRemoteFolder) {
         // Check if locally exists
         final localProjects = await _fetchProjectList();
+        if (!mounted) return;
         if (localProjects.contains(targetRepoName)) {
              // Open it
              try {
@@ -1694,6 +1705,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                 final docxPath = resp['docxPath'];
                 final type = resp['type'] as String? ?? 'file';
                 
+                if (!mounted) return;
                 setState(() {
                   currentProjectName = targetRepoName;
                   pathCtrl.text = repoPath;
@@ -1708,16 +1720,17 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                 if (isFolderProject) {
                    final reposResp = await _postJson('http://localhost:8080/track/repos', {'name': targetRepoName});
                    final repos = (reposResp['repos'] as List).cast<Map<String, dynamic>>();
+                   if (!mounted) return;
                    setState(() => subRepos = repos);
                 }
                 
                 if (mounted) {
                    showDialog(
                      context: context, 
-                     builder: (_) => AlertDialog(
+                     builder: (ctx) => AlertDialog(
                        title: const Text('文件夹项目'),
                        content: const Text('检测到本地已存在该文件夹项目，已为您打开。\n请进入具体子文件后手动进行拉取操作。'),
-                       actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('确定'))]
+                       actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('确定'))]
                      )
                    );
                 }
@@ -1748,6 +1761,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
       final resp = await _postJson('http://localhost:8080/pull', body);
 
+      if (!mounted) return;
+
       final status = resp['status'] as String?;
       final path = resp['path'] as String?;
 
@@ -1769,6 +1784,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             // Show resolve options for Ahead/Diverged
             await _showResolveConflictDialog(isPush: false);
           } else {
+            if (!mounted) return;
             showDialog(
               context: context,
               builder: (ctx) => AlertDialog(
@@ -1801,8 +1817,10 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       // Force repo update after pull to sync semantic changes
       await _onUpdateRepo();
 
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('拉取成功')));
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('拉取成功')));
+      }
     } catch (e) {
       setState(() => error = '拉取失败: $e');
     } finally {
@@ -1819,6 +1837,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         'name': name,
         'opIdentical': false,
       });
+      if (!mounted) return;
       final needDocx = resp['needDocx'] == true;
 
       if (!needDocx) {
@@ -1828,6 +1847,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
         // Now load graph
         final data = await _loadGraph(repoPath);
+        if (!mounted) return;
 
         setState(() {
           pathCtrl.text = repoPath;
@@ -1937,6 +1957,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       final info = await _postJson('http://localhost:8080/track/info', {
         'repoPath': path,
       });
+      if (!mounted) return;
       if (info.isNotEmpty) {
         setState(() {
           currentProjectName = info['name'];
@@ -1968,6 +1989,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         }
       }
 
+      if (!mounted) return;
       setState(() {
         data = gd;
         remoteData = rd;
@@ -1978,10 +2000,12 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         _calculateRowMappings();
       }
     } catch (e) {
-      setState(() {
-        error = e.toString();
-        loading = false;
-      });
+      if (mounted) {
+        setState(() {
+          error = e.toString();
+          loading = false;
+        });
+      }
     }
   }
 
@@ -2094,6 +2118,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       ),
     );
     if (ok != true) return;
+    if (!mounted) return;
     final name = nameCtrl.text.trim();
     final docx = docxCtrl.text.trim();
     if (name.isEmpty) {
@@ -2109,6 +2134,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         'name': name,
         'docxPath': docx.isEmpty ? null : docx,
       });
+      if (!mounted) return;
       final repoPath = resp['repoPath'] as String;
       final type = resp['type'] as String? ?? 'file';
 
@@ -2118,6 +2144,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         });
         final repos = (reposResp['repos'] as List).cast<Map<String, dynamic>>();
         
+        if (!mounted) return;
         setState(() {
           currentProjectName = name;
           pathCtrl.text = repoPath; 
@@ -2148,6 +2175,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           'name': name,
           'opIdentical': false,
         });
+        if (!mounted) return;
         setState(() {
           working = WorkingState(
             changed: up['workingChanged'] == true,
@@ -2157,7 +2185,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         await _load();
       }
     } catch (e) {
-      setState(() => error = e.toString());
+      if (mounted) setState(() => error = e.toString());
     }
   }
 
@@ -2177,6 +2205,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   Future<void> _onOpenTrackProject() async {
     setState(() => loading = true);
     final projects = await _fetchProjectList();
+    if (!mounted) return;
     setState(() => loading = false);
 
     String? selected = projects.isNotEmpty ? projects.first : null;
@@ -2224,6 +2253,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       ),
     );
     if (ok != true || selected == null) return;
+    if (!mounted) return;
     final name = selected!;
 
     // 立即显示加载遮罩
@@ -2233,6 +2263,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       final resp = await _postJson('http://localhost:8080/track/open', {
         'name': name,
       });
+      if (!mounted) return;
       final repoPath = resp['repoPath'] as String;
       final docxPath = resp['docxPath'] as String?;
       final type = resp['type'] as String? ?? 'file';
@@ -2241,6 +2272,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         final reposResp = await _postJson('http://localhost:8080/track/repos', {
            'name': name,
         });
+        if (!mounted) return;
         final repos = (reposResp['repos'] as List).cast<Map<String, dynamic>>();
         setState(() {
           currentProjectName = name;
@@ -2272,7 +2304,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     } catch (e) {
       setState(() => error = e.toString());
     } finally {
-      setState(() => loading = false);
+      if (mounted) setState(() => loading = false);
     }
   }
 
@@ -2281,6 +2313,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
     // 1. Update Repo
     await _onUpdateRepoAction();
+    if (!mounted) return;
 
     setState(() {
       loading = true;
@@ -2291,6 +2324,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       final resp = await _postJson('$baseUrl/track/find_identical', {
         'name': currentProjectName,
       });
+      if (!mounted) return;
       final commitIds = (resp['commitIds'] as List?)?.cast<String>() ?? [];
       setState(() {
         identicalCommitIds = commitIds;
@@ -2310,7 +2344,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     } catch (e) {
       setState(() => error = '查找失败: $e');
     } finally {
-      setState(() => loading = false);
+      if (mounted) setState(() => loading = false);
     }
   }
 
@@ -2328,6 +2362,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       if (name == null || name.isEmpty) {
         // We are already loading, so no need to set loading=true again
         final projects = await _fetchProjectList();
+        if (!mounted) return;
         // Do not set loading=false here, we want to keep it loading until the end
         // setState(() => loading = false);
 
@@ -2372,6 +2407,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           ),
         );
         if (ok == true && selected != null) {
+          if (!mounted) return;
           name = selected;
           setState(() => currentProjectName = name);
         }
@@ -2417,6 +2453,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           'repoPath': specificRepoPath,
           'docxPath': specificDocxPath,
         });
+        if (!mounted) return;
         print(
             '[Perf][Frontend][UpdateRepo][TrackUpdate] ${swUpdate.elapsedMilliseconds}ms');
         swUpdate.reset();
@@ -2476,6 +2513,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                 ),
               ),
             );
+            if (!mounted) return;
             if (ok == true) {
               docx = docxCtrl.text.trim();
             } else {
@@ -2489,6 +2527,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
               'newDocxPath': docx,
               'opIdentical': false,
             });
+            if (!mounted) return;
             setState(() {
               docxPathCtrl.text = docx!;
               working = WorkingState(
@@ -2565,6 +2604,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         }),
       );
 
+      if (!mounted) return;
+
       setState(() => loading = false);
 
       if (resp.statusCode != 200) {
@@ -2599,6 +2640,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           ),
         );
 
+        if (!mounted) return;
         if (confirm != true) {
           // Restore logic if cancelled in Step 3
           setState(() => loading = true);
@@ -2607,6 +2649,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode({'repoName': currentProjectName ?? ''}),
           );
+          if (!mounted) return;
           setState(() => loading = false);
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -2636,6 +2679,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           ),
         );
 
+        if (!mounted) return;
         if (doubleCheck == true) {
           confirmed = true;
         }
@@ -2667,6 +2711,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
       // Force clear cache on server
       await http.post(Uri.parse('http://localhost:8080/reset'));
+      
+      if (!mounted) return;
 
       // Step 7: Update repo
       // Add delay
@@ -2760,6 +2806,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           'newDocxPath': newPath,
           'opIdentical': false,
         });
+        if (!mounted) return;
         setState(() {
           docxPathCtrl.text = newPath;
           working = WorkingState(
@@ -2768,10 +2815,12 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           );
         });
         await _load();
+        if (!mounted) return;
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(const SnackBar(content: Text('路径已更新')));
       } catch (e) {
+        if (!mounted) return;
         setState(() => error = e.toString());
       }
     }
@@ -2783,6 +2832,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       final resp = await _postJson('http://localhost:8080/track/open', {
         'name': name,
       });
+      if (!mounted) return;
       final repoPath = resp['repoPath'] as String;
       final docxPath = resp['docxPath'] as String?;
       final type = resp['type'] as String? ?? 'file';
@@ -2791,6 +2841,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         final reposResp = await _postJson('http://localhost:8080/track/repos', {
            'name': name,
         });
+        if (!mounted) return;
         final repos = (reposResp['repos'] as List).cast<Map<String, dynamic>>();
         setState(() {
           currentProjectName = name;
@@ -2835,6 +2886,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       if (resp['status'] == 'ok') {
         // Reload project list/repos
         await _openProject(currentProjectName!, isFolderProject: true);
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('文件夹同步完成')));
       }
@@ -2873,6 +2925,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   Future<void> _importProjectTo(File file) async {
     setState(() => loading = true);
     final projects = await _fetchProjectList();
+    if (!mounted) return;
     setState(() => loading = false);
 
     String? selectedProject;
@@ -2968,6 +3021,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
          final reposResp = await _postJson('http://localhost:8080/track/repos', {
             'name': currentProjectName!,
          });
+         if (!mounted) return;
          final repos = (reposResp['repos'] as List).cast<Map<String, dynamic>>();
          setState(() {
             subRepos = repos;
@@ -3057,6 +3111,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           opIdentical: true,
           specificRepoPath: targetRepo['repoPath'],
           specificDocxPath: targetRepo['docxPath']);
+      if (!mounted) return;
       await _load();
     } else {
       print("DEBUG: No matching repo found for $filePath");
@@ -4130,6 +4185,7 @@ class _GraphViewState extends State<_GraphView>
 
     // Load preference
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     bool autoAccept = prefs.getBool('auto_accept_revisions') ?? false;
 
     // Dialog state
@@ -4196,9 +4252,11 @@ class _GraphViewState extends State<_GraphView>
                             title: 'Working Copy Diff',
                           );
                         } catch (e) {
-                          ScaffoldMessenger.of(
-                            context,
-                          ).showSnackBar(SnackBar(content: Text('预览失败: $e')));
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(
+                              context,
+                            ).showSnackBar(SnackBar(content: Text('预览失败: $e')));
+                          }
                         } finally {
                           if (context.mounted) {
                             setState(() => isPreviewing = false);
@@ -4229,6 +4287,7 @@ class _GraphViewState extends State<_GraphView>
       ),
     );
     if (ok != true) return;
+    if (!mounted) return;
     final author = authorCtrl.text.trim();
     final msg = msgCtrl.text.trim();
     if (author.isEmpty || msg.isEmpty) {
@@ -4402,7 +4461,7 @@ class _GraphViewState extends State<_GraphView>
     final nameCtrl = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (ctx) => AlertDialog(
         title: const Text('切换分支'),
         content: SizedBox(
           width: 300,
@@ -4423,11 +4482,11 @@ class _GraphViewState extends State<_GraphView>
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => Navigator.pop(ctx, false),
             child: const Text('取消'),
           ),
           ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(ctx, true),
             child: const Text('切换'),
           ),
         ],
