@@ -1229,21 +1229,6 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       return;
     }
 
-    // Determine default name
-    String defaultName = currentProjectName ?? '';
-    if (defaultName.isEmpty) {
-      // split by / or \
-      defaultName = repoPath.split(RegExp(r'[/\\]')).last;
-    }
-
-    // Ask user for target repo
-    final targetRepoName = await _showRepoSelectionDialog(
-      allowNew: true,
-      defaultName: defaultName,
-    );
-
-    if (targetRepoName == null) return; // User cancelled
-
     setState(() {
       loading = true;
       error = null;
@@ -1254,11 +1239,10 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         'username': _username,
         'token': _token,
         'force': force,
-        'targetRepoName': targetRepoName,
       });
       if (!mounted) return;
       ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('推送成功')));
+          .showSnackBar(const SnackBar(content: Text('推送成功 (已同步所有父文件夹)')));
       if (showRemotePreview) {
         await _triggerGitFetch(repoPath);
       }

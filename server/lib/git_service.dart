@@ -2472,7 +2472,28 @@ Future<void> pushToRemote(String repoPath, String username, String token,
           if (await _isFolderProject(path)) {
             print('Found parent folder project: $path');
             // Recursively push parent
-            await pushToRemote(path, username, token, force: force);
+            try {
+              await pushToRemote(path, username, token, force: force);
+            } catch (e) {
+              print('Push to parent failed: $e. Attempting rebase pull and retry...');
+              try {
+                // If push failed (likely behind), try to pull --rebase
+                final remoteName = p.basename(path).toLowerCase();
+                // Ensure remote exists for pull
+                await addRemote(path, remoteName,
+                    'http://$username:$token@47.242.109.145:3000/${await _resolveRepoOwner(remoteName, token)}/$remoteName.git');
+                
+                await _runGit(['pull', '--rebase', remoteName, 'master'], path);
+                print('Rebase successful. Retrying push...');
+                await pushToRemote(path, username, token, force: force);
+              } catch (retryErr) {
+                print('Retry push failed: $retryErr');
+                // Rethrow original error or new error?
+                // Let's print but not crash the whole chain?
+                // Or maybe we SHOULD crash to let user know sync failed.
+                throw Exception('Failed to sync parent folder "$path": $retryErr');
+              }
+            }
             break;
           }
 
@@ -2488,53 +2509,61 @@ Future<void> pushToRemote(String repoPath, String username, String token,
 }
 
 Future<void> _checkIfBehind(String repoPath, String remoteUrl) async {
-  final localRefs = <String, String>{};
-  final localLines = await _runGit(
-      ['for-each-ref', '--format=%(refname:short)|%(objectname)', 'refs/heads'],
-      repoPath);
-  for (final line in localLines) {
-    final parts = line.split('|');
-    if (parts.length >= 2) {
-      localRefs[parts[0].trim()] = parts[1].trim();
+    // We must ensure we have the latest remote objects to perform merge-base checks.
+    // Otherwise, if we haven't fetched the remote commit, merge-base will fail.
+    try {
+      await _runGit(['fetch', remoteUrl], repoPath);
+    } catch (e) {
+      print('Warning: Failed to fetch during check-if-behind: $e');
     }
-  }
 
-  final remoteLines =
-      await _runGit(['ls-remote', '--heads', remoteUrl], repoPath);
-  final remoteRefs = <String, String>{};
-  for (final line in remoteLines) {
-    final parts = line.split(RegExp(r'\s+'));
-    if (parts.length >= 2) {
-      final hash = parts[0];
-      final ref = parts[1];
-      if (ref.startsWith('refs/heads/')) {
-        final name = ref.substring('refs/heads/'.length);
-        remoteRefs[name] = hash;
+    final localRefs = <String, String>{};
+    final localLines = await _runGit(
+        ['for-each-ref', '--format=%(refname:short)|%(objectname)', 'refs/heads'],
+        repoPath);
+    for (final line in localLines) {
+      final parts = line.split('|');
+      if (parts.length >= 2) {
+        localRefs[parts[0].trim()] = parts[1].trim();
+      }
+    }
+
+    final remoteLines =
+        await _runGit(['ls-remote', '--heads', remoteUrl], repoPath);
+    final remoteRefs = <String, String>{};
+    for (final line in remoteLines) {
+      final parts = line.split(RegExp(r'\s+'));
+      if (parts.length >= 2) {
+        final hash = parts[0];
+        final ref = parts[1];
+        if (ref.startsWith('refs/heads/')) {
+          final name = ref.substring('refs/heads/'.length);
+          remoteRefs[name] = hash;
+        }
+      }
+    }
+
+    for (final branch in localRefs.keys) {
+      final localHash = localRefs[branch];
+      final remoteHash = remoteRefs[branch];
+
+      if (remoteHash != null && localHash != remoteHash) {
+        bool localIsBehind = false;
+        try {
+          await _runGit(
+              ['merge-base', '--is-ancestor', localHash!, remoteHash], repoPath);
+          localIsBehind = true;
+        } catch (_) {
+          localIsBehind = false;
+        }
+
+        if (localIsBehind) {
+          throw Exception(
+              'Push rejected: Local branch "$branch" is behind remote (non-fast-forward).');
+        }
       }
     }
   }
-
-  for (final branch in localRefs.keys) {
-    final localHash = localRefs[branch];
-    final remoteHash = remoteRefs[branch];
-
-    if (remoteHash != null && localHash != remoteHash) {
-      bool localIsBehind = false;
-      try {
-        await _runGit(
-            ['merge-base', '--is-ancestor', localHash!, remoteHash], repoPath);
-        localIsBehind = true;
-      } catch (_) {
-        localIsBehind = false;
-      }
-
-      if (localIsBehind) {
-        throw Exception(
-            'Push rejected: Local branch "$branch" is behind remote (non-fast-forward).');
-      }
-    }
-  }
-}
 
 Future<Map<String, dynamic>> pullFromRemote(
     String repoName, String username, String token,
