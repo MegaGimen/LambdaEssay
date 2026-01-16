@@ -1515,19 +1515,22 @@ Future<void> main(List<String> args) async {
   router.post('/pull', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoPath = _sanitizePath(data['repoPath'] as String?);
     final repoName = (data['repoName'] as String?)?.trim() ?? '';
     final username = (data['username'] as String?)?.trim() ?? '';
     final token = (data['token'] as String?)?.trim() ?? '';
     final force = data['force'] == true;
     final targetRepoName = (data['targetRepoName'] as String?)?.trim();
 
-    if (repoName.isEmpty || username.isEmpty || token.isEmpty) {
+    final pathArg = repoPath.isNotEmpty ? repoPath : repoName;
+
+    if (pathArg.isEmpty || username.isEmpty || token.isEmpty) {
       return _cors(Response(400,
-          body: jsonEncode({'error': 'repoName, username, token required'}),
+          body: jsonEncode({'error': 'repoPath (or repoName), username, token required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
-      final result = await pullFromRemote(repoName, username, token,
+      final result = await pullFromRemote(pathArg, username, token,
           force: force, targetRepoName: targetRepoName);
       print("pullResult=${result}");
       return _cors(Response.ok(jsonEncode(result),

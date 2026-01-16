@@ -595,6 +595,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   GraphData? remoteData; // New: Remote graph data
   bool showRemotePreview = false; // New: Toggle for remote preview (Default false)
   bool isFolderProject = false; // New: Folder project mode
+  String? _folderRootPath; // New: Root path of folder project
   List<Map<String, dynamic>> subRepos = []; // New: Sub-repos for folder project
   
   Map<String, int>? localRowMapping;
@@ -1058,7 +1059,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     }
   }
 
-  Future<String?> _showRepoSelectionDialog({
+  Future<Map<String, dynamic>?> _showRepoSelectionDialog({
     bool allowNew = false,
     String? defaultName,
   }) async {
@@ -1092,6 +1093,10 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       if (!allowNew) return null;
     }
 
+    // Filter out hash-named repos (sub-repos)
+    final hashRegex = RegExp(r'^[0-9a-fA-F]{40}$');
+    repos = repos.where((name) => !hashRegex.hasMatch(name)).toList();
+
     if (!mounted) return null;
 
     String? selectedRepo;
@@ -1105,7 +1110,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       isCreatingNew = true;
     }
 
-    return showDialog<String>(
+    return showDialog<Map<String, dynamic>>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (context, setState) {
@@ -1203,10 +1208,15 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                   if (isCreatingNew) {
                     final text = nameCtrl.text.trim();
                     if (text.isEmpty) return;
-                    Navigator.pop(ctx, text);
+                    Navigator.pop(ctx, {'name': text, 'isFolder': false});
                   } else {
                     if (selectedRepo == null) return;
-                    Navigator.pop(ctx, selectedRepo);
+                    bool isFolder = false;
+                    if (repoList.isNotEmpty) {
+                       final info = repoList.firstWhere((e) => e['name'] == selectedRepo, orElse: () => {});
+                       isFolder = info['isFolder'] == true;
+                    }
+                    Navigator.pop(ctx, {'name': selectedRepo, 'isFolder': isFolder});
                   }
                 },
                 child: const Text('确定'),
@@ -1648,25 +1658,95 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       setState(() => error = '当前未打开任何项目，无法拉取');
       return;
     }
-    final repoName = currentProjectName!;
+    
+    // 1. Auto-Pull Sub-Repo (Folder Mode)
+    // If we are in folder mode, and we are currently viewing a sub-repo (not root),
+    // and the graph is loaded (data != null), auto-pull using hash logic.
+    if (isFolderProject && _folderRootPath != null && pathCtrl.text.isNotEmpty && data != null) {
+       final normalizedPath = pathCtrl.text.replaceAll(r'\', '/');
+       final normalizedRoot = _folderRootPath!.replaceAll(r'\', '/');
+       // Check if path is a sub-folder of root (and not root itself)
+       if (normalizedPath.startsWith(normalizedRoot) && normalizedPath != normalizedRoot) {
+           // Auto pull: send repoPath, backend calculates hash
+           await _executePull(repoPath: pathCtrl.text.trim());
+           return;
+       }
+    }
 
-    // Ask user for target repo to pull from
-    final targetRepoName = await _showRepoSelectionDialog(
+    // 2. Manual Selection
+    final selection = await _showRepoSelectionDialog(
       allowNew: false,
     );
-    if (targetRepoName == null) return;
+    if (selection == null) return;
+    
+    final targetRepoName = selection['name'] as String;
+    final isRemoteFolder = selection['isFolder'] == true;
+    
+    // 3. Folder Project Handling
+    if (isRemoteFolder) {
+        // Check if locally exists
+        final localProjects = await _fetchProjectList();
+        if (localProjects.contains(targetRepoName)) {
+             // Open it
+             try {
+                final resp = await _postJson('http://localhost:8080/track/open', {'name': targetRepoName});
+                final repoPath = resp['repoPath'];
+                final docxPath = resp['docxPath'];
+                final type = resp['type'] as String? ?? 'file';
+                
+                setState(() {
+                  currentProjectName = targetRepoName;
+                  pathCtrl.text = repoPath;
+                  docxPathCtrl.text = docxPath ?? '';
+                  isFolderProject = type == 'folder';
+                  _folderRootPath = isFolderProject ? repoPath : null;
+                  // Clear graph/data as we are at root
+                  data = null;
+                  remoteData = null;
+                });
+                
+                if (isFolderProject) {
+                   final reposResp = await _postJson('http://localhost:8080/track/repos', {'name': targetRepoName});
+                   final repos = (reposResp['repos'] as List).cast<Map<String, dynamic>>();
+                   setState(() => subRepos = repos);
+                }
+                
+                if (mounted) {
+                   showDialog(
+                     context: context, 
+                     builder: (_) => AlertDialog(
+                       title: const Text('文件夹项目'),
+                       content: const Text('检测到本地已存在该文件夹项目，已为您打开。\n请进入具体子文件后手动进行拉取操作。'),
+                       actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('确定'))]
+                     )
+                   );
+                }
+             } catch (e) {
+                setState(() => error = '打开文件夹项目失败: $e');
+             }
+             return;
+        }
+    }
 
+    // 4. Normal Pull
+    await _executePull(repoName: currentProjectName!, targetRepoName: targetRepoName);
+  }
+
+  Future<void> _executePull({String? repoName, String? repoPath, String? targetRepoName}) async {
     setState(() {
       loading = true;
       error = null;
     });
     try {
-      final resp = await _postJson('http://localhost:8080/pull', {
-        'repoName': repoName,
+      final body = {
         'username': _username,
         'token': _token,
         'targetRepoName': targetRepoName,
-      });
+      };
+      if (repoName != null) body['repoName'] = repoName;
+      if (repoPath != null) body['repoPath'] = repoPath;
+
+      final resp = await _postJson('http://localhost:8080/pull', body);
 
       final status = resp['status'] as String?;
       final path = resp['path'] as String?;
@@ -1711,7 +1791,10 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
       final isFresh = resp['isFresh'] == true;
 
-      await _checkAndSetupTracking(repoName, isFresh);
+      // Only setup tracking if we have a repoName (project context)
+      if (repoName != null) {
+         await _checkAndSetupTracking(repoName, isFresh);
+      }
 
       // Reload again to update graph if needed (e.g. fresh clone or new commits)
       await _load();
@@ -1721,7 +1804,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('拉取成功')));
     } catch (e) {
-      setState(() => error = '拉取失败，什么玩意: $e');
+      setState(() => error = '拉取失败: $e');
     } finally {
       setState(() => loading = false);
     }
