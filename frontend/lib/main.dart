@@ -1622,6 +1622,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             await _postJson('http://localhost:8080/track/update', {
               'name': repoName,
               'newDocxPath': docx,
+              'opIdentical': false,
             });
             setState(() {
               docxPathCtrl.text = docx;
@@ -1733,6 +1734,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     try {
       final resp = await _postJson('http://localhost:8080/track/update', {
         'name': name,
+        'opIdentical': false,
       });
       final needDocx = resp['needDocx'] == true;
 
@@ -2061,6 +2063,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         });
         final up = await _postJson('http://localhost:8080/track/update', {
           'name': name,
+          'opIdentical': false,
         });
         setState(() {
           working = WorkingState(
@@ -2327,7 +2330,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         final swUpdate = Stopwatch()..start();
         final resp = await _postJson('http://localhost:8080/track/update', {
           'name': name,
-          'opIdentical': opIdentical,
+          'opIdentical': false,
           'repoPath': specificRepoPath,
           'docxPath': specificDocxPath,
         });
@@ -2401,6 +2404,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             final up = await _postJson('http://localhost:8080/track/update', {
               'name': name,
               'newDocxPath': docx,
+              'opIdentical': false,
             });
             setState(() {
               docxPathCtrl.text = docx!;
@@ -2671,6 +2675,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         final up = await _postJson('http://localhost:8080/track/update', {
           'name': name,
           'newDocxPath': newPath,
+          'opIdentical': false,
         });
         setState(() {
           docxPathCtrl.text = newPath;
