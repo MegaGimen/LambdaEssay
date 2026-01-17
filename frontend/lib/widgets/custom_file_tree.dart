@@ -373,9 +373,6 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
               children: [
                 ...entries.map((entry) {
                   if (entry is Directory) {
-                    if (_isGitRepo(entry)) {
-                       return _buildRepoItem(entry);
-                    }
                     return _buildDirectoryTree(
                       Directory(entry.path),
                       stateNotifier,

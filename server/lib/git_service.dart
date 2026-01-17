@@ -3229,6 +3229,20 @@ Future<void> copyTrackingProject(
   Directory(destinationPath).createSync(recursive: true);
 
   await _copyDir(sourcePath, destinationPath);
+
+  // Clean up docx artifacts from destination if they exist
+  try {
+    final docxFile = File(p.join(destinationPath, kRepoDocxName));
+    if (docxFile.existsSync()) {
+      docxFile.deleteSync();
+    }
+    final docContentDir = Directory(p.join(destinationPath, kContentDirName));
+    if (docContentDir.existsSync()) {
+      docContentDir.deleteSync(recursive: true);
+    }
+  } catch (e) {
+    print('Warning: Failed to cleanup docx artifacts: $e');
+  }
   
   // Verify copy success
   if (!Directory(destinationPath).existsSync()) {
