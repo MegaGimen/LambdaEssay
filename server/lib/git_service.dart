@@ -3132,7 +3132,7 @@ Future<PullPreviewResult> previewPull(
 Future<void> deleteProject(String relativePath) async {
   final base = _baseDir();
   final targetPath = p.normalize(p.join(base, relativePath));
-
+  print("debug,base:$base,targetPath:$targetPath");
   if (!p.isWithin(base, targetPath)) {
     throw Exception('Access denied: Cannot delete outside of base directory');
   }
