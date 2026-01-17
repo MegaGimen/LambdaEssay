@@ -323,6 +323,11 @@ Future<void> _zipDir(String srcDir, String docxPath) async {
 Future<void> _copyDir(String src, String dst) async {
   // Use PowerShell to copy directory contents
   // Copy-Item -Path "src\*" -Destination "dst" -Recurse -Force
+  // Ensure dst exists
+  if (!Directory(dst).existsSync()) {
+      Directory(dst).createSync(recursive: true);
+  }
+  
   final cmd = 'Copy-Item -Path "$src\\*" -Destination "$dst" -Recurse -Force';
   final res = await Process.run('powershell', ['-Command', cmd]);
   if (res.exitCode != 0) {
@@ -635,12 +640,22 @@ Future<GraphResponse> _getGraphUnlocked(String repoPath,
 }
 
 Future<bool> _isFolderProject(String repoPath) async {
-  try {
-    final t = await _readTrackingJson(p.join(repoPath, 'tracking.json'));
-    return t['type'] == 'folder';
-  } catch (_) {
-    return false;
-  }
+  final gitDir = Directory(p.join(repoPath, '.git'));
+  if (!gitDir.existsSync()) return false;
+  
+  // Folder Project: Has .git but NO content.docx
+  // Solo Project: Has .git AND content.docx
+  
+  final contentDocx = File(p.join(repoPath, 'content.docx'));
+  return !contentDocx.existsSync();
+}
+
+Future<bool> _isSoloProject(String repoPath) async {
+    final gitDir = Directory(p.join(repoPath, '.git'));
+    if (!gitDir.existsSync()) return false;
+    
+    final contentDocx = File(p.join(repoPath, 'content.docx'));
+    return contentDocx.existsSync();
 }
 
 Future<void> _updateFolderMeta(String parentRepoPath, String childRelPath,
@@ -3184,8 +3199,18 @@ Future<void> deleteProject(String relativePath) async {
 Future<void> copyTrackingProject(
     String sourceName, String targetRelPath, bool deleteSource) async {
   final base = _baseDir();
+  // sourceName is a project name in gitdocx
   final sourcePath = p.join(base, sourceName);
-  final targetFolder = p.join(base, targetRelPath);
+  
+  // targetRelPath is passed from frontend. In Folder Mode, it's an absolute path.
+  // In Solo Mode, it might be relative? But frontend always passes absolute path of the target directory.
+  // So we should handle both.
+  String targetFolder;
+  if (p.isAbsolute(targetRelPath)) {
+    targetFolder = targetRelPath;
+  } else {
+    targetFolder = p.join(base, targetRelPath);
+  }
 
   if (!Directory(sourcePath).existsSync()) {
     throw Exception('Source project not found');
@@ -3194,12 +3219,25 @@ Future<void> copyTrackingProject(
     throw Exception('Target folder not found');
   }
 
+  // Check if destination path already exists
   final destinationPath = p.join(targetFolder, p.basename(sourcePath));
   if (Directory(destinationPath).existsSync()) {
-    throw Exception('Project already exists in target folder');
+    throw Exception('Project already exists in target folder: $destinationPath');
   }
+  
+  // Create destination directory first
+  Directory(destinationPath).createSync(recursive: true);
 
   await _copyDir(sourcePath, destinationPath);
+  
+  // Verify copy success
+  if (!Directory(destinationPath).existsSync()) {
+       throw Exception('Copy failed: Destination directory not created');
+  }
+  final gitDir = Directory(p.join(destinationPath, '.git'));
+  if (!gitDir.existsSync()) {
+       throw Exception('Copy failed: .git directory missing in destination');
+  }
 
   // If delete source
   if (deleteSource) {
