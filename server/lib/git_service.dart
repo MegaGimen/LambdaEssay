@@ -3196,27 +3196,41 @@ Future<void> deleteProject(String relativePath) async {
   }
 }
 
+Future<String?> _findStoragePath(String trackingPath) async {
+  final base = _baseDir();
+  final dir = Directory(base);
+  if (!dir.existsSync()) return null;
+
+  final trackingPathNorm = p.normalize(trackingPath);
+
+  try {
+    await for (final entity in dir.list()) {
+      if (entity is Directory) {
+        try {
+          final tracking = await _readTracking(p.basename(entity.path));
+          if (tracking.containsKey('docxPath')) {
+            final rootTrackingPath = p.normalize(tracking['docxPath']);
+            
+            if (rootTrackingPath == trackingPathNorm || p.isWithin(rootTrackingPath, trackingPathNorm)) {
+              final rel = p.relative(trackingPathNorm, from: rootTrackingPath);
+              return p.join(entity.path, rel);
+            }
+          }
+        } catch (_) {}
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
 Future<void> copyTrackingProject(
     String sourceName, String targetRelPath, bool deleteSource) async {
   final base = _baseDir();
   // sourceName is a project name in gitdocx
   final sourcePath = p.join(base, sourceName);
   
-  // targetRelPath is passed from frontend. In Folder Mode, it's an absolute path.
-  // In Solo Mode, it might be relative? But frontend always passes absolute path of the target directory.
-  // So we should handle both.
-  String targetFolder;
-  if (p.isAbsolute(targetRelPath)) {
-    targetFolder = targetRelPath;
-  } else {
-    targetFolder = p.join(base, targetRelPath);
-  }
-
   if (!Directory(sourcePath).existsSync()) {
     throw Exception('Source project not found');
-  }
-  if (!Directory(targetFolder).existsSync()) {
-    throw Exception('Target folder not found');
   }
 
   final sourceDocx = File(p.join(sourcePath, kRepoDocxName));
@@ -3224,15 +3238,64 @@ Future<void> copyTrackingProject(
      throw Exception('content.docx not found in source project');
   }
 
-  // Check if destination path already exists
-  // Rename to <sourceName>.docx
-  final destinationPath = p.join(targetFolder, '$sourceName.docx');
-  if (File(destinationPath).existsSync()) {
-    throw Exception('File already exists in target folder: $destinationPath');
+  String? storageDestDir;
+  String? trackingDestDir;
+
+  if (p.isAbsolute(targetRelPath)) {
+    trackingDestDir = targetRelPath;
+    storageDestDir = await _findStoragePath(trackingDestDir);
+    
+    if (storageDestDir == null) {
+       // Fallback: maybe targetRelPath IS inside a gitdocx folder?
+       if (p.isWithin(base, targetRelPath)) {
+          storageDestDir = targetRelPath;
+          // Try to resolve tracking from storage
+          final info = await _resolveTrackingInfo(storageDestDir);
+          trackingDestDir = info['docxPath'];
+       } else {
+          throw Exception('Could not determine storage location for $targetRelPath. Is it part of a tracked project?');
+       }
+    }
+  } else {
+    storageDestDir = p.join(base, targetRelPath);
+    // Resolve tracking
+    final info = await _resolveTrackingInfo(storageDestDir);
+    trackingDestDir = info['docxPath'];
   }
+
+  if (storageDestDir == null) {
+     throw Exception('Could not resolve storage location.');
+  }
+
+  // Ensure directories exist
+  if (!Directory(storageDestDir).existsSync()) {
+      Directory(storageDestDir).createSync(recursive: true);
+  }
+  if (!Directory(trackingDestDir!).existsSync()) {
+      Directory(trackingDestDir).createSync(recursive: true);
+  }
+
+  final destName = '$sourceName.docx';
+  // Storage target: A directory named <sourceName>
+  final storageTargetDir = p.join(storageDestDir, sourceName);
+  // Tracking target: A file named <sourceName>.docx
+  final trackingFile = p.join(trackingDestDir, destName);
+
+  if (Directory(storageTargetDir).existsSync()) {
+    throw Exception('Directory already exists in storage: $storageTargetDir');
+  }
+  if (File(trackingFile).existsSync()) {
+    throw Exception('File already exists in tracking: $trackingFile');
+  }
+
+  // 1. Copy entire folder to Storage
+  // Create the target directory first
+  String targetDirWithSuffix = "$storageTargetDir.docx";
+  Directory(targetDirWithSuffix).createSync(recursive: true);
+  await _copyDir(sourcePath, targetDirWithSuffix);
   
-  // Copy content.docx to target folder
-  sourceDocx.copySync(destinationPath);
+  // 2. Copy content.docx to Tracking
+  sourceDocx.copySync(trackingFile);
 
   // If delete source
   if (deleteSource) {
