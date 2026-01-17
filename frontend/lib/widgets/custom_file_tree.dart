@@ -259,6 +259,10 @@ class FoldableDirectoryTree extends StatefulWidget {
 
 /// Recursively builds the directory tree for a given [directory] using [stateNotifier] to manage folder states.
 class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
+  bool _isGitRepo(Directory dir) {
+    return Directory(path.join(dir.path, '.git')).existsSync();
+  }
+
   Widget _buildDirectoryTree(
     Directory directory,
     DirectoryTreeStateNotifier stateNotifier,
@@ -369,6 +373,9 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
               children: [
                 ...entries.map((entry) {
                   if (entry is Directory) {
+                    if (_isGitRepo(entry)) {
+                       return _buildRepoItem(entry);
+                    }
                     return _buildDirectoryTree(
                       Directory(entry.path),
                       stateNotifier,
@@ -459,6 +466,56 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
   }
 
   /// Builds the widget for a single file item.
+  Widget _buildRepoItem(Directory dir) {
+    // Treat as a file item for rendering
+    final displayName = path.basename(dir.path);
+    // Use .docx extension to get the document icon
+    final customIcon = widget.fileIconBuilder?.call('.docx') ??
+        widget.fileStyle?.fileIcon ??
+        FileStyle().fileIcon;
+
+    final bool isSelected = widget.selectedPath != null &&
+        (path.equals(widget.selectedPath!, dir.path) || widget.selectedPath == dir.path);
+
+    final bool hasUpdate = widget.updatedPaths != null &&
+        widget.updatedPaths!.contains(dir.path);
+
+    return GestureDetector(
+      onTapDown: (details) {
+        if (widget.onFileTap != null) {
+          // Pass the directory path as a File object to trigger the file tap handler
+          widget.onFileTap!(File(dir.path), details);
+        }
+      },
+      onSecondaryTapDown: (details) {
+        if (widget.onFileSecondaryTap != null) {
+          widget.onFileSecondaryTap!(File(dir.path), details);
+        }
+      },
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: Container(
+          color: isSelected ? Colors.blue.withValues(alpha: 0.1) : Colors.transparent,
+          padding: const EdgeInsets.symmetric(vertical: 2),
+          child: Row(
+            children: [
+              customIcon,
+              const SizedBox(width: 8),
+              Text(
+                displayName,
+                style: widget.fileStyle?.fileNameStyle ?? FileStyle().fileNameStyle,
+              ),
+              if (hasUpdate) ...[
+                const SizedBox(width: 8),
+                const Icon(Icons.circle, color: Colors.red, size: 8),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildFileItem(File file) {
     final extension = path.extension(file.path).toLowerCase();
     final isDocx = extension == '.docx';
