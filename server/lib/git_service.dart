@@ -1832,7 +1832,9 @@ Future<void> syncFolderProject(String name) async {
 
     final targetRepoPath = p.join(projDir, relPath);
     // This will create if not exists, or update content.docx if exists
-    await _initSingleRepo(targetRepoPath, file.path);
+    if (!Directory(targetRepoPath).existsSync()) {
+      await _initSingleRepo(targetRepoPath, file.path);
+    }
   }
 
   // 3. Update folder_meta.json
@@ -1853,12 +1855,13 @@ Future<void> syncFolderProject(String name) async {
 
         // Check if this relPath exists in source
         if (!sourceRelPaths.contains(relPath)) {
-          print('Deleting orphaned repo: $repoPath');
-          try {
-            entity.parent.deleteSync(recursive: true);
-          } catch (e) {
-            print('Failed to delete orphaned repo: $e');
-          }
+          // User requested NOT to delete orphaned repos during sync.
+          // print('Deleting orphaned repo: $repoPath');
+          // try {
+          //   entity.parent.deleteSync(recursive: true);
+          // } catch (e) {
+          //   print('Failed to delete orphaned repo: $e');
+          // }
         }
       }
     }
@@ -2674,55 +2677,111 @@ Future<Map<String, dynamic>> pullFromRemote(
     }
 
     if (!isFresh) {
-      if (!force) {
+      // Check if it is a folder project (has folder_meta.json)
+      final isFolderProject = File(p.join(projDir, 'folder_meta.json')).existsSync();
+
+      if (isFolderProject) {
+        // Folder Project Additive Pull Logic
         try {
-          final trackingFile = File(p.join(projDir, 'tracking.json'));
-          if (trackingFile.existsSync()) {
+          await addRemote(projDir, remoteName, remoteUrl);
+          await _runGit(['fetch', remoteName], projDir);
+
+          // Read remote folder_meta.json
+          String? remoteMetaContent;
+          try {
+            final out = await _runGit(['show', '$remoteName/master:folder_meta.json'], projDir);
+            if (out.isNotEmpty) remoteMetaContent = out.join('\n');
+          } catch (_) {
+            // Try HEAD if master fails
             try {
-              await _runGit(['checkout', 'HEAD', '--', '.'], projDir);
-            } catch (e) {}
+              final out = await _runGit(['show', 'FETCH_HEAD:folder_meta.json'], projDir);
+              if (out.isNotEmpty) remoteMetaContent = out.join('\n');
+            } catch (__) {}
           }
-        } catch (e) {}
+
+          if (remoteMetaContent != null) {
+            final remoteMeta = jsonDecode(remoteMetaContent);
+            final localMetaFile = File(p.join(projDir, 'folder_meta.json'));
+            Map<String, dynamic> localMeta = {};
+            if (localMetaFile.existsSync()) {
+              localMeta = jsonDecode(await localMetaFile.readAsString());
+            }
+
+            final remoteItems = remoteMeta['items'] as Map<String, dynamic>? ?? {};
+            if (localMeta['items'] == null) localMeta['items'] = {};
+            final localItems = localMeta['items'] as Map<String, dynamic>;
+
+            bool changed = false;
+            for (final key in remoteItems.keys) {
+              if (!localItems.containsKey(key)) {
+                localItems[key] = remoteItems[key];
+                changed = true;
+                print('Added new item from remote: $key');
+              }
+            }
+
+            if (changed) {
+              await localMetaFile.writeAsString(jsonEncode(localMeta));
+              // We do NOT reset hard. We just updated the metadata.
+              // The actual content expansion happens later in _expandFolderProject which is called at the end of this function.
+            }
+          }
+        } catch (e) {
+          print('Folder project additive pull failed: $e');
+          // Fallback or rethrow?
+          throw Exception('Folder project pull failed: $e');
+        }
+      } else {
+        if (!force) {
+          try {
+            final trackingFile = File(p.join(projDir, 'tracking.json'));
+            if (trackingFile.existsSync()) {
+              try {
+                await _runGit(['checkout', 'HEAD', '--', '.'], projDir);
+              } catch (e) {}
+            }
+          } catch (e) {}
+
+          try {
+            final current = await getCurrentBranch(projDir);
+            if (current != null) {
+              await _runGit(['fetch', remoteUrl, current], projDir);
+            } else {
+              await _runGit(['fetch', remoteUrl, 'HEAD'], projDir);
+            }
+            final mergeBaseRes = await Process.run(
+              'git',
+              ['merge-base', '--is-ancestor', 'HEAD', 'FETCH_HEAD'],
+              workingDirectory: projDir,
+              runInShell: true,
+            );
+            if (mergeBaseRes.exitCode != 0) {
+              return {
+                'status': 'error',
+                'errorType': 'ahead',
+                'path': projDir,
+                'message': 'Local branch is ahead of remote or diverged.'
+              };
+            }
+          } catch (e) {}
+        }
+        // savedTracking = await _readTracking(repoName);
 
         try {
+          await addRemote(projDir, remoteName, remoteUrl);
+          await _runGit(['fetch', remoteName], projDir);
           final current = await getCurrentBranch(projDir);
+
           if (current != null) {
-            await _runGit(['fetch', remoteUrl, current], projDir);
+            await _runGit(['reset', '--hard', '$remoteName/$current'], projDir);
           } else {
-            await _runGit(['fetch', remoteUrl, 'HEAD'], projDir);
+            await _runGit(['checkout', 'master'], projDir);
+            await _runGit(['reset', '--hard', '$remoteName/master'], projDir);
           }
-          final mergeBaseRes = await Process.run(
-            'git',
-            ['merge-base', '--is-ancestor', 'HEAD', 'FETCH_HEAD'],
-            workingDirectory: projDir,
-            runInShell: true,
-          );
-          if (mergeBaseRes.exitCode != 0) {
-            return {
-              'status': 'error',
-              'errorType': 'ahead',
-              'path': projDir,
-              'message': 'Local branch is ahead of remote or diverged.'
-            };
-          }
-        } catch (e) {}
-      }
-      // savedTracking = await _readTracking(repoName);
-
-      try {
-        await addRemote(projDir, remoteName, remoteUrl);
-        await _runGit(['fetch', remoteName], projDir);
-        final current = await getCurrentBranch(projDir);
-
-        if (current != null) {
-          await _runGit(['reset', '--hard', '$remoteName/$current'], projDir);
-        } else {
-          await _runGit(['checkout', 'master'], projDir);
-          await _runGit(['reset', '--hard', '$remoteName/master'], projDir);
+          await _runGit(['remote', 'prune', remoteName], projDir);
+        } catch (e) {
+          throw Exception('Standard pull failed: $e');
         }
-        await _runGit(['remote', 'prune', remoteName], projDir);
-      } catch (e) {
-        throw Exception('Standard pull failed: $e');
       }
     } else {
       final base = Directory(_baseDir());
