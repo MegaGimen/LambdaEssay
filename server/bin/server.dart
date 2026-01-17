@@ -465,6 +465,7 @@ Future<void> main(List<String> args) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
     final relativePath = _sanitizePath(data['path'] as String?);
+    print('debug,relativePath:$relativePath');
 
     if (relativePath.isEmpty) {
       return _cors(Response(400,
