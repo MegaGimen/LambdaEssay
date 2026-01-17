@@ -1909,6 +1909,170 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     return jsonDecode(resp.body) as Map<String, dynamic>;
   }
 
+  Future<http.Response> _getJson(String url) async {
+    final resp = await http.get(Uri.parse(url));
+    if (resp.statusCode != 200) {
+      throw Exception(resp.body);
+    }
+    return resp;
+  }
+
+  void _handleDirTap(Directory dir, TapDownDetails details) {
+    setState(() {
+      _selectedFilePath = dir.path;
+    });
+  }
+
+  void _handleDirSecondaryTap(Directory dir, TapDownDetails details) {
+    setState(() {
+      _selectedFilePath = dir.path;
+    });
+    _showFolderContextMenu(context, details.globalPosition, dir);
+  }
+
+  void _showFolderContextMenu(
+      BuildContext context, Offset position, Directory dir) {
+    final RenderBox overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox;
+    showMenu(
+      context: context,
+      position: RelativeRect.fromRect(
+        position & const Size(40, 40),
+        Offset.zero & overlay.size,
+      ),
+      items: [
+        const PopupMenuItem(
+          value: 'import',
+          child: Text('导入追踪项目'),
+        ),
+      ],
+    ).then((value) {
+      if (value == 'import') {
+        _showImportProjectDialog(dir);
+      }
+    });
+  }
+
+  Future<void> _showImportProjectDialog(Directory targetDir) async {
+    List<String> projects = [];
+    try {
+      final resp = await _getJson('$baseUrl/project/list');
+      projects = (jsonDecode(resp.body) as List).cast<String>();
+    } catch (e) {
+      setState(() => error = '无法获取项目列表: $e');
+      return;
+    }
+    
+    final targetName = p.basename(targetDir.path);
+    projects.remove(targetName);
+
+    if (!mounted) return;
+
+    showDialog(context: context, builder: (ctx) {
+      String? selectedProject;
+      bool deleteSource = false;
+      return StatefulBuilder(builder: (ctx, setDialogState) {
+        return AlertDialog(
+          title: const Text('导入追踪项目'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButton<String>(
+                hint: const Text('选择项目'),
+                value: selectedProject,
+                items: projects
+                    .map((p) => DropdownMenuItem(value: p, child: Text(p)))
+                    .toList(),
+                onChanged: (v) => setDialogState(() => selectedProject = v),
+              ),
+              CheckboxListTile(
+                title: const Text('删除源项目'),
+                value: deleteSource,
+                onChanged: (v) => setDialogState(() => deleteSource = v!),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+            ElevatedButton(
+              onPressed: selectedProject == null
+                  ? null
+                  : () async {
+                      Navigator.pop(ctx);
+                      await _importProject(
+                          selectedProject!, targetDir.path, deleteSource);
+                    },
+              child: const Text('导入'),
+            ),
+          ],
+        );
+      });
+    });
+  }
+
+  Future<void> _importProject(
+      String sourceName, String targetPath, bool deleteSource) async {
+    try {
+        await _postJson('$baseUrl/project/copy', {
+            'sourceName': sourceName,
+            'targetRelPath': targetPath,
+            'deleteSource': deleteSource
+        });
+        setState(() {
+             // Force tree refresh if possible, currently rely on file system watcher or user action
+        });
+        if (_treeNotifier.isUnfolded(targetPath, docxPathCtrl.text.trim())) {
+             _treeNotifier.toggleFolder(targetPath, docxPathCtrl.text.trim());
+             _treeNotifier.toggleFolder(targetPath, docxPathCtrl.text.trim());
+        }
+    } catch (e) {
+        setState(() => error = '导入失败: $e');
+    }
+  }
+
+  Future<void> _deleteSelectedProject() async {
+    if (_selectedFilePath == null) return;
+    
+    final isRepo = Directory(p.join(_selectedFilePath!, '.git')).existsSync();
+    if (!isRepo) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除项目'),
+        content: Text('确定要删除项目 "${p.basename(_selectedFilePath!)}" 吗？此操作不可撤销。'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('删除')),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      try {
+        final parent = p.dirname(_selectedFilePath!);
+        await _postJson('$baseUrl/project/delete', {'path': _selectedFilePath});
+        setState(() {
+            _selectedFilePath = null;
+        });
+        
+        // Refresh parent folder in tree
+        if (_treeNotifier.isUnfolded(parent, docxPathCtrl.text.trim())) {
+             _treeNotifier.toggleFolder(parent, docxPathCtrl.text.trim());
+             _treeNotifier.toggleFolder(parent, docxPathCtrl.text.trim());
+        }
+      } catch (e) {
+        setState(() => error = '删除失败: $e');
+      }
+    }
+  }
+
   Future<GraphData> _loadGraph(String repoPath) async {
     final limit = int.tryParse(limitCtrl.text.trim());
     // Reset cache on server first? Not strictly needed but good for consistency
@@ -2927,6 +3091,25 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
 
   Future<void> _handleFileSecondaryTap(File file, TapDownDetails details) async {
+    setState(() {
+      _selectedFilePath = file.path;
+    });
+
+    final isRepo = Directory(p.join(file.path, '.git')).existsSync();
+    final List<PopupMenuItem<String>> items = [];
+
+    if (isRepo) {
+      items.add(const PopupMenuItem(
+        value: 'delete',
+        child: Text('删除项目', style: TextStyle(color: Colors.red)),
+      ));
+    } else {
+      items.add(const PopupMenuItem(
+        value: 'import',
+        child: Text('导入已有追踪项目'),
+      ));
+    }
+
     final position = RelativeRect.fromLTRB(
       details.globalPosition.dx,
       details.globalPosition.dy,
@@ -2937,15 +3120,12 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     final result = await showMenu<String>(
       context: context,
       position: position,
-      items: [
-        const PopupMenuItem(
-          value: 'import',
-          child: Text('导入已有追踪项目'),
-        ),
-      ],
+      items: items,
     );
 
-    if (result == 'import') {
+    if (result == 'delete') {
+      await _deleteSelectedProject();
+    } else if (result == 'import') {
       await _importProjectTo(file);
     }
   }
@@ -3292,6 +3472,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                         const Icon(Icons.description, size: 16, color: Colors.blueGrey),
                     onFileTap: _handleFileTap,
                     onFileSecondaryTap: _handleFileSecondaryTap,
+                    onDirTap: _handleDirTap,
+                    onDirSecondaryTap: _handleDirSecondaryTap,
                   ),
                 ),
               ),

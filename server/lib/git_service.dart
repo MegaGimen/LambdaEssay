@@ -3100,11 +3100,10 @@ Future<PullPreviewResult> previewPull(
     if (type == 'rebase' && currentBranch != null && resultGraph != null) {
       for (final c in resultGraph.commits) {
         c.refs.remove(currentBranch);
-        c.refs.remove('refs/heads/$currentBranch');
       }
     }
 
-    final result = PullPreviewResult(
+    return PullPreviewResult(
       current: currentGraph,
       target: finalTargetGraph,
       result: resultGraph,
@@ -3112,11 +3111,104 @@ Future<PullPreviewResult> previewPull(
       hasConflicts: hasConflicts,
       conflictingFiles: conflictingFiles,
     );
-
-    _previewCache[cacheKey] = result;
-
-    return result;
   });
+}
+
+Future<void> deleteProject(String relativePath) async {
+  final base = _baseDir();
+  final targetPath = p.normalize(p.join(base, relativePath));
+
+  if (!p.isWithin(base, targetPath)) {
+    throw Exception('Access denied: Cannot delete outside of base directory');
+  }
+
+  final dir = Directory(targetPath);
+  if (!dir.existsSync()) {
+    throw Exception('Project not found: $relativePath');
+  }
+
+  // Clean up parent metadata if needed
+  final parentPath = dir.parent.path;
+  if (p.isWithin(base, parentPath) || p.equals(base, parentPath)) {
+    final metaFile = File(p.join(parentPath, 'folder_meta.json'));
+    if (metaFile.existsSync()) {
+      try {
+        final meta = jsonDecode(await metaFile.readAsString());
+        final items = meta['items'] as Map<String, dynamic>?;
+        if (items != null) {
+          final relPath = p.relative(targetPath, from: parentPath);
+          bool changed = false;
+          // Try exact match
+          if (items.containsKey(relPath)) {
+            items.remove(relPath);
+            changed = true;
+          } else {
+            // Try forward slash version
+            final forward = relPath.replaceAll(r'\', '/');
+            if (items.containsKey(forward)) {
+              items.remove(forward);
+              changed = true;
+            }
+            // Try backward slash version
+            final back = relPath.replaceAll('/', r'\');
+            if (items.containsKey(back)) {
+              items.remove(back);
+              changed = true;
+            }
+          }
+
+          if (changed) {
+            await metaFile.writeAsString(jsonEncode(meta));
+            // Commit metadata change
+            await _runGit(['add', 'folder_meta.json'], parentPath);
+            try {
+              await _runGit(
+                  ['commit', '-m', 'Remove deleted project ${p.basename(targetPath)}'],
+                  parentPath);
+            } catch (_) {}
+          }
+        }
+      } catch (e) {
+        print('Failed to update parent metadata during deletion: $e');
+      }
+    }
+  }
+
+  try {
+    dir.deleteSync(recursive: true);
+  } catch (e) {
+    throw Exception('Failed to delete directory: $e');
+  }
+}
+
+Future<void> copyTrackingProject(
+    String sourceName, String targetRelPath, bool deleteSource) async {
+  final base = _baseDir();
+  final sourcePath = p.join(base, sourceName);
+  final targetFolder = p.join(base, targetRelPath);
+
+  if (!Directory(sourcePath).existsSync()) {
+    throw Exception('Source project not found');
+  }
+  if (!Directory(targetFolder).existsSync()) {
+    throw Exception('Target folder not found');
+  }
+
+  final destinationPath = p.join(targetFolder, p.basename(sourcePath));
+  if (Directory(destinationPath).existsSync()) {
+    throw Exception('Project already exists in target folder');
+  }
+
+  await _copyDir(sourcePath, destinationPath);
+
+  // If delete source
+  if (deleteSource) {
+    // Use deleteProject to handle metadata cleanup for the source
+    await deleteProject(sourceName);
+  }
+
+  // Notify parent folder project (climb up from destination)
+  await _notifyParentFolderProject(destinationPath);
 }
 
 // Map<String, int> _computeUnifiedMapping(List<GraphResponse> graphs) {

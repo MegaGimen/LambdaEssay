@@ -461,6 +461,67 @@ Future<void> main(List<String> args) async {
     }
   });
 
+  router.post('/project/delete', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final relativePath = _sanitizePath(data['path'] as String?);
+
+    if (relativePath.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'path required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+
+    try {
+      await deleteProject(relativePath);
+      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.get('/project/list', (Request req) async {
+    try {
+      final projects = await listProjects();
+      return _cors(Response.ok(jsonEncode(projects), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/project/copy', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final sourceName = _sanitizePath(data['sourceName'] as String?);
+    final targetRelPath = _sanitizePath(data['targetRelPath'] as String?);
+    final deleteSource = data['deleteSource'] == true;
+
+    if (sourceName.isEmpty || targetRelPath.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'sourceName and targetRelPath required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+
+    try {
+      await copyTrackingProject(sourceName, targetRelPath, deleteSource);
+      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
   router.post('/branches', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
