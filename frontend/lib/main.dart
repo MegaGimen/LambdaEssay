@@ -1932,6 +1932,20 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
   void _showFolderContextMenu(
       BuildContext context, Offset position, Directory dir) {
+    final items = <PopupMenuItem<String>>[];
+
+    items.add(const PopupMenuItem(
+      value: 'import',
+      child: Text('导入追踪项目'),
+    ));
+
+    // Allow deleting any directory (Project, Folder Project, or Plain Folder)
+    // The backend will handle the specifics.
+    items.add(const PopupMenuItem(
+        value: 'delete',
+        child: Text('删除', style: TextStyle(color: Colors.red)),
+    ));
+
     final RenderBox overlay =
         Overlay.of(context).context.findRenderObject() as RenderBox;
     showMenu(
@@ -1940,15 +1954,12 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         position & const Size(40, 40),
         Offset.zero & overlay.size,
       ),
-      items: [
-        const PopupMenuItem(
-          value: 'import',
-          child: Text('导入追踪项目'),
-        ),
-      ],
+      items: items,
     ).then((value) {
       if (value == 'import') {
         _showImportProjectDialog(dir);
+      } else if (value == 'delete') {
+        _deleteSelectedProject();
       }
     });
   }
@@ -2034,14 +2045,15 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   Future<void> _deleteSelectedProject() async {
     if (_selectedFilePath == null) return;
     
-    final isRepo = Directory(p.join(_selectedFilePath!, '.git')).existsSync();
-    if (!isRepo) return;
+    // We allow deleting any directory now
+    final isDir = await Directory(_selectedFilePath!).exists();
+    if (!isDir) return;
 
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('删除项目'),
-        content: Text('确定要删除项目 "${p.basename(_selectedFilePath!)}" 吗？此操作不可撤销。'),
+        title: const Text('删除'),
+        content: Text('确定要删除 "${p.basename(_selectedFilePath!)}" 吗？此操作不可撤销。'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
