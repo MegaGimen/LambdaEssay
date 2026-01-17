@@ -3219,48 +3219,26 @@ Future<void> copyTrackingProject(
     throw Exception('Target folder not found');
   }
 
+  final sourceDocx = File(p.join(sourcePath, kRepoDocxName));
+  if (!sourceDocx.existsSync()) {
+     throw Exception('content.docx not found in source project');
+  }
+
   // Check if destination path already exists
-  final destinationPath = p.join(targetFolder, p.basename(sourcePath));
-  if (Directory(destinationPath).existsSync()) {
-    throw Exception('Project already exists in target folder: $destinationPath');
+  // Rename to <sourceName>.docx
+  final destinationPath = p.join(targetFolder, '$sourceName.docx');
+  if (File(destinationPath).existsSync()) {
+    throw Exception('File already exists in target folder: $destinationPath');
   }
   
-  // Create destination directory first
-  Directory(destinationPath).createSync(recursive: true);
-
-  await _copyDir(sourcePath, destinationPath);
-
-  // Clean up docx artifacts from destination if they exist
-  try {
-    final docxFile = File(p.join(destinationPath, kRepoDocxName));
-    if (docxFile.existsSync()) {
-      docxFile.deleteSync();
-    }
-    final docContentDir = Directory(p.join(destinationPath, kContentDirName));
-    if (docContentDir.existsSync()) {
-      docContentDir.deleteSync(recursive: true);
-    }
-  } catch (e) {
-    print('Warning: Failed to cleanup docx artifacts: $e');
-  }
-  
-  // Verify copy success
-  if (!Directory(destinationPath).existsSync()) {
-       throw Exception('Copy failed: Destination directory not created');
-  }
-  final gitDir = Directory(p.join(destinationPath, '.git'));
-  if (!gitDir.existsSync()) {
-       throw Exception('Copy failed: .git directory missing in destination');
-  }
+  // Copy content.docx to target folder
+  sourceDocx.copySync(destinationPath);
 
   // If delete source
   if (deleteSource) {
     // Use deleteProject to handle metadata cleanup for the source
     await deleteProject(sourceName);
   }
-
-  // Notify parent folder project (climb up from destination)
-  await _notifyParentFolderProject(destinationPath);
 }
 
 // Map<String, int> _computeUnifiedMapping(List<GraphResponse> graphs) {
