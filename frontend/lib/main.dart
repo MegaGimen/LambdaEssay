@@ -593,23 +593,24 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   final TextEditingController docxPathCtrl = TextEditingController();
   GraphData? data;
   GraphData? remoteData; // New: Remote graph data
-  bool showRemotePreview = false; // New: Toggle for remote preview (Default false)
+  bool showRemotePreview =
+      false; // New: Toggle for remote preview (Default false)
   bool isFolderProject = false; // New: Folder project mode
   String? _folderRootPath; // New: Root path of folder project
   List<Map<String, dynamic>> subRepos = []; // New: Sub-repos for folder project
-  
+
   Map<String, int>? localRowMapping;
   Map<String, int>? remoteRowMapping;
   int? totalRows;
   final TransformationController _sharedController = TransformationController();
   late AnimationController _sidebarFlashCtrl;
-  
+
   Set<String> _fetchingPaths = {};
   Map<String, bool> _repoUpdates = {};
   String? _selectedFilePath;
   bool _comConnected = false;
- // path -> true if updated
-  
+  // path -> true if updated
+
   // For double-click detection
   DateTime? _lastTapTime;
   String? _lastTappedPath;
@@ -681,13 +682,14 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         _isConnecting = false;
         return;
       }
-      
+
       _channel = IOWebSocketChannel(ws);
       // Update UI to show success state
       setState(() {
-        _comConnected = true; // Assume connected if websocket is open, server will send updates
+        _comConnected =
+            true; // Assume connected if websocket is open, server will send updates
       });
-      
+
       _channel!.stream.listen((message) {
         if (!mounted) return;
         try {
@@ -735,12 +737,12 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   void _scheduleReconnect() {
     if (!mounted) return;
     if (_reconnectTimer != null && _reconnectTimer!.isActive) return;
-    
+
     setState(() {
       _channel = null;
       _comConnected = false;
     });
-    
+
     _reconnectTimer = Timer(const Duration(seconds: 5), _connectWebSocket);
   }
 
@@ -1080,10 +1082,10 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         final list = jsonDecode(resp.body) as List;
         // Check format: older server might return List<String>, newer returns List<Map>
         if (list.isNotEmpty && list.first is String) {
-           repos = list.cast<String>();
+          repos = list.cast<String>();
         } else {
-           repoList = list.cast<Map<String, dynamic>>();
-           repos = repoList.map((e) => e['name'] as String).toList();
+          repoList = list.cast<Map<String, dynamic>>();
+          repos = repoList.map((e) => e['name'] as String).toList();
         }
       }
     } catch (e) {
@@ -1131,10 +1133,12 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                           final repo = repos[index];
                           bool isFolder = false;
                           if (repoList.isNotEmpty) {
-                             final info = repoList.firstWhere((e) => e['name'] == repo, orElse: () => {});
-                             isFolder = info['isFolder'] == true;
+                            final info = repoList.firstWhere(
+                                (e) => e['name'] == repo,
+                                orElse: () => {});
+                            isFolder = info['isFolder'] == true;
                           }
-                          
+
                           return RadioListTile<String>(
                             title: Row(
                               children: [
@@ -1142,14 +1146,16 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                                 if (isFolder) ...[
                                   const SizedBox(width: 8),
                                   Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 4, vertical: 2),
                                     decoration: BoxDecoration(
                                       color: Colors.blue.shade100,
                                       borderRadius: BorderRadius.circular(4),
                                     ),
                                     child: const Text(
                                       '文件夹项目',
-                                      style: TextStyle(fontSize: 10, color: Colors.blue),
+                                      style: TextStyle(
+                                          fontSize: 10, color: Colors.blue),
                                     ),
                                   ),
                                 ],
@@ -1215,10 +1221,13 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                     if (selectedRepo == null) return;
                     bool isFolder = false;
                     if (repoList.isNotEmpty) {
-                       final info = repoList.firstWhere((e) => e['name'] == selectedRepo, orElse: () => {});
-                       isFolder = info['isFolder'] == true;
+                      final info = repoList.firstWhere(
+                          (e) => e['name'] == selectedRepo,
+                          orElse: () => {});
+                      isFolder = info['isFolder'] == true;
                     }
-                    Navigator.pop(ctx, {'name': selectedRepo, 'isFolder': isFolder});
+                    Navigator.pop(
+                        ctx, {'name': selectedRepo, 'isFolder': isFolder});
                   }
                 },
                 child: const Text('确定'),
@@ -1586,7 +1595,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         final appData = Platform.environment['APPDATA'];
         if (appData != null) {
           final repoPath = p.join(appData, 'gitdocx', repoName);
-          isFolderProject = File(p.join(repoPath, 'folder_meta.json')).existsSync();
+          isFolderProject =
+              File(p.join(repoPath, 'folder_meta.json')).existsSync();
         }
       } catch (_) {}
 
@@ -1601,7 +1611,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(isFolderProject 
+                  Text(isFolderProject
                       ? '这是一个新的克隆（或已被重置），请重新设置要追踪的文件夹'
                       : '这是一个新的克隆（或已被重置），请重新设置要追踪的Word文档(.docx)或解包文件夹'),
                   const SizedBox(height: 8),
@@ -1611,30 +1621,34 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                         child: TextField(
                           controller: docxCtrl,
                           decoration: InputDecoration(
-                            labelText: isFolderProject ? '文件夹路径' : 'docx文件路径或解包文件夹路径',
+                            labelText:
+                                isFolderProject ? '文件夹路径' : 'docx文件路径或解包文件夹路径',
                           ),
                         ),
                       ),
                       IconButton(
-                        icon: Icon(isFolderProject ? Icons.folder : Icons.insert_drive_file),
+                        icon: Icon(isFolderProject
+                            ? Icons.folder
+                            : Icons.insert_drive_file),
                         tooltip: isFolderProject ? '选择文件夹' : '选择文件',
                         onPressed: () async {
-                            if (isFolderProject) {
-                                String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
-                                if (selectedDirectory != null) {
-                                    docxCtrl.text = selectedDirectory;
-                                }
-                            } else {
-                                FilePickerResult? result =
-                                    await FilePicker.platform.pickFiles(
-                                type: FileType.custom,
-                                allowedExtensions: ['docx'],
-                                );
-                                if (result != null &&
-                                    result.files.single.path != null) {
-                                docxCtrl.text = result.files.single.path!;
-                                }
+                          if (isFolderProject) {
+                            String? selectedDirectory =
+                                await FilePicker.platform.getDirectoryPath();
+                            if (selectedDirectory != null) {
+                              docxCtrl.text = selectedDirectory;
                             }
+                          } else {
+                            FilePickerResult? result =
+                                await FilePicker.platform.pickFiles(
+                              type: FileType.custom,
+                              allowedExtensions: ['docx'],
+                            );
+                            if (result != null &&
+                                result.files.single.path != null) {
+                              docxCtrl.text = result.files.single.path!;
+                            }
+                          }
                         },
                       ),
                     ],
@@ -1665,10 +1679,10 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             setState(() {
               docxPathCtrl.text = docx;
             });
-            
+
             if (isFolderProject) {
-                // Refresh project to load sub-repos
-                await _openProject(repoName, isFolderProject: true);
+              // Refresh project to load sub-repos
+              await _openProject(repoName, isFolderProject: true);
             }
           } catch (e) {
             if (mounted) {
@@ -1691,19 +1705,23 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       setState(() => error = '当前未打开任何项目，无法拉取');
       return;
     }
-    
+
     // 1. Auto-Pull Sub-Repo (Folder Mode)
     // If we are in folder mode, and we are currently viewing a sub-repo (not root),
     // and the graph is loaded (data != null), auto-pull using hash logic.
-    if (isFolderProject && _folderRootPath != null && pathCtrl.text.isNotEmpty && data != null) {
-       final normalizedPath = pathCtrl.text.replaceAll(r'\', '/');
-       final normalizedRoot = _folderRootPath!.replaceAll(r'\', '/');
-       // Check if path is a sub-folder of root (and not root itself)
-       if (normalizedPath.startsWith(normalizedRoot) && normalizedPath != normalizedRoot) {
-           // Auto pull: send repoPath, backend calculates hash
-           await _executePull(repoPath: pathCtrl.text.trim());
-           return;
-       }
+    if (isFolderProject &&
+        _folderRootPath != null &&
+        pathCtrl.text.isNotEmpty &&
+        data != null) {
+      final normalizedPath = pathCtrl.text.replaceAll(r'\', '/');
+      final normalizedRoot = _folderRootPath!.replaceAll(r'\', '/');
+      // Check if path is a sub-folder of root (and not root itself)
+      if (normalizedPath.startsWith(normalizedRoot) &&
+          normalizedPath != normalizedRoot) {
+        // Auto pull: send repoPath, backend calculates hash
+        await _executePull(repoPath: pathCtrl.text.trim());
+        return;
+      }
     }
 
     // 2. Manual Selection
@@ -1712,64 +1730,72 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     );
     if (selection == null) return;
     if (!mounted) return;
-    
+
     final targetRepoName = selection['name'] as String;
     final isRemoteFolder = selection['isFolder'] == true;
-    
+
     // 3. Folder Project Handling
     if (isRemoteFolder) {
-        // Check if locally exists
-        final localProjects = await _fetchProjectList();
-        if (!mounted) return;
-        if (localProjects.contains(targetRepoName)) {
-             // Open it
-             try {
-                final resp = await _postJson('http://localhost:8080/track/open', {'name': targetRepoName});
-                final repoPath = resp['repoPath'];
-                final docxPath = resp['docxPath'];
-                final type = resp['type'] as String? ?? 'file';
-                
-                if (!mounted) return;
-                setState(() {
-                  currentProjectName = targetRepoName;
-                  pathCtrl.text = repoPath;
-                  docxPathCtrl.text = docxPath ?? '';
-                  isFolderProject = type == 'folder';
-                  _folderRootPath = isFolderProject ? repoPath : null;
-                  // Clear graph/data as we are at root
-                  data = null;
-                  remoteData = null;
-                });
-                
-                if (isFolderProject) {
-                   final reposResp = await _postJson('http://localhost:8080/track/repos', {'name': targetRepoName});
-                   final repos = (reposResp['repos'] as List).cast<Map<String, dynamic>>();
-                   if (!mounted) return;
-                   setState(() => subRepos = repos);
-                }
-                
-                if (mounted) {
-                   showDialog(
-                     context: context, 
-                     builder: (ctx) => AlertDialog(
-                       title: const Text('文件夹项目'),
-                       content: const Text('检测到本地已存在该文件夹项目，已为您打开。\n请进入具体子文件后手动进行拉取操作。'),
-                       actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('确定'))]
-                     )
-                   );
-                }
-             } catch (e) {
-                setState(() => error = '打开文件夹项目失败: $e');
-             }
-             return;
+      // Check if locally exists
+      final localProjects = await _fetchProjectList();
+      if (!mounted) return;
+      if (localProjects.contains(targetRepoName)) {
+        // Open it
+        try {
+          final resp = await _postJson(
+              'http://localhost:8080/track/open', {'name': targetRepoName});
+          final repoPath = resp['repoPath'];
+          final docxPath = resp['docxPath'];
+          final type = resp['type'] as String? ?? 'file';
+
+          if (!mounted) return;
+          setState(() {
+            currentProjectName = targetRepoName;
+            pathCtrl.text = repoPath;
+            docxPathCtrl.text = docxPath ?? '';
+            isFolderProject = type == 'folder';
+            _folderRootPath = isFolderProject ? repoPath : null;
+            // Clear graph/data as we are at root
+            data = null;
+            remoteData = null;
+          });
+
+          if (isFolderProject) {
+            final reposResp = await _postJson(
+                'http://localhost:8080/track/repos', {'name': targetRepoName});
+            final repos =
+                (reposResp['repos'] as List).cast<Map<String, dynamic>>();
+            if (!mounted) return;
+            setState(() => subRepos = repos);
+          }
+
+          if (mounted) {
+            showDialog(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                        title: const Text('文件夹项目'),
+                        content: const Text(
+                            '检测到本地已存在该文件夹项目，已为您打开。\n请进入具体子文件后手动进行拉取操作。'),
+                        actions: [
+                          TextButton(
+                              onPressed: () => Navigator.pop(ctx),
+                              child: const Text('确定'))
+                        ]));
+          }
+        } catch (e) {
+          setState(() => error = '打开文件夹项目失败: $e');
         }
+        return;
+      }
     }
 
     // 4. Normal Pull
-    await _executePull(repoName: currentProjectName!, targetRepoName: targetRepoName);
+    await _executePull(
+        repoName: currentProjectName!, targetRepoName: targetRepoName);
   }
 
-  Future<void> _executePull({String? repoName, String? repoPath, String? targetRepoName}) async {
+  Future<void> _executePull(
+      {String? repoName, String? repoPath, String? targetRepoName}) async {
     setState(() {
       loading = true;
       error = null;
@@ -1833,7 +1859,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
       // Only setup tracking if we have a repoName (project context)
       if (repoName != null) {
-         await _checkAndSetupTracking(repoName, isFresh);
+        await _checkAndSetupTracking(repoName, isFresh);
       }
 
       // Reload again to update graph if needed (e.g. fresh clone or new commits)
@@ -1942,8 +1968,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     // Allow deleting any directory (Project, Folder Project, or Plain Folder)
     // The backend will handle the specifics.
     items.add(const PopupMenuItem(
-        value: 'delete',
-        child: Text('删除', style: TextStyle(color: Colors.red)),
+      value: 'delete',
+      child: Text('删除', style: TextStyle(color: Colors.red)),
     ));
 
     final RenderBox overlay =
@@ -1973,78 +1999,81 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       setState(() => error = '无法获取项目列表: $e');
       return;
     }
-    
+
     final targetName = p.basename(targetDir.path);
     projects.remove(targetName);
 
     if (!mounted) return;
 
-    showDialog(context: context, builder: (ctx) {
-      String? selectedProject;
-      bool deleteSource = false;
-      return StatefulBuilder(builder: (ctx, setDialogState) {
-        return AlertDialog(
-          title: const Text('导入追踪项目'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DropdownButton<String>(
-                hint: const Text('选择项目'),
-                value: selectedProject,
-                items: projects
-                    .map((p) => DropdownMenuItem(value: p, child: Text(p)))
-                    .toList(),
-                onChanged: (v) => setDialogState(() => selectedProject = v),
+    showDialog(
+        context: context,
+        builder: (ctx) {
+          String? selectedProject;
+          bool deleteSource = false;
+          return StatefulBuilder(builder: (ctx, setDialogState) {
+            return AlertDialog(
+              title: const Text('导入追踪项目'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DropdownButton<String>(
+                    hint: const Text('选择项目'),
+                    value: selectedProject,
+                    items: projects
+                        .map((p) => DropdownMenuItem(value: p, child: Text(p)))
+                        .toList(),
+                    onChanged: (v) => setDialogState(() => selectedProject = v),
+                  ),
+                  CheckboxListTile(
+                    title: const Text('删除源项目'),
+                    value: deleteSource,
+                    onChanged: (v) => setDialogState(() => deleteSource = v!),
+                  ),
+                ],
               ),
-              CheckboxListTile(
-                title: const Text('删除源项目'),
-                value: deleteSource,
-                onChanged: (v) => setDialogState(() => deleteSource = v!),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
-            ElevatedButton(
-              onPressed: selectedProject == null
-                  ? null
-                  : () async {
-                      Navigator.pop(ctx);
-                      await _importProject(
-                          selectedProject!, targetDir.path, deleteSource);
-                    },
-              child: const Text('导入'),
-            ),
-          ],
-        );
-      });
-    });
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text('取消')),
+                ElevatedButton(
+                  onPressed: selectedProject == null
+                      ? null
+                      : () async {
+                          Navigator.pop(ctx);
+                          await _importProject(
+                              selectedProject!, targetDir.path, deleteSource);
+                        },
+                  child: const Text('导入'),
+                ),
+              ],
+            );
+          });
+        });
   }
 
   Future<void> _importProject(
       String sourceName, String targetPath, bool deleteSource) async {
     try {
-        await _postJson('$baseUrl/project/copy', {
-            'sourceName': sourceName,
-            'targetRelPath': targetPath,
-            'deleteSource': deleteSource
-        });
-        setState(() {
-             // Force tree refresh if possible, currently rely on file system watcher or user action
-        });
-        if (_treeNotifier.isUnfolded(targetPath, docxPathCtrl.text.trim())) {
-             _treeNotifier.toggleFolder(targetPath, docxPathCtrl.text.trim());
-             _treeNotifier.toggleFolder(targetPath, docxPathCtrl.text.trim());
-        }
+      await _postJson('$baseUrl/project/copy', {
+        'sourceName': sourceName,
+        'targetRelPath': targetPath,
+        'deleteSource': deleteSource
+      });
+      setState(() {
+        // Force tree refresh if possible, currently rely on file system watcher or user action
+      });
+      if (_treeNotifier.isUnfolded(targetPath, docxPathCtrl.text.trim())) {
+        _treeNotifier.toggleFolder(targetPath, docxPathCtrl.text.trim());
+        _treeNotifier.toggleFolder(targetPath, docxPathCtrl.text.trim());
+      }
     } catch (e) {
-        setState(() => error = '导入失败: $e');
+      setState(() => error = '导入失败: $e');
     }
   }
 
   Future<void> _deleteSelectedProject() async {
     if (_selectedFilePath == null) return;
-    
+
     // We allow deleting any directory now
     final isDir = await Directory(_selectedFilePath!).exists();
     if (!isDir) return;
@@ -2071,13 +2100,13 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         final parent = p.dirname(_selectedFilePath!);
         await _postJson('$baseUrl/project/delete', {'path': _selectedFilePath});
         setState(() {
-            _selectedFilePath = null;
+          _selectedFilePath = null;
         });
-        
+
         // Refresh parent folder in tree
         if (_treeNotifier.isUnfolded(parent, docxPathCtrl.text.trim())) {
-             _treeNotifier.toggleFolder(parent, docxPathCtrl.text.trim());
-             _treeNotifier.toggleFolder(parent, docxPathCtrl.text.trim());
+          _treeNotifier.toggleFolder(parent, docxPathCtrl.text.trim());
+          _treeNotifier.toggleFolder(parent, docxPathCtrl.text.trim());
         }
       } catch (e) {
         setState(() => error = '删除失败: $e');
@@ -2297,7 +2326,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                       icon: const Icon(Icons.folder_open),
                       tooltip: '选择文件夹',
                       onPressed: () async {
-                        String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
+                        String? selectedDirectory =
+                            await FilePicker.platform.getDirectoryPath();
                         if (selectedDirectory != null) {
                           docxCtrl.text = selectedDirectory;
                         }
@@ -2344,28 +2374,31 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
       if (type == 'folder') {
         final reposResp = await _postJson('http://localhost:8080/track/repos', {
-           'name': name,
+          'name': name,
         });
         final repos = (reposResp['repos'] as List).cast<Map<String, dynamic>>();
-        
+
         if (!mounted) return;
         setState(() {
           currentProjectName = name;
-          pathCtrl.text = repoPath; 
+          pathCtrl.text = repoPath;
           docxPathCtrl.text = docx;
           isFolderProject = true;
           subRepos = repos;
         });
 
         if (repos.isNotEmpty) {
-           final firstRepo = repos.first;
-           setState(() {
-              pathCtrl.text = firstRepo['repoPath'];
-           });
-           await _onUpdateRepoAction(opIdentical: true, specificRepoPath: firstRepo['repoPath'], specificDocxPath: firstRepo['docxPath']);
-           await _load();
+          final firstRepo = repos.first;
+          setState(() {
+            pathCtrl.text = firstRepo['repoPath'];
+          });
+          await _onUpdateRepoAction(
+              opIdentical: true,
+              specificRepoPath: firstRepo['repoPath'],
+              specificDocxPath: firstRepo['docxPath']);
+          await _load();
         } else {
-           setState(() => loading = false); 
+          setState(() => loading = false);
         }
       } else {
         setState(() {
@@ -2474,25 +2507,25 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
       if (type == 'folder') {
         final reposResp = await _postJson('http://localhost:8080/track/repos', {
-           'name': name,
+          'name': name,
         });
         if (!mounted) return;
         final repos = (reposResp['repos'] as List).cast<Map<String, dynamic>>();
         setState(() {
           currentProjectName = name;
-          pathCtrl.text = repoPath; 
+          pathCtrl.text = repoPath;
           docxPathCtrl.text = docxPath ?? '';
           isFolderProject = true;
           subRepos = repos;
         });
 
         if (repos.isNotEmpty) {
-           // Default: do not open any specific repo
-           setState(() {
-              pathCtrl.clear();
-              data = null;
-              remoteData = null;
-           });
+          // Default: do not open any specific repo
+          setState(() {
+            pathCtrl.clear();
+            data = null;
+            remoteData = null;
+          });
         }
       } else {
         setState(() {
@@ -2555,7 +2588,10 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   bool _isUpdatingRepo = false;
 
   Future<void> _onUpdateRepoAction(
-      {bool forcePull = false, bool opIdentical = true, String? specificRepoPath, String? specificDocxPath}) async {
+      {bool forcePull = false,
+      bool opIdentical = true,
+      String? specificRepoPath,
+      String? specificDocxPath}) async {
     final sw = Stopwatch()..start();
     if (_isUpdatingRepo) return;
     _isUpdatingRepo = true;
@@ -2915,7 +2951,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
       // Force clear cache on server
       await http.post(Uri.parse('http://localhost:8080/reset'));
-      
+
       if (!mounted) return;
 
       // Step 7: Update repo
@@ -3043,13 +3079,13 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
       if (type == 'folder') {
         final reposResp = await _postJson('http://localhost:8080/track/repos', {
-           'name': name,
+          'name': name,
         });
         if (!mounted) return;
         final repos = (reposResp['repos'] as List).cast<Map<String, dynamic>>();
         setState(() {
           currentProjectName = name;
-          pathCtrl.text = repoPath; 
+          pathCtrl.text = repoPath;
           docxPathCtrl.text = docxPath ?? '';
           _selectedFilePath = docxPath;
           this.isFolderProject = true;
@@ -3057,11 +3093,15 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         });
 
         if (repos.isNotEmpty) {
-           final firstRepo = repos.first;
-           setState(() {
-              pathCtrl.text = firstRepo['repoPath'];
-           });
-           await _onUpdateRepoAction(forcePull: true, opIdentical: false, specificRepoPath: firstRepo['repoPath'], specificDocxPath: firstRepo['docxPath']);
+          final firstRepo = repos.first;
+          setState(() {
+            pathCtrl.text = firstRepo['repoPath'];
+          });
+          await _onUpdateRepoAction(
+              forcePull: true,
+              opIdentical: false,
+              specificRepoPath: firstRepo['repoPath'],
+              specificDocxPath: firstRepo['docxPath']);
         }
       } else {
         setState(() {
@@ -3085,14 +3125,14 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     if (currentProjectName == null) return;
     setState(() => loading = true);
     try {
-      final resp = await _postJson(
-          'http://localhost:8080/track/sync_folder', {'name': currentProjectName});
+      final resp = await _postJson('http://localhost:8080/track/sync_folder',
+          {'name': currentProjectName});
       if (resp['status'] == 'ok') {
         // Reload project list/repos
         await _openProject(currentProjectName!, isFolderProject: true);
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('文件夹同步完成')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('文件夹同步完成')));
       }
     } catch (e) {
       setState(() => error = e.toString());
@@ -3101,8 +3141,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     }
   }
 
-
-  Future<void> _handleFileSecondaryTap(File file, TapDownDetails details) async {
+  Future<void> _handleFileSecondaryTap(
+      File file, TapDownDetails details) async {
     setState(() {
       _selectedFilePath = file.path;
     });
@@ -3173,92 +3213,102 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             ),
           ),
           actions: [
-             TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
-             TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('确定')),
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('取消')),
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('确定')),
           ],
         );
       }),
     );
 
     if (ok == true && selectedProject != null) {
-       await _doImportProject(file, selectedProject!);
+      await _doImportProject(file, selectedProject!);
     }
   }
 
-  Future<void> _doImportProject(File targetFile, String sourceProjectName) async {
-      try {
-         setState(() => loading = true);
-         final appData = Platform.environment['APPDATA'];
-         if (appData == null) throw Exception('APPDATA not found');
-         final gitdocxDir = p.join(appData, 'gitdocx');
-         final sourceRepoPath = p.join(gitdocxDir, sourceProjectName);
-         
-         final targetFilePath = targetFile.path;
-         Map<String, dynamic>? targetRepo;
-         
-         for (final repo in subRepos) {
-            final dPath = repo['docxPath'] as String?;
-            if (dPath != null && (p.equals(dPath, targetFilePath) || dPath == targetFilePath)) {
-               targetRepo = repo;
-               break;
-            }
-         }
-         
-         String targetRepoPath;
-         if (targetRepo != null) {
-            targetRepoPath = targetRepo['repoPath'];
-         } else {
-            final name = p.basenameWithoutExtension(targetFilePath);
-            final hash = md5.convert(utf8.encode(targetFilePath)).toString().substring(0, 8);
-            targetRepoPath = p.join(gitdocxDir, currentProjectName!, '${name}_$hash');
-         }
+  Future<void> _doImportProject(
+      File targetFile, String sourceProjectName) async {
+    try {
+      setState(() => loading = true);
+      final appData = Platform.environment['APPDATA'];
+      if (appData == null) throw Exception('APPDATA not found');
+      final gitdocxDir = p.join(appData, 'gitdocx');
+      final sourceRepoPath = p.join(gitdocxDir, sourceProjectName);
 
-         final sourceDir = Directory(sourceRepoPath);
-         final targetDir = Directory(targetRepoPath);
-         
-         if (targetDir.existsSync()) {
-            targetDir.deleteSync(recursive: true);
-         }
-         targetDir.createSync(recursive: true);
-         
-         await _copyDirectory(sourceDir, targetDir);
-         
-         final trackingFile = File(p.join(targetRepoPath, 'tracking.json'));
-         Map<String, dynamic> trackingData = {};
-         if (trackingFile.existsSync()) {
-            try {
-              trackingData = jsonDecode(await trackingFile.readAsString());
-            } catch (_) {}
-         }
-         trackingData['docxPath'] = targetFilePath;
-         await trackingFile.writeAsString(jsonEncode(trackingData));
-         
-         final contentDocx = File(p.join(targetRepoPath, 'content.docx'));
-         if (contentDocx.existsSync()) {
-            contentDocx.copySync(targetFilePath);
-         }
-         
-         final reposResp = await _postJson('http://localhost:8080/track/repos', {
-            'name': currentProjectName!,
-         });
-         if (!mounted) return;
-         final repos = (reposResp['repos'] as List).cast<Map<String, dynamic>>();
-         setState(() {
-            subRepos = repos;
-         });
-         
-         if (mounted) {
-           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('导入成功')));
-         }
-      } catch (e) {
-         if (mounted) {
-           ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('导入失败: $e')));
-         }
-      } finally {
-         if (mounted) {
-           setState(() => loading = false);
-         }
+      final targetFilePath = targetFile.path;
+      Map<String, dynamic>? targetRepo;
+
+      for (final repo in subRepos) {
+        final dPath = repo['docxPath'] as String?;
+        if (dPath != null &&
+            (p.equals(dPath, targetFilePath) || dPath == targetFilePath)) {
+          targetRepo = repo;
+          break;
+        }
       }
+
+      String targetRepoPath;
+      if (targetRepo != null) {
+        targetRepoPath = targetRepo['repoPath'];
+      } else {
+        final name = p.basenameWithoutExtension(targetFilePath);
+        final hash =
+            md5.convert(utf8.encode(targetFilePath)).toString().substring(0, 8);
+        targetRepoPath =
+            p.join(gitdocxDir, currentProjectName!, '${name}_$hash');
+      }
+
+      final sourceDir = Directory(sourceRepoPath);
+      final targetDir = Directory(targetRepoPath);
+
+      if (targetDir.existsSync()) {
+        targetDir.deleteSync(recursive: true);
+      }
+      targetDir.createSync(recursive: true);
+
+      await _copyDirectory(sourceDir, targetDir);
+
+      final trackingFile = File(p.join(targetRepoPath, 'tracking.json'));
+      Map<String, dynamic> trackingData = {};
+      if (trackingFile.existsSync()) {
+        try {
+          trackingData = jsonDecode(await trackingFile.readAsString());
+        } catch (_) {}
+      }
+      trackingData['docxPath'] = targetFilePath;
+      await trackingFile.writeAsString(jsonEncode(trackingData));
+
+      final contentDocx = File(p.join(targetRepoPath, 'content.docx'));
+      if (contentDocx.existsSync()) {
+        contentDocx.copySync(targetFilePath);
+      }
+
+      final reposResp = await _postJson('http://localhost:8080/track/repos', {
+        'name': currentProjectName!,
+      });
+      if (!mounted) return;
+      final repos = (reposResp['repos'] as List).cast<Map<String, dynamic>>();
+      setState(() {
+        subRepos = repos;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('导入成功')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('导入失败: $e')));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => loading = false);
+      }
+    }
   }
 
   Future<void> _copyDirectory(Directory source, Directory destination) async {
@@ -3299,6 +3349,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     bool exactDocMatch = false;
 
     print("DEBUG: Checking against ${subRepos.length} repos");
+    print(subRepos);
 
     for (final repo in subRepos) {
       final rPath = repo['repoPath'] as String;
@@ -3337,7 +3388,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       print("DEBUG: No matching repo found for $filePath");
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('未找到此文件的追踪信息'), duration: Duration(seconds: 1)),
+          const SnackBar(
+              content: Text('未找到此文件的追踪信息'), duration: Duration(seconds: 1)),
         );
       }
     }
@@ -3346,21 +3398,21 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   Future<void> _checkAndFetchAllProjects(String rootPath) async {
     if (_fetchingPaths.contains(rootPath)) return;
     _fetchingPaths.add(rootPath);
-    
+
     final dir = Directory(rootPath);
     if (!await dir.exists()) {
-       _fetchingPaths.remove(rootPath);
-       return;
+      _fetchingPaths.remove(rootPath);
+      return;
     }
 
     try {
       await for (final entity in dir.list()) {
         if (entity is Directory) {
-           final gitDir = Directory(p.join(entity.path, '.git'));
-           if (await gitDir.exists()) {
-              // It is a git repo. Fetch in background.
-              _fetchRepoBackground(entity.path);
-           }
+          final gitDir = Directory(p.join(entity.path, '.git'));
+          if (await gitDir.exists()) {
+            // It is a git repo. Fetch in background.
+            _fetchRepoBackground(entity.path);
+          }
         }
       }
     } catch (e) {
@@ -3370,24 +3422,27 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
   Future<void> _fetchRepoBackground(String repoPath) async {
     try {
-       // Silent fetch
-       final result = await Process.run('git', ['fetch'], workingDirectory: repoPath);
-       if (result.exitCode == 0) {
-          final output = result.stderr.toString();
-          // If fetch updated something, it usually prints "->" or "new tag" etc.
-          if (output.contains('->') || output.contains('new branch') || output.contains('new tag') || output.contains('FETCH_HEAD')) {
-             if (mounted) {
-                setState(() {
-                   _repoUpdates[repoPath] = true;
-                });
-             }
+      // Silent fetch
+      final result =
+          await Process.run('git', ['fetch'], workingDirectory: repoPath);
+      if (result.exitCode == 0) {
+        final output = result.stderr.toString();
+        // If fetch updated something, it usually prints "->" or "new tag" etc.
+        if (output.contains('->') ||
+            output.contains('new branch') ||
+            output.contains('new tag') ||
+            output.contains('FETCH_HEAD')) {
+          if (mounted) {
+            setState(() {
+              _repoUpdates[repoPath] = true;
+            });
           }
-       }
+        }
+      }
     } catch (e) {
-       print('Bg fetch error: $e');
+      print('Bg fetch error: $e');
     }
   }
-
 
   Widget _buildSidebar() {
     final rootPath = docxPathCtrl.text.trim();
@@ -3432,42 +3487,58 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             ),
           ),
           if (currentProjectName != null)
-             Container(
-                width: double.infinity,
-                color: Colors.blue.withValues(alpha: 0.1),
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                child: Row(children: [
-                   const Icon(Icons.folder_open, size: 16, color: Colors.blue),
-                   const SizedBox(width: 8),
-                   Expanded(child: Text('当前: $currentProjectName', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blue, fontSize: 13))),
-                ]),
-             ),
+            Container(
+              width: double.infinity,
+              color: Colors.blue.withValues(alpha: 0.1),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              child: Row(children: [
+                const Icon(Icons.folder_open, size: 16, color: Colors.blue),
+                const SizedBox(width: 8),
+                Expanded(
+                    child: Text('当前: $currentProjectName',
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.blue,
+                            fontSize: 13))),
+              ]),
+            ),
           if (_repoUpdates.isNotEmpty)
-             Container(
-                width: double.infinity,
-                color: Colors.red.withValues(alpha: 0.05),
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                child: Column(
-                   crossAxisAlignment: CrossAxisAlignment.start,
-                   children: [
-                      const Row(children: [
-                         Icon(Icons.notifications_active, color: Colors.red, size: 14),
-                         SizedBox(width: 8),
-                         Text('发现更新:', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold, fontSize: 13)),
-                      ]),
-                      ..._repoUpdates.entries.where((e) => e.value).map((e) => e.key).map((path) => 
-                         Padding(
-                           padding: const EdgeInsets.only(left: 22, top: 4),
-                           child: Row(children: [
-                              const Icon(Icons.circle, size: 6, color: Colors.red),
+            Container(
+              width: double.infinity,
+              color: Colors.red.withValues(alpha: 0.05),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(children: [
+                    Icon(Icons.notifications_active,
+                        color: Colors.red, size: 14),
+                    SizedBox(width: 8),
+                    Text('发现更新:',
+                        style: TextStyle(
+                            color: Colors.red,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13)),
+                  ]),
+                  ..._repoUpdates.entries
+                      .where((e) => e.value)
+                      .map((e) => e.key)
+                      .map((path) => Padding(
+                            padding: const EdgeInsets.only(left: 22, top: 4),
+                            child: Row(children: [
+                              const Icon(Icons.circle,
+                                  size: 6, color: Colors.red),
                               const SizedBox(width: 4),
-                              Expanded(child: Text(p.basename(path), overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12))),
-                           ]),
-                         )
-                      ).take(5),
-                   ],
-                ),
-             ),
+                              Expanded(
+                                  child: Text(p.basename(path),
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(fontSize: 12))),
+                            ]),
+                          ))
+                      .take(5),
+                ],
+              ),
+            ),
           const Divider(height: 1),
           Expanded(
             child: SingleChildScrollView(
@@ -3479,9 +3550,14 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                   child: FoldableDirectoryTree(
                     rootPath: rootPath,
                     selectedPath: _selectedFilePath,
-                    updatedPaths: _repoUpdates.entries.where((e) => e.value).map((e) => e.key).toSet(),
-                    fileIconBuilder: (extension) =>
-                        const Icon(Icons.description, size: 16, color: Colors.blueGrey),
+                    updatedPaths: _repoUpdates.entries
+                        .where((e) => e.value)
+                        .map((e) => e.key)
+                        .toSet(),
+                    fileIconBuilder: (extension) => const Icon(
+                        Icons.description,
+                        size: 16,
+                        color: Colors.blueGrey),
                     onFileTap: _handleFileTap,
                     onFileSecondaryTap: _handleFileSecondaryTap,
                     onDirTap: _handleDirTap,
@@ -3561,7 +3637,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                       behavior: HitTestBehavior.translucent,
                       onHorizontalDragUpdate: (details) {
                         setState(() {
-                          _sidebarWidth = (_sidebarWidth + details.delta.dx).clamp(100.0, 800.0);
+                          _sidebarWidth = (_sidebarWidth + details.delta.dx)
+                              .clamp(100.0, 800.0);
                         });
                       },
                       child: Container(
@@ -3574,387 +3651,426 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                   child: Column(
                     children: [
                       MediaQuery(
-                  data: MediaQuery.of(context)
-                      .copyWith(textScaler: TextScaler.linear(_uiScale)),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (_username == null)
-                        Padding(
-                          padding: const EdgeInsets.all(8),
-                          child: _isRegisterMode
-                              ? Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(children: [
-                                      Expanded(
-                                          child: TextField(
-                                              controller: emailCtrl,
-                                              decoration: const InputDecoration(
-                                                  labelText: '邮箱'))),
-                                      const SizedBox(width: 8),
-                                      ElevatedButton(
-                                          onPressed: loading ? null : _sendCode,
-                                          child: const Text('发送验证码')),
-                                      const SizedBox(width: 8),
-                                      Expanded(
-                                          child: TextField(
-                                              controller: verifyCodeCtrl,
-                                              decoration: const InputDecoration(
-                                                  labelText: '验证码'))),
-                                    ]),
-                                    const SizedBox(height: 8),
-                                    Row(children: [
-                                      Expanded(
-                                          child: TextField(
-                                              controller: userCtrl,
-                                              decoration: const InputDecoration(
-                                                  labelText: '用户名'))),
-                                      const SizedBox(width: 8),
-                                      Expanded(
-                                          child: TextField(
-                                              controller: passCtrl,
-                                              obscureText: true,
-                                              decoration: const InputDecoration(
-                                                  labelText: '密码'))),
-                                      const SizedBox(width: 8),
-                                      ElevatedButton(
-                                          onPressed:
-                                              loading ? null : _doRegister,
-                                          child: const Text('注册')),
-                                      const SizedBox(width: 8),
-                                      TextButton(
-                                          onPressed: () => setState(
-                                              () => _isRegisterMode = false),
-                                          child: const Text('返回登录')),
-                                    ]),
-                                  ],
-                                )
-                              : Row(
-                                  children: [
-                                    Expanded(
-                                        child: TextField(
-                                            controller: userCtrl,
-                                            decoration: const InputDecoration(
-                                                labelText: '用户名/邮箱'))),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                        child: TextField(
-                                            controller: passCtrl,
-                                            obscureText: true,
-                                            decoration: const InputDecoration(
-                                                labelText: '密码'))),
-                                    const SizedBox(width: 8),
-                                    ElevatedButton(
-                                        onPressed: loading ? null : _doLogin,
-                                        child: const Text('登录')),
-                                    const SizedBox(width: 8),
-                                    TextButton(
-                                        onPressed: () => setState(
-                                            () => _isRegisterMode = true),
-                                        child: const Text('去注册')),
-                                  ],
-                                ),
-                        )
-                      else
-                        Padding(
-                          padding: const EdgeInsets.all(8),
-                          child: Row(children: [
-                            Text('当前用户: $_username'),
-                            const SizedBox(width: 8),
-                            ElevatedButton(
-                                onPressed: _showShareDialog,
-                                child: const Text('分享仓库')),
-                            const SizedBox(width: 8),
-                            ElevatedButton(
-                                onPressed: loading ? null : _doLogout,
-                                child: const Text('登出'))
-                          ]),
-                        ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        data: MediaQuery.of(context)
+                            .copyWith(textScaler: TextScaler.linear(_uiScale)),
                         child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
                           children: [
-                             if (isFolderProject && docxPathCtrl.text.isNotEmpty)
-                               Padding(
-                                 padding: const EdgeInsets.only(bottom: 4),
-                                 child: SelectableText('文件夹: ${docxPathCtrl.text}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                               ),
-                             if (isFolderProject && pathCtrl.text.isNotEmpty && docxPathCtrl.text.isNotEmpty)
-                               Padding(
-                                 padding: const EdgeInsets.only(bottom: 4),
-                                 child: SelectableText('当前文件: ${p.relative(pathCtrl.text, from: docxPathCtrl.text)}'),
-                               ),
-                          ],
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        child: Row(
-                          children: [
-                            const Text('整体缩放: '),
-                            SizedBox(
-                              width: 200,
-                              child: Slider(
-                                value: _uiScale.clamp(0.5, 2.0),
-                                min: 0.5,
-                                max: 2.0,
-                                onChanged: (value) {
-                                  setState(() {
-                                    _uiScale = value;
-                                  });
-                                },
+                            if (_username == null)
+                              Padding(
+                                padding: const EdgeInsets.all(8),
+                                child: _isRegisterMode
+                                    ? Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Row(children: [
+                                            Expanded(
+                                                child: TextField(
+                                                    controller: emailCtrl,
+                                                    decoration:
+                                                        const InputDecoration(
+                                                            labelText: '邮箱'))),
+                                            const SizedBox(width: 8),
+                                            ElevatedButton(
+                                                onPressed:
+                                                    loading ? null : _sendCode,
+                                                child: const Text('发送验证码')),
+                                            const SizedBox(width: 8),
+                                            Expanded(
+                                                child: TextField(
+                                                    controller: verifyCodeCtrl,
+                                                    decoration:
+                                                        const InputDecoration(
+                                                            labelText: '验证码'))),
+                                          ]),
+                                          const SizedBox(height: 8),
+                                          Row(children: [
+                                            Expanded(
+                                                child: TextField(
+                                                    controller: userCtrl,
+                                                    decoration:
+                                                        const InputDecoration(
+                                                            labelText: '用户名'))),
+                                            const SizedBox(width: 8),
+                                            Expanded(
+                                                child: TextField(
+                                                    controller: passCtrl,
+                                                    obscureText: true,
+                                                    decoration:
+                                                        const InputDecoration(
+                                                            labelText: '密码'))),
+                                            const SizedBox(width: 8),
+                                            ElevatedButton(
+                                                onPressed: loading
+                                                    ? null
+                                                    : _doRegister,
+                                                child: const Text('注册')),
+                                            const SizedBox(width: 8),
+                                            TextButton(
+                                                onPressed: () => setState(() =>
+                                                    _isRegisterMode = false),
+                                                child: const Text('返回登录')),
+                                          ]),
+                                        ],
+                                      )
+                                    : Row(
+                                        children: [
+                                          Expanded(
+                                              child: TextField(
+                                                  controller: userCtrl,
+                                                  decoration:
+                                                      const InputDecoration(
+                                                          labelText:
+                                                              '用户名/邮箱'))),
+                                          const SizedBox(width: 8),
+                                          Expanded(
+                                              child: TextField(
+                                                  controller: passCtrl,
+                                                  obscureText: true,
+                                                  decoration:
+                                                      const InputDecoration(
+                                                          labelText: '密码'))),
+                                          const SizedBox(width: 8),
+                                          ElevatedButton(
+                                              onPressed:
+                                                  loading ? null : _doLogin,
+                                              child: const Text('登录')),
+                                          const SizedBox(width: 8),
+                                          TextButton(
+                                              onPressed: () => setState(
+                                                  () => _isRegisterMode = true),
+                                              child: const Text('去注册')),
+                                        ],
+                                      ),
+                              )
+                            else
+                              Padding(
+                                padding: const EdgeInsets.all(8),
+                                child: Row(children: [
+                                  Text('当前用户: $_username'),
+                                  const SizedBox(width: 8),
+                                  ElevatedButton(
+                                      onPressed: _showShareDialog,
+                                      child: const Text('分享仓库')),
+                                  const SizedBox(width: 8),
+                                  ElevatedButton(
+                                      onPressed: loading ? null : _doLogout,
+                                      child: const Text('登出'))
+                                ]),
+                              ),
+                            Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 8),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  if (isFolderProject &&
+                                      docxPathCtrl.text.isNotEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(bottom: 4),
+                                      child: SelectableText(
+                                          '文件夹: ${docxPathCtrl.text}',
+                                          style: const TextStyle(
+                                              fontWeight: FontWeight.bold)),
+                                    ),
+                                  if (isFolderProject &&
+                                      pathCtrl.text.isNotEmpty &&
+                                      docxPathCtrl.text.isNotEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(bottom: 4),
+                                      child: SelectableText(
+                                          '当前文件: ${p.relative(pathCtrl.text, from: docxPathCtrl.text)}'),
+                                    ),
+                                ],
                               ),
                             ),
-                            Text(_uiScale.toStringAsFixed(1)),
-                            const SizedBox(width: 16),
-                            IconButton(
-                              onPressed: () {
-                                _sharedController.value = Matrix4.identity();
-                              },
-                              tooltip: '重置视图',
-                              icon: const Icon(Icons.center_focus_strong),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.all(8),
-                        child: Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            ElevatedButton(
-                              onPressed: loading ? null : _onCreateTrackProject,
-                              child: const Text('新建追踪项目'),
-                            ),
-                            ElevatedButton(
-                              onPressed: loading ? null : _onOpenTrackProject,
-                              child: const Text('打开追踪项目'),
-                            ),
-                            ElevatedButton(
-                              onPressed: () {
-                                _localGraphKey.currentState?.resetLayout();
-                              },
-                              child: const Text('恢复默认布局'),
-                            ),
-                            ElevatedButton(
-                              onPressed: loading
-                                  ? null
-                                  : () =>
-                                      _onUpdateRepoAction(opIdentical: false),
-                              child: const Text('同步'),
-                            ),
-                            ElevatedButton(
-                              onPressed: loading ? null : _onPush,
-                              child: const Text('推送'),
-                            ),
-                            ElevatedButton(
-                              onPressed: loading ? null : _onPull,
-                              child: const Text('拉取'),
-                            ),
-                            OutlinedButton.icon(
-                              onPressed: loading
-                                  ? null
-                                  : () async {
-                                      setState(() {
-                                        showRemotePreview = !showRemotePreview;
-                                      });
-                                      try {
-                                        final prefs = await SharedPreferences
-                                            .getInstance();
-                                        await prefs.setBool(
-                                            'show_remote_preview',
-                                            showRemotePreview);
-                                      } catch (e) {
-                                        print('Error saving prefs: $e');
-                                      }
-
-                                      if (showRemotePreview) {
-                                        _load();
-                                      } else {
+                            Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 8),
+                              child: Row(
+                                children: [
+                                  const Text('整体缩放: '),
+                                  SizedBox(
+                                    width: 200,
+                                    child: Slider(
+                                      value: _uiScale.clamp(0.5, 2.0),
+                                      min: 0.5,
+                                      max: 2.0,
+                                      onChanged: (value) {
                                         setState(() {
-                                          remoteData = null;
-                                          localRowMapping = null;
-                                          remoteRowMapping = null;
-                                          totalRows = null;
+                                          _uiScale = value;
                                         });
-                                      }
+                                      },
+                                    ),
+                                  ),
+                                  Text(_uiScale.toStringAsFixed(1)),
+                                  const SizedBox(width: 16),
+                                  IconButton(
+                                    onPressed: () {
+                                      _sharedController.value =
+                                          Matrix4.identity();
                                     },
-                              icon: Icon(showRemotePreview
-                                  ? Icons.visibility_off
-                                  : Icons.visibility),
-                              label: Text(showRemotePreview ? '隐藏远程' : '显示远程'),
+                                    tooltip: '重置视图',
+                                    icon: const Icon(Icons.center_focus_strong),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.all(8),
+                              child: Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  ElevatedButton(
+                                    onPressed:
+                                        loading ? null : _onCreateTrackProject,
+                                    child: const Text('新建追踪项目'),
+                                  ),
+                                  ElevatedButton(
+                                    onPressed:
+                                        loading ? null : _onOpenTrackProject,
+                                    child: const Text('打开追踪项目'),
+                                  ),
+                                  ElevatedButton(
+                                    onPressed: () {
+                                      _localGraphKey.currentState
+                                          ?.resetLayout();
+                                    },
+                                    child: const Text('恢复默认布局'),
+                                  ),
+                                  ElevatedButton(
+                                    onPressed: loading
+                                        ? null
+                                        : () => _onUpdateRepoAction(
+                                            opIdentical: false),
+                                    child: const Text('同步'),
+                                  ),
+                                  ElevatedButton(
+                                    onPressed: loading ? null : _onPush,
+                                    child: const Text('推送'),
+                                  ),
+                                  ElevatedButton(
+                                    onPressed: loading ? null : _onPull,
+                                    child: const Text('拉取'),
+                                  ),
+                                  OutlinedButton.icon(
+                                    onPressed: loading
+                                        ? null
+                                        : () async {
+                                            setState(() {
+                                              showRemotePreview =
+                                                  !showRemotePreview;
+                                            });
+                                            try {
+                                              final prefs =
+                                                  await SharedPreferences
+                                                      .getInstance();
+                                              await prefs.setBool(
+                                                  'show_remote_preview',
+                                                  showRemotePreview);
+                                            } catch (e) {
+                                              print('Error saving prefs: $e');
+                                            }
+
+                                            if (showRemotePreview) {
+                                              _load();
+                                            } else {
+                                              setState(() {
+                                                remoteData = null;
+                                                localRowMapping = null;
+                                                remoteRowMapping = null;
+                                                totalRows = null;
+                                              });
+                                            }
+                                          },
+                                    icon: Icon(showRemotePreview
+                                        ? Icons.visibility_off
+                                        : Icons.visibility),
+                                    label: Text(
+                                        showRemotePreview ? '隐藏远程' : '显示远程'),
+                                  ),
+                                  if (currentProjectName != null)
+                                    Text(
+                                      ' 当前项目: $currentProjectName ',
+                                      style: const TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                ],
+                              ),
                             ),
                             if (currentProjectName != null)
-                              Text(
-                                ' 当前项目: $currentProjectName ',
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 4),
+                                child: Row(
+                                  children: [
+                                    Text(isFolderProject
+                                        ? '追踪文件夹的路径: '
+                                        : '追踪文档的路径: '),
+                                    Expanded(
+                                      child: TextField(
+                                        controller: docxPathCtrl,
+                                        readOnly: true,
+                                        decoration: const InputDecoration(
+                                          border: OutlineInputBorder(),
+                                          contentPadding: EdgeInsets.symmetric(
+                                              horizontal: 8),
+                                        ),
+                                      ),
+                                    ),
+                                    IconButton(
+                                      onPressed: _onChangeDocxPath,
+                                      icon: const Icon(Icons.edit),
+                                      tooltip: '修改Docx路径',
+                                    ),
+                                  ],
                                 ),
+                              ),
+                            if (error != null)
+                              Padding(
+                                padding: const EdgeInsets.all(8),
+                                child: Text(error!,
+                                    style: const TextStyle(color: Colors.red)),
                               ),
                           ],
                         ),
                       ),
-
-                      if (currentProjectName != null)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 4),
-                          child: Row(
-                            children: [
-                              Text(isFolderProject ? '追踪文件夹的路径: ' : '追踪文档的路径: '),
-                              Expanded(
-                                child: TextField(
-                                  controller: docxPathCtrl,
-                                  readOnly: true,
-                                  decoration: const InputDecoration(
-                                    border: OutlineInputBorder(),
-                                    contentPadding:
-                                        EdgeInsets.symmetric(horizontal: 8),
-                                  ),
-                                ),
-                              ),
-                              IconButton(
-                                onPressed: _onChangeDocxPath,
-                                icon: const Icon(Icons.edit),
-                                tooltip: '修改Docx路径',
-                              ),
-                            ],
-                          ),
-                        ),
-                      if (error != null)
-                        Padding(
-                          padding: const EdgeInsets.all(8),
-                          child: Text(error!,
-                              style: const TextStyle(color: Colors.red)),
-                        ),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: data == null
-                      ? const Center(child: Text('输入路径并点击加载'))
-                      : (showRemotePreview && remoteData != null)
-                          ? Row(
-                              children: [
-                                Expanded(
-                                  flex: 1,
-                                  child: Container(
-                                    decoration: const BoxDecoration(
-                                      border: Border(
-                                          right:
-                                              BorderSide(color: Colors.grey)),
-                                    ),
-                                    child: Column(
-                                      children: [
-                                        Container(
-                                          width: double.infinity,
-                                          padding: const EdgeInsets.all(8.0),
-                                          color: Colors.grey.shade200,
-                                          child: const Text(
-                                            '远程文档跟踪',
-                                            textAlign: TextAlign.center,
-                                            style: TextStyle(
-                                                fontWeight: FontWeight.bold),
-                                          ),
-                                        ),
-                                        Expanded(
-                                          child: _GraphView(
-                                            data: remoteData!,
-                                            repoPath: pathCtrl.text.trim(),
-                                            projectName: currentProjectName,
-                                            token: _token,
-                                            readOnly: true,
-                                            primaryBranchName: 'origin/master',
-                                            customRowMapping: remoteRowMapping,
-                                            totalRows: totalRows,
-                                            transformationController:
-                                                _sharedController,
-                                            uiScale: _uiScale,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                                Expanded(
-                                  flex: 1,
-                                  child: Column(
+                      Expanded(
+                        child: data == null
+                            ? const Center(child: Text('输入路径并点击加载'))
+                            : (showRemotePreview && remoteData != null)
+                                ? Row(
                                     children: [
-                                      Container(
-                                        width: double.infinity,
-                                        padding: const EdgeInsets.all(8.0),
-                                        color: Colors.grey.shade200,
-                                        child: const Text(
-                                          '本地文档跟踪',
-                                          textAlign: TextAlign.center,
-                                          style: TextStyle(
-                                              fontWeight: FontWeight.bold),
+                                      Expanded(
+                                        flex: 1,
+                                        child: Container(
+                                          decoration: const BoxDecoration(
+                                            border: Border(
+                                                right: BorderSide(
+                                                    color: Colors.grey)),
+                                          ),
+                                          child: Column(
+                                            children: [
+                                              Container(
+                                                width: double.infinity,
+                                                padding:
+                                                    const EdgeInsets.all(8.0),
+                                                color: Colors.grey.shade200,
+                                                child: const Text(
+                                                  '远程文档跟踪',
+                                                  textAlign: TextAlign.center,
+                                                  style: TextStyle(
+                                                      fontWeight:
+                                                          FontWeight.bold),
+                                                ),
+                                              ),
+                                              Expanded(
+                                                child: _GraphView(
+                                                  data: remoteData!,
+                                                  repoPath:
+                                                      pathCtrl.text.trim(),
+                                                  projectName:
+                                                      currentProjectName,
+                                                  token: _token,
+                                                  readOnly: true,
+                                                  primaryBranchName:
+                                                      'origin/master',
+                                                  customRowMapping:
+                                                      remoteRowMapping,
+                                                  totalRows: totalRows,
+                                                  transformationController:
+                                                      _sharedController,
+                                                  uiScale: _uiScale,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
                                         ),
                                       ),
                                       Expanded(
-                                        child: _GraphView(
-                                          key: _localGraphKey,
-                                          data: data!,
-                                          working: (data!.commits.isEmpty &&
-                                                  working != null)
-                                              ? WorkingState(
-                                                  changed: true,
-                                                  baseId: working!.baseId)
-                                              : working,
-                                          repoPath: pathCtrl.text.trim(),
-                                          projectName: currentProjectName,
-                                          token: _token,
-                                          onRefresh: _load,
-                                          onUpdate: _onUpdateRepoAction,
-                                          onMerge: _performMerge,
-                                          onFindIdentical: _findIdentical,
-                                          identicalCommitIds:
-                                              identicalCommitIds,
-                                          onLoading: (v) =>
-                                              setState(() => loading = v),
-                                          transformationController:
-                                              _sharedController,
-                                          uiScale: _uiScale,
-                                          customRowMapping: localRowMapping,
-                                          totalRows: totalRows,
-                                          primaryBranchName: 'master',
+                                        flex: 1,
+                                        child: Column(
+                                          children: [
+                                            Container(
+                                              width: double.infinity,
+                                              padding:
+                                                  const EdgeInsets.all(8.0),
+                                              color: Colors.grey.shade200,
+                                              child: const Text(
+                                                '本地文档跟踪',
+                                                textAlign: TextAlign.center,
+                                                style: TextStyle(
+                                                    fontWeight:
+                                                        FontWeight.bold),
+                                              ),
+                                            ),
+                                            Expanded(
+                                              child: _GraphView(
+                                                key: _localGraphKey,
+                                                data: data!,
+                                                working: (data!
+                                                            .commits.isEmpty &&
+                                                        working != null)
+                                                    ? WorkingState(
+                                                        changed: true,
+                                                        baseId: working!.baseId)
+                                                    : working,
+                                                repoPath: pathCtrl.text.trim(),
+                                                projectName: currentProjectName,
+                                                token: _token,
+                                                onRefresh: _load,
+                                                onUpdate: _onUpdateRepoAction,
+                                                onMerge: _performMerge,
+                                                onFindIdentical: _findIdentical,
+                                                identicalCommitIds:
+                                                    identicalCommitIds,
+                                                onLoading: (v) =>
+                                                    setState(() => loading = v),
+                                                transformationController:
+                                                    _sharedController,
+                                                uiScale: _uiScale,
+                                                customRowMapping:
+                                                    localRowMapping,
+                                                totalRows: totalRows,
+                                                primaryBranchName: 'master',
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ),
                                     ],
+                                  )
+                                : _GraphView(
+                                    key: _localGraphKey,
+                                    data: data!,
+                                    working: (data!.commits.isEmpty &&
+                                            working != null)
+                                        ? WorkingState(
+                                            changed: true,
+                                            baseId: working!.baseId)
+                                        : working,
+                                    repoPath: pathCtrl.text.trim(),
+                                    projectName: currentProjectName,
+                                    token: _token,
+                                    onRefresh: _load,
+                                    onUpdate: _onUpdateRepoAction,
+                                    onMerge: _performMerge,
+                                    onFindIdentical: _findIdentical,
+                                    identicalCommitIds: identicalCommitIds,
+                                    onLoading: (v) =>
+                                        setState(() => loading = v),
+                                    transformationController: _sharedController,
+                                    uiScale: _uiScale,
+                                    primaryBranchName: 'master',
                                   ),
-                                ),
-                              ],
-                            )
-                          : _GraphView(
-                              key: _localGraphKey,
-                              data: data!,
-                              working:
-                                  (data!.commits.isEmpty && working != null)
-                                      ? WorkingState(
-                                          changed: true,
-                                          baseId: working!.baseId)
-                                      : working,
-                              repoPath: pathCtrl.text.trim(),
-                              projectName: currentProjectName,
-                              token: _token,
-                              onRefresh: _load,
-                              onUpdate: _onUpdateRepoAction,
-                              onMerge: _performMerge,
-                              onFindIdentical: _findIdentical,
-                              identicalCommitIds: identicalCommitIds,
-                              onLoading: (v) => setState(() => loading = v),
-                              transformationController: _sharedController,
-                              uiScale: _uiScale,
-                              primaryBranchName: 'master',
-                            ),
+                      ),
+                    ],
+                  ),
                 ),
-              ],
-            ),
-          ),
               ],
             ),
           ),
@@ -4069,7 +4185,7 @@ class _GraphViewState extends State<_GraphView>
           _requestedPreviews.remove(commit.id);
         }
       }
-
+/*
       if (missingIds.isNotEmpty) {
         print('发现 ${missingIds.length} 个节点缺少预览，正在批量请求生成...');
         _requestedPreviews.addAll(missingIds);
@@ -4086,6 +4202,7 @@ class _GraphViewState extends State<_GraphView>
           _requestedPreviews.removeAll(missingIds);
         }
       }
+      */
     });
   }
 
