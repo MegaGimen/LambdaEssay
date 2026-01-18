@@ -2059,7 +2059,15 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         'targetRelPath': targetPath,
         'deleteSource': deleteSource
       });
+
+      final reposResp = await _postJson('$baseUrl/track/repos', {
+        'name': currentProjectName!,
+      });
+      if (!mounted) return;
+      final repos = (reposResp['repos'] as List).cast<Map<String, dynamic>>();
+
       setState(() {
+        subRepos = repos;
         // Force tree refresh if possible, currently rely on file system watcher or user action
       });
       if (_treeNotifier.isUnfolded(targetPath, docxPathCtrl.text.trim())) {
@@ -2067,7 +2075,9 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         _treeNotifier.toggleFolder(targetPath, docxPathCtrl.text.trim());
       }
     } catch (e) {
-      setState(() => error = '导入失败: $e');
+      if (mounted) {
+        setState(() => error = '导入失败: $e');
+      }
     }
   }
 
@@ -2078,7 +2088,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     final trackingBase = docxPathCtrl.text.trim();
     print(trackingBase);
     final relPath = p.relative(_selectedFilePath!, from: trackingBase);
-    final gitdocxPath = p.join(appData, 'gitdocx', currentProjectName!, relPath);
+    final gitdocxPath =
+        p.join(appData, 'gitdocx', currentProjectName!, relPath);
     print(gitdocxPath);
 
     // Check if it exists as directory or file
@@ -2108,7 +2119,11 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     if (confirm == true) {
       try {
         final parent = p.dirname(_selectedFilePath!);
-        await _postJson('$baseUrl/project/delete', {'gitdocxPath':gitdocxPath,"trackingPath":_selectedFilePath,"trackingBase":trackingBase});
+        await _postJson('$baseUrl/project/delete', {
+          'gitdocxPath': gitdocxPath,
+          "trackingPath": _selectedFilePath,
+          "trackingBase": trackingBase
+        });
         setState(() {
           _selectedFilePath = null;
         });
@@ -3153,6 +3168,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
   Future<void> _handleFileSecondaryTap(
       File file, TapDownDetails details) async {
+    print("Calling _handleFileSecondaryTap");
     setState(() {
       _selectedFilePath = file.path;
     });
@@ -3254,6 +3270,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
   Future<void> _doImportProject(
       File targetFile, String sourceProjectName) async {
+    print("Calling doImportProject");
     try {
       setState(() => loading = true);
       final appData = Platform.environment['APPDATA'];
