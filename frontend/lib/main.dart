@@ -2074,9 +2074,12 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   Future<void> _deleteSelectedProject() async {
     if (_selectedFilePath == null) return;
 
-    // We allow deleting any directory now
-    final isDir = await Directory(_selectedFilePath!).exists();
-    if (!isDir) return;
+    // Check if it exists as directory or file
+    bool exists = await Directory(_selectedFilePath!).exists();
+    if (!exists) {
+      exists = await File(_selectedFilePath!).exists();
+    }
+    if (!exists) return;
 
     final confirm = await showDialog<bool>(
       context: context,
