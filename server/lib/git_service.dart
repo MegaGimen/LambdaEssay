@@ -3153,6 +3153,7 @@ Future<void> deleteProject(String gitdocxPath,
 
   final girdocxdir = Directory(gitdocxPath);
   final trackingFile = trackingPath != null ? File(trackingPath) : null;
+  final trackingDir = trackingPath != null ? Directory(trackingPath) : null;
 
   // Clean up parent metadata if needed
   final parentPath = girdocxdir.parent.path;
@@ -3206,7 +3207,18 @@ Future<void> deleteProject(String gitdocxPath,
   try {
     girdocxdir.deleteSync(recursive: true);
     if (trackingFile != null && trackingFile.existsSync()) {
-      trackingFile.delete();
+      try {
+        trackingFile.deleteSync();
+      } catch (e) {
+        print('Failed to delete tracking file: $e');
+      }
+    }
+    if (trackingDir != null && trackingDir.existsSync()) {
+      try {
+        trackingDir.deleteSync(recursive: true);
+      } catch (e) {
+        print('Failed to delete tracking directory: $e');
+      }
     }
   } catch (e) {
     throw Exception('Failed to delete directory: $e');
