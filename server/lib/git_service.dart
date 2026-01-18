@@ -328,7 +328,7 @@ Future<void> _copyDir(String src, String dst) async {
       Directory(dst).createSync(recursive: true);
   }
   
-  final cmd = 'Copy-Item -Path "$src\\*" -Destination "$dst" -Recurse -Force';
+  final cmd = "Get-ChildItem -Path '$src' -Force | Copy-Item -Destination '$dst' -Recurse -Force";
   final res = await Process.run('powershell', ['-Command', cmd]);
   if (res.exitCode != 0) {
     throw Exception('Failed to copy dir: ${res.stderr}');
@@ -3296,6 +3296,20 @@ Future<void> copyTrackingProject(
   
   // 2. Copy content.docx to Tracking
   sourceDocx.copySync(trackingFile);
+
+  // 3. Update tracking.json in the new storage repo
+  final newTrackingFile = File(p.join(targetDirWithSuffix, 'tracking.json'));
+  Map<String, dynamic> tracking = {};
+  if (newTrackingFile.existsSync()) {
+    try {
+      tracking = jsonDecode(await newTrackingFile.readAsString());
+    } catch (_) {}
+  }
+  tracking['docxPath'] = trackingFile;
+  await newTrackingFile.writeAsString(jsonEncode(tracking));
+
+  // 4. Notify parent folder project to update its index
+  await _notifyParentFolderProject(targetDirWithSuffix);
 
   // If delete source
   if (deleteSource) {
