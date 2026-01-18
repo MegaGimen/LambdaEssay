@@ -2073,6 +2073,13 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
   Future<void> _deleteSelectedProject() async {
     if (_selectedFilePath == null) return;
+    print(_selectedFilePath);
+    final appData = Platform.environment['APPDATA']!;
+    final trackingBase = docxPathCtrl.text.trim();
+    print(trackingBase);
+    final relPath = p.relative(_selectedFilePath!, from: trackingBase);
+    final gitdocxPath = p.join(appData, 'gitdocx', currentProjectName!, relPath);
+    print(gitdocxPath);
 
     // Check if it exists as directory or file
     bool exists = await Directory(_selectedFilePath!).exists();
@@ -2101,7 +2108,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     if (confirm == true) {
       try {
         final parent = p.dirname(_selectedFilePath!);
-        await _postJson('$baseUrl/project/delete', {'path': _selectedFilePath});
+        await _postJson('$baseUrl/project/delete', {'gitdocxPath':gitdocxPath,"trackingPath":_selectedFilePath,"trackingBase":trackingBase});
         setState(() {
           _selectedFilePath = null;
         });
@@ -3151,13 +3158,14 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     });
 
     final isRepo = Directory(p.join(file.path, '.git')).existsSync();
-    
+
     // Check if it's a tracked file in subRepos
     bool isTracked = false;
     final normalizedPath = file.path.replaceAll(r'\', '/');
     for (final repo in subRepos) {
       final dPath = (repo['docxPath'] as String?)?.replaceAll(r'\', '/');
-      if (dPath != null && (dPath == normalizedPath || p.equals(repo['docxPath'], file.path))) {
+      if (dPath != null &&
+          (dPath == normalizedPath || p.equals(repo['docxPath'], file.path))) {
         isTracked = true;
         break;
       }
