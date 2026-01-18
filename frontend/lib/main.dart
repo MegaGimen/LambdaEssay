@@ -3148,9 +3148,21 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     });
 
     final isRepo = Directory(p.join(file.path, '.git')).existsSync();
+    
+    // Check if it's a tracked file in subRepos
+    bool isTracked = false;
+    final normalizedPath = file.path.replaceAll(r'\', '/');
+    for (final repo in subRepos) {
+      final dPath = (repo['docxPath'] as String?)?.replaceAll(r'\', '/');
+      if (dPath != null && (dPath == normalizedPath || p.equals(repo['docxPath'], file.path))) {
+        isTracked = true;
+        break;
+      }
+    }
+
     final List<PopupMenuItem<String>> items = [];
 
-    if (isRepo) {
+    if (isRepo || isTracked) {
       items.add(const PopupMenuItem(
         value: 'delete',
         child: Text('删除项目', style: TextStyle(color: Colors.red)),
