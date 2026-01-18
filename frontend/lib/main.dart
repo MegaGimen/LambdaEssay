@@ -2053,6 +2053,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
   Future<void> _importProject(
       String sourceName, String targetPath, bool deleteSource) async {
+    setState(() => loading = true);
     try {
       await _postJson('$baseUrl/project/copy', {
         'sourceName': sourceName,
@@ -2078,6 +2079,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       if (mounted) {
         setState(() => error = '导入失败: $e');
       }
+    } finally {
+      if (mounted) setState(() => loading = false);
     }
   }
 
@@ -2117,6 +2120,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     );
 
     if (confirm == true) {
+      setState(() => loading = true);
       try {
         final parent = p.dirname(_selectedFilePath!);
         await _postJson('$baseUrl/project/delete', {
@@ -2135,6 +2139,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         }
       } catch (e) {
         setState(() => error = '删除失败: $e');
+      } finally {
+        if (mounted) setState(() => loading = false);
       }
     }
   }
