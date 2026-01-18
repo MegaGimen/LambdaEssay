@@ -325,10 +325,11 @@ Future<void> _copyDir(String src, String dst) async {
   // Copy-Item -Path "src\*" -Destination "dst" -Recurse -Force
   // Ensure dst exists
   if (!Directory(dst).existsSync()) {
-      Directory(dst).createSync(recursive: true);
+    Directory(dst).createSync(recursive: true);
   }
-  
-  final cmd = "Get-ChildItem -Path '$src' -Force | Copy-Item -Destination '$dst' -Recurse -Force";
+
+  final cmd =
+      "Get-ChildItem -Path '$src' -Force | Copy-Item -Destination '$dst' -Recurse -Force";
   final res = await Process.run('powershell', ['-Command', cmd]);
   if (res.exitCode != 0) {
     throw Exception('Failed to copy dir: ${res.stderr}');
@@ -642,20 +643,20 @@ Future<GraphResponse> _getGraphUnlocked(String repoPath,
 Future<bool> _isFolderProject(String repoPath) async {
   final gitDir = Directory(p.join(repoPath, '.git'));
   if (!gitDir.existsSync()) return false;
-  
+
   // Folder Project: Has .git but NO content.docx
   // Solo Project: Has .git AND content.docx
-  
+
   final contentDocx = File(p.join(repoPath, 'content.docx'));
   return !contentDocx.existsSync();
 }
 
 Future<bool> _isSoloProject(String repoPath) async {
-    final gitDir = Directory(p.join(repoPath, '.git'));
-    if (!gitDir.existsSync()) return false;
-    
-    final contentDocx = File(p.join(repoPath, 'content.docx'));
-    return contentDocx.existsSync();
+  final gitDir = Directory(p.join(repoPath, '.git'));
+  if (!gitDir.existsSync()) return false;
+
+  final contentDocx = File(p.join(repoPath, 'content.docx'));
+  return contentDocx.existsSync();
 }
 
 Future<void> _updateFolderMeta(String parentRepoPath, String childRelPath,
@@ -1676,7 +1677,7 @@ Future<void> _scanAndUpdateFolderMeta(String projDir, String docxPath) async {
 
     // Keep existing remote info if available
     String existingRemote = '';
-    
+
     if (meta['items'][relPath] != null) {
       existingRemote = meta['items'][relPath]['remoteUrl'] ?? '';
     }
@@ -1998,7 +1999,7 @@ Future<Map<String, dynamic>> updateTrackingProject(
       if (tracking['type'] == 'folder') {
         print(
             '[Perf] Folder project updated. Skipping git operations on root.');
-        
+
         await _notifyParentFolderProject(projDir);
         await syncFolderProject(name);
 
@@ -2549,14 +2550,15 @@ Future<void> pushToRemote(String repoPath, String username, String token,
             try {
               await pushToRemote(path, username, token, force: force);
             } catch (e) {
-              print('Push to parent failed: $e. Attempting rebase pull and retry...');
+              print(
+                  'Push to parent failed: $e. Attempting rebase pull and retry...');
               try {
                 // If push failed (likely behind), try to pull --rebase
                 final remoteName = p.basename(path).toLowerCase();
                 // Ensure remote exists for pull
                 await addRemote(path, remoteName,
                     'http://$username:$token@47.242.109.145:3000/${await _resolveRepoOwner(remoteName, token)}/$remoteName.git');
-                
+
                 await _runGit(['pull', '--rebase', remoteName, 'master'], path);
                 print('Rebase successful. Retrying push...');
                 await pushToRemote(path, username, token, force: force);
@@ -2565,7 +2567,8 @@ Future<void> pushToRemote(String repoPath, String username, String token,
                 // Rethrow original error or new error?
                 // Let's print but not crash the whole chain?
                 // Or maybe we SHOULD crash to let user know sync failed.
-                throw Exception('Failed to sync parent folder "$path": $retryErr');
+                throw Exception(
+                    'Failed to sync parent folder "$path": $retryErr');
               }
             }
             break;
@@ -2583,66 +2586,67 @@ Future<void> pushToRemote(String repoPath, String username, String token,
 }
 
 Future<void> _checkIfBehind(String repoPath, String remoteUrl) async {
-    // We must ensure we have the latest remote objects to perform merge-base checks.
-    // Otherwise, if we haven't fetched the remote commit, merge-base will fail.
-    try {
-      await _runGit(['fetch', remoteUrl], repoPath);
-    } catch (e) {
-      print('Warning: Failed to fetch during check-if-behind: $e');
+  // We must ensure we have the latest remote objects to perform merge-base checks.
+  // Otherwise, if we haven't fetched the remote commit, merge-base will fail.
+  try {
+    await _runGit(['fetch', remoteUrl], repoPath);
+  } catch (e) {
+    print('Warning: Failed to fetch during check-if-behind: $e');
+  }
+
+  final localRefs = <String, String>{};
+  final localLines = await _runGit(
+      ['for-each-ref', '--format=%(refname:short)|%(objectname)', 'refs/heads'],
+      repoPath);
+  for (final line in localLines) {
+    final parts = line.split('|');
+    if (parts.length >= 2) {
+      localRefs[parts[0].trim()] = parts[1].trim();
     }
+  }
 
-    final localRefs = <String, String>{};
-    final localLines = await _runGit(
-        ['for-each-ref', '--format=%(refname:short)|%(objectname)', 'refs/heads'],
-        repoPath);
-    for (final line in localLines) {
-      final parts = line.split('|');
-      if (parts.length >= 2) {
-        localRefs[parts[0].trim()] = parts[1].trim();
-      }
-    }
-
-    final remoteLines =
-        await _runGit(['ls-remote', '--heads', remoteUrl], repoPath);
-    final remoteRefs = <String, String>{};
-    for (final line in remoteLines) {
-      final parts = line.split(RegExp(r'\s+'));
-      if (parts.length >= 2) {
-        final hash = parts[0];
-        final ref = parts[1];
-        if (ref.startsWith('refs/heads/')) {
-          final name = ref.substring('refs/heads/'.length);
-          remoteRefs[name] = hash;
-        }
-      }
-    }
-
-    for (final branch in localRefs.keys) {
-      final localHash = localRefs[branch];
-      final remoteHash = remoteRefs[branch];
-
-      if (remoteHash != null && localHash != remoteHash) {
-        bool localIsBehind = false;
-        try {
-          await _runGit(
-              ['merge-base', '--is-ancestor', localHash!, remoteHash], repoPath);
-          localIsBehind = true;
-        } catch (_) {
-          localIsBehind = false;
-        }
-
-        if (localIsBehind) {
-          throw Exception(
-              'Push rejected: Local branch "$branch" is behind remote (non-fast-forward).');
-        }
+  final remoteLines =
+      await _runGit(['ls-remote', '--heads', remoteUrl], repoPath);
+  final remoteRefs = <String, String>{};
+  for (final line in remoteLines) {
+    final parts = line.split(RegExp(r'\s+'));
+    if (parts.length >= 2) {
+      final hash = parts[0];
+      final ref = parts[1];
+      if (ref.startsWith('refs/heads/')) {
+        final name = ref.substring('refs/heads/'.length);
+        remoteRefs[name] = hash;
       }
     }
   }
 
+  for (final branch in localRefs.keys) {
+    final localHash = localRefs[branch];
+    final remoteHash = remoteRefs[branch];
+
+    if (remoteHash != null && localHash != remoteHash) {
+      bool localIsBehind = false;
+      try {
+        await _runGit(
+            ['merge-base', '--is-ancestor', localHash!, remoteHash], repoPath);
+        localIsBehind = true;
+      } catch (_) {
+        localIsBehind = false;
+      }
+
+      if (localIsBehind) {
+        throw Exception(
+            'Push rejected: Local branch "$branch" is behind remote (non-fast-forward).');
+      }
+    }
+  }
+}
+
 Future<Map<String, dynamic>> pullFromRemote(
     String nameOrPath, String username, String token,
     {bool force = false, String? targetRepoName}) async {
-  final repoPath = p.isAbsolute(nameOrPath) ? nameOrPath : _projectDir(nameOrPath);
+  final repoPath =
+      p.isAbsolute(nameOrPath) ? nameOrPath : _projectDir(nameOrPath);
   return _withRepoLock(repoPath, () async {
     String effectiveRemoteRepoName;
     if (targetRepoName != null && targetRepoName.isNotEmpty) {
@@ -2693,7 +2697,8 @@ Future<Map<String, dynamic>> pullFromRemote(
 
     if (!isFresh) {
       // Check if it is a folder project (has folder_meta.json)
-      final isFolderProject = File(p.join(projDir, 'folder_meta.json')).existsSync();
+      final isFolderProject =
+          File(p.join(projDir, 'folder_meta.json')).existsSync();
 
       if (isFolderProject) {
         // Folder Project Additive Pull Logic
@@ -2704,12 +2709,14 @@ Future<Map<String, dynamic>> pullFromRemote(
           // Read remote folder_meta.json
           String? remoteMetaContent;
           try {
-            final out = await _runGit(['show', '$remoteName/master:folder_meta.json'], projDir);
+            final out = await _runGit(
+                ['show', '$remoteName/master:folder_meta.json'], projDir);
             if (out.isNotEmpty) remoteMetaContent = out.join('\n');
           } catch (_) {
             // Try HEAD if master fails
             try {
-              final out = await _runGit(['show', 'FETCH_HEAD:folder_meta.json'], projDir);
+              final out = await _runGit(
+                  ['show', 'FETCH_HEAD:folder_meta.json'], projDir);
               if (out.isNotEmpty) remoteMetaContent = out.join('\n');
             } catch (__) {}
           }
@@ -2722,7 +2729,8 @@ Future<Map<String, dynamic>> pullFromRemote(
               localMeta = jsonDecode(await localMetaFile.readAsString());
             }
 
-            final remoteItems = remoteMeta['items'] as Map<String, dynamic>? ?? {};
+            final remoteItems =
+                remoteMeta['items'] as Map<String, dynamic>? ?? {};
             if (localMeta['items'] == null) localMeta['items'] = {};
             final localItems = localMeta['items'] as Map<String, dynamic>;
 
@@ -3129,68 +3137,77 @@ Future<PullPreviewResult> previewPull(
   });
 }
 
-Future<void> deleteProject(String relativePath) async {
-  final base = _baseDir();
-  final targetPath = p.normalize(p.join(base, relativePath));
-  print("debug,base:$base,targetPath:$targetPath");
-  if (!p.isWithin(base, targetPath)) {
+Future<void> deleteProject(String gitdocxPath,
+    [String? trackingPath, String? trackingbase]) async {
+  final gitdocxbase = _baseDir();
+  print(
+      "debug,trackingbase:$trackingbase, gitdocxbase:$gitdocxbase,gitdocxPath:$gitdocxPath, trackingPath:$trackingPath");
+
+  // 仅当提供了 trackingPath 和 trackingbase 时才检查 tracking 路径
+  if (!p.isWithin(gitdocxbase, gitdocxPath) ||
+      (trackingPath != null &&
+          trackingbase != null &&
+          !p.isWithin(trackingbase, trackingPath))) {
     throw Exception('Access denied: Cannot delete outside of base directory');
   }
 
-  final dir = Directory(targetPath);
-  if (!dir.existsSync()) {
-    throw Exception('Project not found: $relativePath');
-  }
+  final girdocxdir = Directory(gitdocxPath);
+  final trackingFile = trackingPath != null ? File(trackingPath) : null;
 
   // Clean up parent metadata if needed
-  final parentPath = dir.parent.path;
-  if (p.isWithin(base, parentPath) || p.equals(base, parentPath)) {
-    final metaFile = File(p.join(parentPath, 'folder_meta.json'));
-    if (metaFile.existsSync()) {
-      try {
-        final meta = jsonDecode(await metaFile.readAsString());
-        final items = meta['items'] as Map<String, dynamic>?;
-        if (items != null) {
-          final relPath = p.relative(targetPath, from: parentPath);
-          bool changed = false;
-          // Try exact match
-          if (items.containsKey(relPath)) {
-            items.remove(relPath);
-            changed = true;
-          } else {
-            // Try forward slash version
-            final forward = relPath.replaceAll(r'\', '/');
-            if (items.containsKey(forward)) {
-              items.remove(forward);
-              changed = true;
-            }
-            // Try backward slash version
-            final back = relPath.replaceAll('/', r'\');
-            if (items.containsKey(back)) {
-              items.remove(back);
-              changed = true;
-            }
-          }
+  final parentPath = girdocxdir.parent.path;
+  final metaFile = File(p.join(parentPath, 'folder_meta.json'));
 
-          if (changed) {
-            await metaFile.writeAsString(jsonEncode(meta));
-            // Commit metadata change
-            await _runGit(['add', 'folder_meta.json'], parentPath);
-            try {
-              await _runGit(
-                  ['commit', '-m', 'Remove deleted project ${p.basename(targetPath)}'],
-                  parentPath);
-            } catch (_) {}
+  // 更新父文件夹
+  if (metaFile.existsSync()) {
+    try {
+      final meta = jsonDecode(await metaFile.readAsString());
+      final items = meta['items'] as Map<String, dynamic>?;
+      if (items != null) {
+        final relPath = p.relative(gitdocxPath, from: parentPath);
+        bool changed = false;
+        // Try exact match
+        if (items.containsKey(relPath)) {
+          items.remove(relPath);
+          changed = true;
+        } else {
+          // Try forward slash version
+          final forward = relPath.replaceAll(r'\', '/');
+          if (items.containsKey(forward)) {
+            items.remove(forward);
+            changed = true;
+          }
+          // Try backward slash version
+          final back = relPath.replaceAll('/', r'\');
+          if (items.containsKey(back)) {
+            items.remove(back);
+            changed = true;
           }
         }
-      } catch (e) {
-        print('Failed to update parent metadata during deletion: $e');
+
+        if (changed) {
+          await metaFile.writeAsString(jsonEncode(meta));
+          // Commit metadata change
+          await _runGit(['add', 'folder_meta.json'], parentPath);
+          try {
+            await _runGit([
+              'commit',
+              '-m',
+              'Remove deleted project ${p.basename(gitdocxPath)}'
+            ], parentPath);
+          } catch (_) {}
+        }
       }
+    } catch (e) {
+      print('Failed to update parent metadata during deletion: $e');
     }
   }
 
   try {
-    dir.deleteSync(recursive: true);
+    girdocxdir.deleteSync(recursive: true);
+    if (trackingFile != null && trackingFile.existsSync()) {
+      trackingFile.delete();
+    }
   } catch (e) {
     throw Exception('Failed to delete directory: $e');
   }
@@ -3210,8 +3227,9 @@ Future<String?> _findStoragePath(String trackingPath) async {
           final tracking = await _readTracking(p.basename(entity.path));
           if (tracking.containsKey('docxPath')) {
             final rootTrackingPath = p.normalize(tracking['docxPath']);
-            
-            if (rootTrackingPath == trackingPathNorm || p.isWithin(rootTrackingPath, trackingPathNorm)) {
+
+            if (rootTrackingPath == trackingPathNorm ||
+                p.isWithin(rootTrackingPath, trackingPathNorm)) {
               final rel = p.relative(trackingPathNorm, from: rootTrackingPath);
               return p.join(entity.path, rel);
             }
@@ -3228,14 +3246,14 @@ Future<void> copyTrackingProject(
   final base = _baseDir();
   // sourceName is a project name in gitdocx
   final sourcePath = p.join(base, sourceName);
-  
+
   if (!Directory(sourcePath).existsSync()) {
     throw Exception('Source project not found');
   }
 
   final sourceDocx = File(p.join(sourcePath, kRepoDocxName));
   if (!sourceDocx.existsSync()) {
-     throw Exception('content.docx not found in source project');
+    throw Exception('content.docx not found in source project');
   }
 
   String? storageDestDir;
@@ -3244,17 +3262,18 @@ Future<void> copyTrackingProject(
   if (p.isAbsolute(targetRelPath)) {
     trackingDestDir = targetRelPath;
     storageDestDir = await _findStoragePath(trackingDestDir);
-    
+
     if (storageDestDir == null) {
-       // Fallback: maybe targetRelPath IS inside a gitdocx folder?
-       if (p.isWithin(base, targetRelPath)) {
-          storageDestDir = targetRelPath;
-          // Try to resolve tracking from storage
-          final info = await _resolveTrackingInfo(storageDestDir);
-          trackingDestDir = info['docxPath'];
-       } else {
-          throw Exception('Could not determine storage location for $targetRelPath. Is it part of a tracked project?');
-       }
+      // Fallback: maybe targetRelPath IS inside a gitdocx folder?
+      if (p.isWithin(base, targetRelPath)) {
+        storageDestDir = targetRelPath;
+        // Try to resolve tracking from storage
+        final info = await _resolveTrackingInfo(storageDestDir);
+        trackingDestDir = info['docxPath'];
+      } else {
+        throw Exception(
+            'Could not determine storage location for $targetRelPath. Is it part of a tracked project?');
+      }
     }
   } else {
     storageDestDir = p.join(base, targetRelPath);
@@ -3264,15 +3283,15 @@ Future<void> copyTrackingProject(
   }
 
   if (storageDestDir == null) {
-     throw Exception('Could not resolve storage location.');
+    throw Exception('Could not resolve storage location.');
   }
 
   // Ensure directories exist
   if (!Directory(storageDestDir).existsSync()) {
-      Directory(storageDestDir).createSync(recursive: true);
+    Directory(storageDestDir).createSync(recursive: true);
   }
   if (!Directory(trackingDestDir!).existsSync()) {
-      Directory(trackingDestDir).createSync(recursive: true);
+    Directory(trackingDestDir).createSync(recursive: true);
   }
 
   final destName = '$sourceName.docx';
@@ -3293,7 +3312,7 @@ Future<void> copyTrackingProject(
   String targetDirWithSuffix = "$storageTargetDir.docx";
   Directory(targetDirWithSuffix).createSync(recursive: true);
   await _copyDir(sourcePath, targetDirWithSuffix);
-  
+
   // 2. Copy content.docx to Tracking
   sourceDocx.copySync(trackingFile);
 

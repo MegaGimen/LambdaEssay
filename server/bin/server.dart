@@ -464,26 +464,28 @@ Future<void> main(List<String> args) async {
   router.post('/project/delete', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
-    var relativePath = _sanitizePath(data['path'] as String?);
-    print('debug,relativePath:$relativePath');
+    var gitdocxPath = _sanitizePath(data['gitdocxPath'] as String?);
+    var trackingPath= _sanitizePath(data['trackingPath'] as String?);
+    var trackingBase = _sanitizePath(data["trackingBase"] as String?);
 
-    if (relativePath.isEmpty) {
+    if (gitdocxPath.isEmpty) {
       return _cors(Response(400,
-          body: jsonEncode({'error': 'path required'}),
+          body: jsonEncode({'error': 'No gitdocxPath'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    if(trackingPath.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'No trackingPath'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    if(trackingBase.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'No trackingBase'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
 
-    // Attempt to resolve external path to project name
-    if (p.isAbsolute(relativePath)) {
-      final resolved = await findProjectByDocxPath(relativePath);
-      if (resolved != null) {
-        print('Resolved external path $relativePath to project $resolved');
-        relativePath = resolved;
-      }
-    }
-
     try {
-      await deleteProject(relativePath);
+      await deleteProject(gitdocxPath,  trackingPath,  trackingBase);
       return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
         'Content-Type': 'application/json; charset=utf-8',
       }));
