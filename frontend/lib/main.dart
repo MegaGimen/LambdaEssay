@@ -1744,13 +1744,25 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         final normalizedRoot = _folderRootPath!.replaceAll(r'\', '/');
         if (normalizedPath.startsWith(normalizedRoot) &&
             normalizedPath != normalizedRoot) {
-          await _executePull(repoPath: pathCtrl.text.trim());
+          // Calculate Hash and Relative Path
+          final relPath = p.relative(pathCtrl.text, from: _folderRootPath!);
+          final normalizedRel = relPath.replaceAll(r'\', '/');
+          final hash = md5.convert(utf8.encode(normalizedRel)).toString();
+          
+          // Construct repoName as "Project/RelativePath"
+          // This helps Backend locate the repo in gitdocx
+          final subRepoName = '$currentProjectName/$normalizedRel';
+          
+          print('Pulling Sub-Repo: Name=$subRepoName, Hash=$hash, Rel=$normalizedRel');
+          
+          // Pass targetRepoName (Hash) so Backend pulls from the hashed remote
+          await _executePull(repoName: subRepoName, targetRepoName: hash);
           return;
         }
       }
 
       // Normal Pull for Current Project
-      await _executePull(repoName: currentProjectName!);
+      await _executePull(repoName: currentProjectName!, repoPath: pathCtrl.text.trim());
       return;
     }
 
@@ -1806,7 +1818,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           }
           
           // Perform Pull for the opened project (Mode 1 logic)
-          await _executePull(repoName: currentProjectName!);
+          await _executePull(repoName: currentProjectName!, repoPath: repoPath);
 
         } catch (e) {
           setState(() => error = '打开项目失败: $e');

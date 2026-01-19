@@ -2410,7 +2410,7 @@ Future<String> _resolveRepoOwner(String repoName, String token) async {
 
 String _calculateHash(String input) {
   var bytes = utf8.encode(input);
-  var digest = sha1.convert(bytes);
+  var digest = md5.convert(bytes);
   return digest.toString();
 }
 
@@ -2667,6 +2667,7 @@ Future<Map<String, dynamic>> pullFromRemote(
               'Pulling sub-repo as hashed remote: $effectiveRemoteRepoName (rel: $normalizedRelPath)');
         } else {
           effectiveRemoteRepoName = p.basename(repoPath);
+          print("DEBUG: Parent folder not found for $repoPath. Using basename as remote name.");
         }
       }
     }
