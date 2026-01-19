@@ -1844,6 +1844,8 @@ Future<void> syncFolderProject(String name) async {
     // This will create if not exists, or update content.docx if exists
     if (!Directory(targetRepoPath).existsSync()) {
       await _initSingleRepo(targetRepoPath, file.path);
+    } else {
+      await _updateContentDocx(targetRepoPath, file.path);
     }
   }
 
