@@ -1706,12 +1706,14 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('选择拉取模式'),
-        content: const Text('请选择一种拉取方式：\n\n1. 拉取当前项目：仅更新当前正在编辑的项目。\n2. 拉取新项目：选择一个新的仓库进行拉取（如果本地已存在则直接打开）。'),
+        content: const Text(
+            '请选择一种拉取方式：\n\n1. 拉取当前项目：仅更新当前正在编辑的项目。\n2. 拉取新项目：选择一个新的仓库进行拉取（如果本地已存在则直接打开）。'),
         actions: [
           TextButton(
-            onPressed: (currentProjectName == null || currentProjectName!.isEmpty)
-                ? null
-                : () => Navigator.pop(ctx, 'current'),
+            onPressed:
+                (currentProjectName == null || currentProjectName!.isEmpty)
+                    ? null
+                    : () => Navigator.pop(ctx, 'current'),
             child: const Text('只拉取当前项目'),
           ),
           TextButton(
@@ -1748,13 +1750,14 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           final relPath = p.relative(pathCtrl.text, from: _folderRootPath!);
           final normalizedRel = relPath.replaceAll(r'\', '/');
           final hash = md5.convert(utf8.encode(normalizedRel)).toString();
-          
+
           // Construct repoName as "Project/RelativePath"
           // This helps Backend locate the repo in gitdocx
           final subRepoName = '$currentProjectName/$normalizedRel';
-          
-          print('Pulling Sub-Repo: Name=$subRepoName, Hash=$hash, Rel=$normalizedRel');
-          
+
+          print(
+              'Pulling Sub-Repo: Name=$subRepoName, Hash=$hash, Rel=$normalizedRel');
+
           // Pass targetRepoName (Hash) so Backend pulls from the hashed remote
           await _executePull(repoName: subRepoName, targetRepoName: hash);
           return;
@@ -1762,7 +1765,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       }
 
       // Normal Pull for Current Project
-      await _executePull(repoName: currentProjectName!, repoPath: pathCtrl.text.trim());
+      await _executePull(
+          repoName: currentProjectName!, repoPath: pathCtrl.text.trim());
       return;
     }
 
@@ -1812,24 +1816,22 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           }
 
           if (mounted) {
-             ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('检测到本地项目，已打开并开始拉取...'))
-             );
+            ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('检测到本地项目，已打开并开始拉取...')));
           }
-          
+
           // Perform Pull for the opened project (Mode 1 logic)
           await _executePull(repoName: currentProjectName!, repoPath: repoPath);
-
         } catch (e) {
           setState(() => error = '打开项目失败: $e');
         }
       } else {
         // Does not exist locally, execute new project pull logic
-         // This will trigger clone on backend
-         await _executePull(repoName: targetRepoName);
-       }
-     }
-   }
+        // This will trigger clone on backend
+        await _executePull(repoName: targetRepoName);
+      }
+    }
+  }
 
   Future<void> _executePull(
       {String? repoName, String? repoPath, String? targetRepoName}) async {
@@ -2121,7 +2123,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     }
   }
 
-  Future<void> _deleteSelectedProject() async {
+  Future<void> _deleteSelectedProject([bool forcedelete=false]) async {
     if (_selectedFilePath == null) return;
     print(_selectedFilePath);
     final appData = Platform.environment['APPDATA']!;
@@ -2139,22 +2141,24 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     }
     if (!exists) return;
 
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('删除'),
-        content: Text('确定要删除 "${p.basename(_selectedFilePath!)}" 吗？此操作不可撤销。'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消')),
-          ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('删除')),
-        ],
-      ),
-    );
+    final confirm = forcedelete
+        ? true
+        : await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('删除'),
+              content: Text('确定要删除 "${p.basename(_selectedFilePath!)}" 吗？此操作不可撤销。'),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: const Text('取消')),
+                ElevatedButton(
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                    onPressed: () => Navigator.pop(ctx, true),
+                    child: const Text('删除')),
+              ],
+            ),
+          );
 
     if (confirm == true) {
       setState(() => loading = true);
@@ -3232,17 +3236,14 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
     final List<PopupMenuItem<String>> items = [];
 
-    if (isRepo || isTracked) {
-      items.add(const PopupMenuItem(
-        value: 'delete',
-        child: Text('删除项目', style: TextStyle(color: Colors.red)),
-      ));
-    } else {
-      items.add(const PopupMenuItem(
-        value: 'import',
-        child: Text('导入已有追踪项目'),
-      ));
-    }
+    items.add(const PopupMenuItem(
+      value: 'delete',
+      child: Text('删除项目', style: TextStyle(color: Colors.red)),
+    ));
+    items.add(const PopupMenuItem(
+      value: 'import',
+      child: Text('导入已有追踪项目'),
+    ));
 
     final position = RelativeRect.fromLTRB(
       details.globalPosition.dx,
@@ -3307,6 +3308,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     );
 
     if (ok == true && selectedProject != null) {
+      //先删除项目，然后再导入（未来可以改为和pull类似的逻辑）
+      await _deleteSelectedProject(true);
       await _doImportProject(file, selectedProject!);
     }
   }
