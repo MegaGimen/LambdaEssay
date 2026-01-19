@@ -1701,44 +1701,74 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       return;
     }
 
-    if (currentProjectName == null || currentProjectName!.isEmpty) {
-      setState(() => error = '当前未打开任何项目，无法拉取');
+    // Mode Selection
+    final mode = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('选择拉取模式'),
+        content: const Text('请选择一种拉取方式：\n\n1. 拉取当前项目：仅更新当前正在编辑的项目。\n2. 拉取新项目：选择一个新的仓库进行拉取（如果本地已存在则直接打开）。'),
+        actions: [
+          TextButton(
+            onPressed: (currentProjectName == null || currentProjectName!.isEmpty)
+                ? null
+                : () => Navigator.pop(ctx, 'current'),
+            child: const Text('只拉取当前项目'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'new'),
+            child: const Text('拉取新项目'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消', style: TextStyle(color: Colors.grey)),
+          ),
+        ],
+      ),
+    );
+
+    if (mode == null) return;
+
+    // Mode 1: Pull Current Project
+    if (mode == 'current') {
+      if (currentProjectName == null || currentProjectName!.isEmpty) {
+        setState(() => error = '当前未打开任何项目，无法拉取');
+        return;
+      }
+
+      // Auto-Pull Sub-Repo (Folder Mode) logic
+      if (isFolderProject &&
+          _folderRootPath != null &&
+          pathCtrl.text.isNotEmpty &&
+          data != null) {
+        final normalizedPath = pathCtrl.text.replaceAll(r'\', '/');
+        final normalizedRoot = _folderRootPath!.replaceAll(r'\', '/');
+        if (normalizedPath.startsWith(normalizedRoot) &&
+            normalizedPath != normalizedRoot) {
+          await _executePull(repoPath: pathCtrl.text.trim());
+          return;
+        }
+      }
+
+      // Normal Pull for Current Project
+      await _executePull(repoName: currentProjectName!);
       return;
     }
 
-    // 1. Auto-Pull Sub-Repo (Folder Mode)
-    // If we are in folder mode, and we are currently viewing a sub-repo (not root),
-    // and the graph is loaded (data != null), auto-pull using hash logic.
-    if (isFolderProject &&
-        _folderRootPath != null &&
-        pathCtrl.text.isNotEmpty &&
-        data != null) {
-      final normalizedPath = pathCtrl.text.replaceAll(r'\', '/');
-      final normalizedRoot = _folderRootPath!.replaceAll(r'\', '/');
-      // Check if path is a sub-folder of root (and not root itself)
-      if (normalizedPath.startsWith(normalizedRoot) &&
-          normalizedPath != normalizedRoot) {
-        // Auto pull: send repoPath, backend calculates hash
-        await _executePull(repoPath: pathCtrl.text.trim());
-        return;
-      }
-    }
+    // Mode 2: Pull New Project
+    if (mode == 'new') {
+      final selection = await _showRepoSelectionDialog(
+        allowNew: false,
+      );
+      if (selection == null) return;
+      if (!mounted) return;
 
-    // 2. Manual Selection
-    final selection = await _showRepoSelectionDialog(
-      allowNew: false,
-    );
-    if (selection == null) return;
-    if (!mounted) return;
+      final targetRepoName = selection['name'] as String;
+      // final isRemoteFolder = selection['isFolder'] == true; // Unused in new logic flow
 
-    final targetRepoName = selection['name'] as String;
-    final isRemoteFolder = selection['isFolder'] == true;
-
-    // 3. Folder Project Handling
-    if (isRemoteFolder) {
       // Check if locally exists
       final localProjects = await _fetchProjectList();
       if (!mounted) return;
+
       if (localProjects.contains(targetRepoName)) {
         // Open it
         try {
@@ -1770,29 +1800,24 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           }
 
           if (mounted) {
-            showDialog(
-                context: context,
-                builder: (ctx) => AlertDialog(
-                        title: const Text('文件夹项目'),
-                        content: const Text(
-                            '检测到本地已存在该文件夹项目，已为您打开。\n请进入具体子文件后手动进行拉取操作。'),
-                        actions: [
-                          TextButton(
-                              onPressed: () => Navigator.pop(ctx),
-                              child: const Text('确定'))
-                        ]));
+             ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('检测到本地项目，已打开并开始拉取...'))
+             );
           }
-        } catch (e) {
-          setState(() => error = '打开文件夹项目失败: $e');
-        }
-        return;
-      }
-    }
+          
+          // Perform Pull for the opened project (Mode 1 logic)
+          await _executePull(repoName: currentProjectName!);
 
-    // 4. Normal Pull
-    await _executePull(
-        repoName: currentProjectName!, targetRepoName: targetRepoName);
-  }
+        } catch (e) {
+          setState(() => error = '打开项目失败: $e');
+        }
+      } else {
+        // Does not exist locally, execute new project pull logic
+         // This will trigger clone on backend
+         await _executePull(repoName: targetRepoName);
+       }
+     }
+   }
 
   Future<void> _executePull(
       {String? repoName, String? repoPath, String? targetRepoName}) async {

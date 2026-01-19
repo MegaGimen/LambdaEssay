@@ -2868,8 +2868,10 @@ Future<Map<String, dynamic>> pullFromRemote(
     // Sync external docx with pulled content
     await _syncToExternal(projDir);
 
-    // Notify parent folder project if applicable
-    await _notifyParentFolderProject(projDir);
+    // Notify parent folder project if applicable (only for folder projects)
+    if (File(p.join(projDir, 'folder_meta.json')).existsSync()) {
+      await _notifyParentFolderProject(projDir);
+    }
 
     clearCache();
     return {
