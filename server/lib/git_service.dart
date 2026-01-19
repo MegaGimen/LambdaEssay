@@ -1837,7 +1837,10 @@ Future<void> syncFolderProject(String name) async {
 
   // 2. Update or Create repos
   for (final file in sourceFiles) {
-    final relPath = p.relative(file.path, from: sourceRoot);
+    var relPath = p.relative(file.path, from: sourceRoot);
+    if (relPath.toLowerCase().endsWith('.docx')) {
+      relPath = relPath.substring(0, relPath.length - 5);
+    }
     sourceRelPaths.add(relPath);
 
     final targetRepoPath = p.join(projDir, relPath);
