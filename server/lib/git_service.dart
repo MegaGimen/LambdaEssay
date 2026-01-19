@@ -2446,6 +2446,37 @@ Future<String?> _findParentFolderProject(String path) async {
   return null;
 }
 
+Future<void> _ensureUniqueRemote(
+    String repoPath, String remoteName, String remoteUrl) async {
+  // Get all existing remotes
+  final remotes = await _runGit(['remote'], repoPath);
+  for (final existingRemote in remotes) {
+    if (existingRemote.trim().isEmpty) continue;
+    // Remove if it's not the one we want, OR if we want to force update the url
+    if (existingRemote.trim() != remoteName) {
+      await _runGit(['remote', 'remove', existingRemote.trim()], repoPath);
+    }
+  }
+
+  // Check if target remote exists and has correct URL
+  bool exists = false;
+  try {
+    final currentUrl = await _runGit(['remote', 'get-url', remoteName], repoPath);
+    if (currentUrl.isNotEmpty && currentUrl.first.trim() == remoteUrl) {
+      exists = true;
+    } else {
+      // URL mismatch or exists but we want to be sure, remove it
+      await _runGit(['remote', 'remove', remoteName], repoPath);
+    }
+  } catch (_) {
+    // remote doesn't exist
+  }
+
+  if (!exists) {
+    await _runGit(['remote', 'add', remoteName, remoteUrl], repoPath);
+  }
+}
+
 Future<void> pushToRemote(String repoPath, String username, String token,
     {bool force = false}) async {
   return _withRepoLock(repoPath, () async {
@@ -2461,7 +2492,7 @@ Future<void> pushToRemote(String repoPath, String username, String token,
         final normalizedRelPath = relativePath.replaceAll(r'\', '/');
         effectiveRemoteRepoName = _calculateHash(normalizedRelPath);
         print(
-            'Pushing sub-repo "\$repoName" as hashed remote: \$effectiveRemoteRepoName (rel: \$normalizedRelPath)');
+            'Pushing sub-repo "$repoName" as hashed remote: $effectiveRemoteRepoName (rel: $normalizedRelPath)');
       } else {
         effectiveRemoteRepoName = repoName;
       }
@@ -2478,9 +2509,9 @@ Future<void> pushToRemote(String repoPath, String username, String token,
     final remoteUrl =
         'http://$username:$token@47.242.109.145:3000/$owner/$effectiveRemoteRepoName.git';
 
-    // Ensure remote is added so fetch --all works
+    // Ensure unique remote logic
     final remoteName = effectiveRemoteRepoName.toLowerCase();
-    await addRemote(repoPath, remoteName, remoteUrl);
+    await _ensureUniqueRemote(repoPath, remoteName, remoteUrl);
 
     final args = ['push'];
     if (force) args.add('--force');
@@ -2560,9 +2591,10 @@ Future<void> pushToRemote(String repoPath, String username, String token,
               try {
                 // If push failed (likely behind), try to pull --rebase
                 final remoteName = p.basename(path).toLowerCase();
-                // Ensure remote exists for pull
-                await addRemote(path, remoteName,
-                    'http://$username:$token@47.242.109.145:3000/${await _resolveRepoOwner(remoteName, token)}/$remoteName.git');
+                final parentRemoteUrl =
+                    'http://$username:$token@47.242.109.145:3000/${await _resolveRepoOwner(remoteName, token)}/$remoteName.git';
+                // Ensure unique remote logic for parent too
+                await _ensureUniqueRemote(path, remoteName, parentRemoteUrl);
 
                 await _runGit(['pull', '--rebase', remoteName, 'master'], path);
                 print('Rebase successful. Retrying push...');
@@ -2709,7 +2741,7 @@ Future<Map<String, dynamic>> pullFromRemote(
       if (isFolderProject) {
         // Folder Project Additive Pull Logic
         try {
-          await addRemote(projDir, remoteName, remoteUrl);
+          await _ensureUniqueRemote(projDir, remoteName, remoteUrl);
           await _runGit(['fetch', remoteName], projDir);
 
           // Read remote folder_meta.json
@@ -2797,7 +2829,7 @@ Future<Map<String, dynamic>> pullFromRemote(
         // savedTracking = await _readTracking(repoName);
 
         try {
-          await addRemote(projDir, remoteName, remoteUrl);
+          await _ensureUniqueRemote(projDir, remoteName, remoteUrl);
           await _runGit(['fetch', remoteName], projDir);
           final current = await getCurrentBranch(projDir);
 
