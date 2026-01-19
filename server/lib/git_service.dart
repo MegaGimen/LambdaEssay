@@ -651,13 +651,7 @@ Future<bool> _isFolderProject(String repoPath) async {
   return !contentDocx.existsSync();
 }
 
-Future<bool> _isSoloProject(String repoPath) async {
-  final gitDir = Directory(p.join(repoPath, '.git'));
-  if (!gitDir.existsSync()) return false;
 
-  final contentDocx = File(p.join(repoPath, 'content.docx'));
-  return contentDocx.existsSync();
-}
 
 Future<void> _updateFolderMeta(String parentRepoPath, String childRelPath,
     String childName, String childRemoteUrl) async {
@@ -2372,9 +2366,13 @@ Future<String> _resolveRepoOwner(String repoName, String token) async {
     'Content-Type': 'application/json',
   };
 
+  List<String> accessibleRepos = [];
+
   String? findOwnerInList(List<dynamic> list) {
     for (final repo in list) {
-      if (repo['name'].toLowerCase() == repoName) {
+      final name = repo['name'].toString();
+      accessibleRepos.add(name);
+      if (name.toLowerCase() == repoName.toLowerCase()) {
         return repo['owner']['login'] as String;
       }
     }
@@ -2404,8 +2402,10 @@ Future<String> _resolveRepoOwner(String repoName, String token) async {
     print('Error checking member repos: $e');
   }
 
+  print('Debug: Repo $repoName not found. Access list: $accessibleRepos');
+
   throw Exception(
-      'Repository $repoName not found in your account access list.');
+      'Repository $repoName not found in your account access list. Available: ${accessibleRepos.join(", ")}');
 }
 
 String _calculateHash(String input) {
@@ -2420,7 +2420,10 @@ Future<String?> _findParentFolderProject(String path) async {
 
   try {
     if (p.equals(path, baseDir.path)) return null;
-    if (!p.isWithin(baseDir.path, path)) return null;
+    if (!p.isWithin(baseDir.path, path)) {
+      print('DEBUG: _findParentFolderProject: $path is not within ${baseDir.path}');
+      return null;
+    }
 
     Directory current = target.parent;
     while (true) {
@@ -3294,10 +3297,6 @@ Future<void> copyTrackingProject(
     // Resolve tracking
     final info = await _resolveTrackingInfo(storageDestDir);
     trackingDestDir = info['docxPath'];
-  }
-
-  if (storageDestDir == null) {
-    throw Exception('Could not resolve storage location.');
   }
 
   // Ensure directories exist
