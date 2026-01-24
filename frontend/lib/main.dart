@@ -4245,6 +4245,7 @@ class _GraphViewState extends State<_GraphView>
 
   Timer? _bgPollTimer;
   final Set<String> _requestedPreviews = {};
+  final Set<String> _requestedTxtPreviews = {};
 
   Future<void> _startPdfPolling() async {
     if (widget.data.commits.isEmpty) return;
@@ -4258,37 +4259,57 @@ class _GraphViewState extends State<_GraphView>
 
       await ensureAppDataCacheDir();
 
-      final missingIds = <String>[];
+      final missingPdfIds = <String>[];
+      final missingTxtIds = <String>[];
 
       for (final commit in widget.data.commits) {
+        // Check PDF
         final pdfPath = cachePdfPathForSha(commit.id);
         final f = File(pdfPath);
         if (!f.existsSync()) {
           if (!_requestedPreviews.contains(commit.id)) {
-            missingIds.add(commit.id);
+            missingPdfIds.add(commit.id);
           }
         } else {
           _requestedPreviews.remove(commit.id);
         }
-      }
-/*
-      if (missingIds.isNotEmpty) {
-        print('发现 ${missingIds.length} 个节点缺少预览，正在批量请求生成...');
-        _requestedPreviews.addAll(missingIds);
-        try {
-          await http.post(
-            Uri.parse('http://localhost:8080/preview_cache'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode(
-                {'repoPath': widget.repoPath, 'commitIds': missingIds}),
-          );
-        } catch (e) {
-          print('批量请求生成失败: $e');
-          // 失败后允许重试
-          _requestedPreviews.removeAll(missingIds);
+        
+        // Check TXT
+        final txtPath = cacheTxtPathForSha(commit.id);
+        final fTxt = File(txtPath);
+        bool txtExists = fTxt.existsSync();
+        if (txtExists && fTxt.lengthSync() == 0) {
+           txtExists = false;
+        }
+        
+        if (!txtExists) {
+           if (!_requestedTxtPreviews.contains(commit.id)) {
+              missingTxtIds.add(commit.id);
+           }
+        } else {
+           _requestedTxtPreviews.remove(commit.id);
         }
       }
-      */
+
+      if (missingPdfIds.isNotEmpty) {
+        _requestedPreviews.addAll(missingPdfIds);
+        for (final id in missingPdfIds) {
+           _requestPreviewCache(id);
+        }
+      }
+      
+      if (missingTxtIds.isNotEmpty) {
+         _requestedTxtPreviews.addAll(missingTxtIds);
+         for (final id in missingTxtIds) {
+             _requestTxtSummary(id).then((success) {
+                 if (!success && mounted) {
+                    setState(() {
+                       _requestedTxtPreviews.remove(id);
+                    });
+                 }
+             });
+         }
+      }
     });
   }
 
@@ -4350,6 +4371,32 @@ class _GraphViewState extends State<_GraphView>
         body: jsonEncode({'repoPath': widget.repoPath, 'commitId': commitId}),
       );
     } catch (_) {}
+  }
+
+  Future<bool> _requestTxtSummary(String commitId) async {
+    try {
+      final repoName = widget.projectName ?? '';
+      if (repoName.isEmpty) return false;
+
+      final response = await http.post(
+        Uri.parse('http://localhost:8080/summarize_commit'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'repoName': repoName, 'commitId': commitId}),
+      );
+      
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body);
+        final output = body['output'] as String?;
+        if (output != null && output.isNotEmpty) {
+           final txtPath = cacheTxtPathForSha(commitId);
+           await File(txtPath).writeAsString(output);
+           return true;
+        }
+      }
+    } catch (e) {
+      // print('TXT summary failed for $commitId: $e');
+    }
+    return false;
   }
 
   Future<void> _showPdfBytesDialog(Uint8List bytes,
