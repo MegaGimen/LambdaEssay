@@ -11,6 +11,7 @@ import 'package:path/path.dart' as p;
 import '../lib/git_service.dart';
 import '../lib/backup_service.dart';
 import '../lib/diff/repocmp.dart';
+import '../lib/sumdiff.dart';
 import 'package:http/http.dart' as http;
 
 import 'package:uuid/uuid.dart';
@@ -170,6 +171,10 @@ Future<void> main(List<String> args) async {
                       }
                    } else {
                       print('Plugin reported error/mismatch: ${data['message']}');
+                      // Fail fast
+                      if (!_pendingRequests[id]!.isCompleted) {
+                         _pendingRequests[id]!.complete(data); // Complete with error data
+                      }
                    }
                 }
              } else if (data['type'] == 'event' && data['event'] == 'saved') {
@@ -217,11 +222,29 @@ Future<void> main(List<String> args) async {
         if (_activePluginSockets.isEmpty) {
           pluginSender = null;
         }
+        // Notify frontend
+        for (final socket in _activeFrontendSockets) {
+           try {
+             socket.sink.add(jsonEncode({
+               'type': 'com_status',
+               'status': 'disconnected'
+             }));
+           } catch (_) {}
+        }
       }, onError: (e) {
         print('WebSocket error: $e');
         _activePluginSockets.remove(channel);
         if (_activePluginSockets.isEmpty) {
           pluginSender = null;
+        }
+        // Notify frontend
+        for (final socket in _activeFrontendSockets) {
+           try {
+             socket.sink.add(jsonEncode({
+               'type': 'com_status',
+               'status': 'disconnected'
+             }));
+           } catch (_) {}
         }
       });
     })(req);
@@ -262,7 +285,23 @@ Future<void> main(List<String> args) async {
           body: jsonEncode({'error': 'Plugin not connected'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
-    final success = await pluginSender!({'action': 'save'});
+
+    Map<String, dynamic> options = {};
+    try {
+      final body = await req.readAsString();
+      if (body.isNotEmpty) {
+        final data = jsonDecode(body) as Map<String, dynamic>;
+        if (data['options'] != null) {
+           options = data['options'] as Map<String, dynamic>;
+        }
+      }
+    } catch (_) {}
+
+    final success = await pluginSender!({
+      'action': 'save',
+      'options': options
+    });
+
     if (success) {
       return _cors(Response.ok(jsonEncode({'message': 'Save command sent'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
@@ -423,6 +462,79 @@ Future<void> main(List<String> args) async {
     }
   });
 
+  router.post('/project/delete', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    var gitdocxPath = _sanitizePath(data['gitdocxPath'] as String?);
+    var trackingPath= _sanitizePath(data['trackingPath'] as String?);
+    var trackingBase = _sanitizePath(data["trackingBase"] as String?);
+
+    if (gitdocxPath.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'No gitdocxPath'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    if(trackingPath.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'No trackingPath'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    if(trackingBase.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'No trackingBase'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+
+    try {
+      await deleteProject(gitdocxPath,  trackingPath,  trackingBase);
+      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.get('/project/list', (Request req) async {
+    try {
+      final projects = await listProjects();
+      return _cors(Response.ok(jsonEncode(projects), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/project/copy', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final sourceName = _sanitizePath(data['sourceName'] as String?);
+    final targetRelPath = _sanitizePath(data['targetRelPath'] as String?);
+    final deleteSource = data['deleteSource'] == true;
+
+    if (sourceName.isEmpty || targetRelPath.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'sourceName and targetRelPath required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+
+    try {
+      await copyTrackingProject(sourceName, targetRelPath, deleteSource);
+      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
   router.post('/branches', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
@@ -538,6 +650,121 @@ Future<void> main(List<String> args) async {
     }
   });
 
+  router.post('/summarizeDiff', (Request req) async {
+    try {
+      final body = await req.readAsString();
+      final data = jsonDecode(body) as Map<String, dynamic>;
+      final beforePath = _sanitizePath(data['beforePath'] as String?);
+      final afterPath = _sanitizePath(data['afterPath'] as String?);
+
+      if (beforePath.isEmpty || afterPath.isEmpty) {
+        return _cors(Response(400,
+            body: jsonEncode({'error': 'beforePath and afterPath required'}),
+            headers: {'Content-Type': 'application/json; charset=utf-8'}));
+      }
+
+      final result = await summarizeDiff(beforePath, afterPath);
+      return _cors(Response.ok(
+        jsonEncode({'output': result}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+      ));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/summarize_commit', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoName = (data['repoName'] as String?)?.trim() ?? '';
+    final commitId = (data['commitId'] as String?)?.trim() ?? '';
+
+    if (repoName.isEmpty || commitId.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoName, commitId required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+
+    Directory? tempDir;
+    try {
+      final appData = Platform.environment['APPDATA'];
+      if (appData == null) throw Exception('APPDATA not found');
+      final repoPath = p.join(appData, 'gitdocx', repoName);
+      
+      if (!await Directory(repoPath).exists()) {
+         throw Exception('Repo $repoName not found at $repoPath');
+      }
+
+      // Find parent
+      final parentRes = await Process.run('mingw64/bin/git.exe', 
+          ['log', '-1', '--format=%P', commitId], 
+          workingDirectory: repoPath);
+      
+      if (parentRes.exitCode != 0) throw Exception('Git log failed: ${parentRes.stderr}');
+      
+      final parentId = (parentRes.stdout as String).trim().split(' ').firstWhere((e) => e.isNotEmpty, orElse: () => '');
+
+      tempDir = await Directory.systemTemp.createTemp('sum_commit_');
+      final afterDocx = p.join(tempDir.path, 'after.docx');
+      
+      // Extract commit docx
+      final afterRes = await Process.run('mingw64/bin/git.exe', 
+          ['show', '$commitId:content.docx'], 
+          workingDirectory: repoPath, stdoutEncoding: null);
+          
+      if (afterRes.exitCode != 0) {
+        // Maybe file didn't exist in that commit?
+        // Check if error is "pathspec ... did not match"
+        final err = utf8.decode(afterRes.stderr as List<int>);
+        if (err.contains('did not match')) {
+           return _cors(Response.ok(
+            jsonEncode({'output': 'File content.docx not found in this commit'}),
+            headers: {'Content-Type': 'application/json; charset=utf-8'},
+          ));
+        }
+        throw Exception('Git show failed for current: $err');
+      }
+      await File(afterDocx).writeAsBytes(afterRes.stdout as List<int>);
+
+      String result;
+      if (parentId.isEmpty) {
+        result = "Initial commit (no parent)";
+      } else {
+        final beforeDocx = p.join(tempDir.path, 'before.docx');
+        final beforeRes = await Process.run('mingw64/bin/git.exe', 
+            ['show', '$parentId:content.docx'], 
+            workingDirectory: repoPath, stdoutEncoding: null);
+            
+        if (beforeRes.exitCode != 0) {
+             // Parent might not have the file
+             // We can treat it as empty or new file
+             result = "New file created (parent did not have content.docx)";
+        } else {
+             await File(beforeDocx).writeAsBytes(beforeRes.stdout as List<int>);
+             result = await summarizeDiff(beforeDocx, afterDocx);
+        }
+      }
+
+      return _cors(Response.ok(
+        jsonEncode({'output': result}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+      ));
+
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    } finally {
+      if (tempDir != null) {
+        try {
+          await tempDir.delete(recursive: true);
+        } catch (_) {}
+      }
+    }
+  });
+
   router.post('/backup/graph', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
@@ -615,12 +842,13 @@ Future<void> main(List<String> args) async {
     // Attempt to save Word document if plugin is connected
     if (pluginSender != null) {
       print('Executing Word save before commit...');
-      final saved = await pluginSender!({'action': 'save'});
-      if (!saved) {
-        return _cors(Response(500,
-            body: jsonEncode({'error': 'Word save failed. Commit aborted.'}),
-            headers: {'Content-Type': 'application/json; charset=utf-8'}));
-      }
+      await pluginSender!({'action': 'save'});
+      //if (!saved) {
+      //  return _cors(Response(500,
+      //      body: jsonEncode({'error': 'Word save failed. Commit aborted.'}),
+      //      headers: {'Content-Type': 'application/json; charset=utf-8'}));
+      //}
+      //即使没有保存成功，也继续提交
       print('Word save verified.');
     }
 
@@ -736,17 +964,39 @@ Future<void> main(List<String> args) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
     final repoPath = _sanitizePath(data['repoPath'] as String?);
-    final commitId = data['commitId'] as String?;
+    
+    final ids = <String>{};
+    if (data['commitIds'] != null) {
+      for (final item in (data['commitIds'] as List)) {
+        if (item is String && item.trim().isNotEmpty) {
+          ids.add(item.trim());
+        }
+      }
+    }
+    if (data['commitId'] != null) {
+      final single = data['commitId'] as String;
+      if (single.trim().isNotEmpty) {
+        ids.add(single.trim());
+      }
+    }
 
-    if (repoPath.isEmpty || commitId == null || commitId.trim().isEmpty) {
+    if (repoPath.isEmpty || ids.isEmpty) {
       return _cors(Response(400,
-          body: jsonEncode({'error': 'repoPath, commitId required'}),
+          body: jsonEncode({'error': 'repoPath and commitId/commitIds required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
 
-    unawaited(ensureCommitPreviewAssets(repoPath, commitId.trim()));
+    // Process all IDs asynchronously
+    unawaited(() async {
+      for (final id in ids) {
+        // ensureCommitPreviewAssets handles concurrency with semaphore internally
+        await ensureCommitPreviewAssets(repoPath, id);
+        // Yield to event loop and give some breathing room
+        await Future.delayed(const Duration(milliseconds: 100));
+      }
+    }());
 
-    return _cors(Response.ok(jsonEncode({'status': 'scheduled'}), headers: {
+    return _cors(Response.ok(jsonEncode({'status': 'scheduled', 'count': ids.length}), headers: {
       'Content-Type': 'application/json; charset=utf-8',
     }));
   });
@@ -1052,16 +1302,13 @@ Future<void> main(List<String> args) async {
     final username = (data['username'] as String?)?.trim() ?? '';
     final token = (data['token'] as String?)?.trim() ?? '';
     final force = data['force'] == true;
-    final targetRepoName = (data['targetRepoName'] as String?)?.trim();
-
     if (repoPath.isEmpty || username.isEmpty || token.isEmpty) {
       return _cors(Response(400,
           body: jsonEncode({'error': 'repoPath, username, token required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
-      await pushToRemote(repoPath, username, token,
-          force: force, targetRepoName: targetRepoName);
+      await pushToRemote(repoPath, username, token, force: force);
       return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
         'Content-Type': 'application/json; charset=utf-8',
       }));
@@ -1117,6 +1364,21 @@ Future<void> main(List<String> args) async {
 
         final repoNames = uniqueRepos.keys.toList();
 
+        // Check folder status for each repo
+        final results = await Future.wait(repoNames.map((name) async {
+           final r = uniqueRepos[name]!;
+           final owner = r['owner']['login'];
+           final checkUrl = '$giteaUrl/api/v1/repos/$owner/$name/contents/folder_meta.json';
+           bool isFolder = false;
+           try {
+             final checkResp = await http.get(Uri.parse(checkUrl), headers: headers);
+             if (checkResp.statusCode == 200) {
+               isFolder = true;
+             }
+           } catch (_) {}
+           return {'name': name, 'isFolder': isFolder};
+        }));
+
         if (repoPath != null && repoPath.isNotEmpty) {
           for (final r in uniqueRepos.values) {
             final name = (r['name'] as String).toLowerCase();
@@ -1127,7 +1389,7 @@ Future<void> main(List<String> args) async {
           }
         }
 
-        return _cors(Response.ok(jsonEncode(repoNames), headers: {
+        return _cors(Response.ok(jsonEncode(results), headers: {
           'Content-Type': 'application/json; charset=utf-8',
         }));
       } else if (respOwned.statusCode != 200) {
@@ -1439,22 +1701,134 @@ Future<void> main(List<String> args) async {
     }
   });
 
+  router.post('/summarizeDiff', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final beforePath = _sanitizePath(data['beforePath'] as String?);
+    final afterPath = _sanitizePath(data['afterPath'] as String?);
+
+    if (beforePath.isEmpty || afterPath.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'beforePath, afterPath required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      final output = await summarizeDiff(beforePath, afterPath);
+      return _cors(Response.ok(jsonEncode({'output': output}), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/summarize_commit', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoName = (data['repoName'] as String?)?.trim() ?? '';
+    final commitId = (data['commitId'] as String?)?.trim() ?? '';
+
+    if (repoName.isEmpty || commitId.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoName, commitId required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+
+    Directory? tempDir;
+    try {
+      final appData = Platform.environment['APPDATA'];
+      if (appData == null) throw Exception('APPDATA not found');
+      final repoPath = p.join(appData, 'gitdocx', repoName);
+      
+      if (!await Directory(repoPath).exists()) {
+         throw Exception('Repo $repoName not found at $repoPath');
+      }
+
+      // Find parent
+      final parentRes = await Process.run('mingw64/bin/git.exe', 
+          ['log', '-1', '--format=%P', commitId], 
+          workingDirectory: repoPath);
+      
+      if (parentRes.exitCode != 0) throw Exception('Git log failed: ${parentRes.stderr}');
+      
+      final parentId = (parentRes.stdout as String).trim().split(' ').firstWhere((e) => e.isNotEmpty, orElse: () => '');
+
+      tempDir = await Directory.systemTemp.createTemp('sum_commit_');
+      final afterDocx = p.join(tempDir.path, 'after.docx');
+      
+      // Extract commit docx
+      final afterRes = await Process.run('mingw64/bin/git.exe', 
+          ['show', '$commitId:content.docx'], 
+          workingDirectory: repoPath, stdoutEncoding: null);
+          
+      if (afterRes.exitCode != 0) {
+        final err = utf8.decode(afterRes.stderr as List<int>);
+        if (err.contains('did not match') || err.contains('exists on disk') || err.contains('pathspec')) {
+           return _cors(Response.ok(
+            jsonEncode({'output': 'File content.docx not found in this commit'}),
+            headers: {'Content-Type': 'application/json; charset=utf-8'},
+          ));
+        }
+        throw Exception('Git show failed for current: $err');
+      }
+      await File(afterDocx).writeAsBytes(afterRes.stdout as List<int>);
+
+      String result;
+      if (parentId.isEmpty) {
+        result = "Initial commit (no parent)";
+      } else {
+        final beforeDocx = p.join(tempDir.path, 'before.docx');
+        final beforeRes = await Process.run('mingw64/bin/git.exe', 
+            ['show', '$parentId:content.docx'], 
+            workingDirectory: repoPath, stdoutEncoding: null);
+            
+        if (beforeRes.exitCode != 0) {
+             result = "New file created (parent did not have content.docx)";
+        } else {
+             await File(beforeDocx).writeAsBytes(beforeRes.stdout as List<int>);
+             result = await summarizeDiff(beforeDocx, afterDocx);
+        }
+      }
+
+      return _cors(Response.ok(
+        jsonEncode({'output': result}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+      ));
+
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    } finally {
+      if (tempDir != null) {
+        try {
+          await tempDir.delete(recursive: true);
+        } catch (_) {}
+      }
+    }
+  });
+
   router.post('/pull', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoPath = _sanitizePath(data['repoPath'] as String?);
     final repoName = (data['repoName'] as String?)?.trim() ?? '';
     final username = (data['username'] as String?)?.trim() ?? '';
     final token = (data['token'] as String?)?.trim() ?? '';
     final force = data['force'] == true;
     final targetRepoName = (data['targetRepoName'] as String?)?.trim();
 
-    if (repoName.isEmpty || username.isEmpty || token.isEmpty) {
+    final pathArg = repoPath.isNotEmpty ? repoPath : repoName;
+
+    if (pathArg.isEmpty || username.isEmpty || token.isEmpty) {
       return _cors(Response(400,
-          body: jsonEncode({'error': 'repoName, username, token required'}),
+          body: jsonEncode({'error': 'repoPath (or repoName), username, token required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
-      final result = await pullFromRemote(repoName, username, token,
+      final result = await pullFromRemote(pathArg, username, token,
           force: force, targetRepoName: targetRepoName);
       print("pullResult=${result}");
       return _cors(Response.ok(jsonEncode(result),

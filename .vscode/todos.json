@@ -1,5 +1,29 @@
 [
   {
+    "id": 1769319052895,
+    "text": "修复推送时报错",
+    "completed": false,
+    "createdAt": "2026-01-25T05:30:52.895Z"
+  },
+  {
+    "id": 1769319041403,
+    "text": "让他可以只推送和拉取一个分支",
+    "completed": false,
+    "createdAt": "2026-01-25T05:30:41.403Z"
+  },
+  {
+    "id": 1769318978675,
+    "text": "AI diff summarize",
+    "completed": false,
+    "createdAt": "2026-01-25T05:29:38.675Z"
+  },
+  {
+    "id": 1769318972990,
+    "text": "blockchain",
+    "completed": false,
+    "createdAt": "2026-01-25T05:29:32.990Z"
+  },
+  {
     "id": 1767272390216,
     "text": "备份出现了bug：pathspec 'master' did not match any file(s) known to git'",
     "completed": false,
@@ -8,7 +32,7 @@
   {
     "id": 1767165020632,
     "text": "预览pdf时，对于修订的支持不太好，似乎右边有东西没显示出来",
-    "completed": false,
+    "completed": true,
     "createdAt": "2025-12-31T07:10:20.632Z"
   },
   {
@@ -44,13 +68,13 @@
   {
     "id": 1767067999172,
     "text": "增加对COM等组件的监视和恢复",
-    "completed": false,
+    "completed": true,
     "createdAt": "2025-12-30T04:13:19.173Z"
   },
   {
     "id": 1767064364739,
     "text": "更新路径之后应该立刻进入loading模式",
-    "completed": false,
+    "completed": true,
     "createdAt": "2025-12-30T03:12:44.739Z"
   },
   {
@@ -68,13 +92,13 @@
   {
     "id": 1767064129443,
     "text": "解决书名有中文就会报错的问题",
-    "completed": false,
+    "completed": true,
     "createdAt": "2025-12-30T03:08:49.443Z"
   },
   {
     "id": 1765868175417,
     "text": "或许可以加一个自动根据内容来设置标题的AI？",
-    "completed": false,
+    "completed": true,
     "createdAt": "2025-12-16T06:56:15.417Z"
   },
   {

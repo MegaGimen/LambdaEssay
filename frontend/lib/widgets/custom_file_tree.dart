@@ -1,9 +1,7 @@
 import 'dart:async';
 import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path;
 import 'package:flutter/material.dart';
-import 'package:flutter/gestures.dart';
 
 // --- Style Classes (Merged from style.dart) ---
 
@@ -261,6 +259,10 @@ class FoldableDirectoryTree extends StatefulWidget {
 
 /// Recursively builds the directory tree for a given [directory] using [stateNotifier] to manage folder states.
 class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
+  bool _isGitRepo(Directory dir) {
+    return Directory(path.join(dir.path, '.git')).existsSync();
+  }
+
   Widget _buildDirectoryTree(
     Directory directory,
     DirectoryTreeStateNotifier stateNotifier,
@@ -298,7 +300,7 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
           child: MouseRegion(
             cursor: SystemMouseCursors.click,
             child: Container(
-              color: isSelected ? Colors.blue.withOpacity(0.1) : Colors.transparent,
+              color: isSelected ? Colors.blue.withValues(alpha: 0.1) : Colors.transparent,
               padding: const EdgeInsets.symmetric(vertical: 2),
               child: Row(
                 children: [
@@ -461,8 +463,59 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
   }
 
   /// Builds the widget for a single file item.
+  Widget _buildRepoItem(Directory dir) {
+    // Treat as a file item for rendering
+    final displayName = path.basename(dir.path);
+    // Use .docx extension to get the document icon
+    final customIcon = widget.fileIconBuilder?.call('.docx') ??
+        widget.fileStyle?.fileIcon ??
+        FileStyle().fileIcon;
+
+    final bool isSelected = widget.selectedPath != null &&
+        (path.equals(widget.selectedPath!, dir.path) || widget.selectedPath == dir.path);
+
+    final bool hasUpdate = widget.updatedPaths != null &&
+        widget.updatedPaths!.contains(dir.path);
+
+    return GestureDetector(
+      onTapDown: (details) {
+        if (widget.onFileTap != null) {
+          // Pass the directory path as a File object to trigger the file tap handler
+          widget.onFileTap!(File(dir.path), details);
+        }
+      },
+      onSecondaryTapDown: (details) {
+        if (widget.onFileSecondaryTap != null) {
+          widget.onFileSecondaryTap!(File(dir.path), details);
+        }
+      },
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: Container(
+          color: isSelected ? Colors.blue.withValues(alpha: 0.1) : Colors.transparent,
+          padding: const EdgeInsets.symmetric(vertical: 2),
+          child: Row(
+            children: [
+              customIcon,
+              const SizedBox(width: 8),
+              Text(
+                displayName,
+                style: widget.fileStyle?.fileNameStyle ?? FileStyle().fileNameStyle,
+              ),
+              if (hasUpdate) ...[
+                const SizedBox(width: 8),
+                const Icon(Icons.circle, color: Colors.red, size: 8),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildFileItem(File file) {
     final extension = path.extension(file.path).toLowerCase();
+    final isDocx = extension == '.docx';
     final customIcon = widget.fileIconBuilder?.call(extension) ??
         widget.fileStyle?.fileIcon ??
         FileStyle().fileIcon;
@@ -473,50 +526,58 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
     final bool hasUpdate = widget.updatedPaths != null && 
         widget.updatedPaths!.contains(file.path);
 
+    final displayName = isDocx 
+        ? path.basename(file.path) 
+        : '${path.basename(file.path)} (不支持的文件类型)';
+
     return GestureDetector(
-      onTapDown: (details) {
-        if (widget.onFileTap != null) {
-          widget.onFileTap!(file, details);
-        }
-      },
-      onSecondaryTapDown: (details) {
-        if (widget.onFileSecondaryTap != null) {
-          widget.onFileSecondaryTap!(file, details);
-        }
-      },
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        child: Container(
-           color: isSelected ? Colors.blue.withOpacity(0.1) : Colors.transparent,
-           padding: const EdgeInsets.symmetric(vertical: 2),
-           child: Row(
-            children: [
-              customIcon,
-              const SizedBox(width: 8),
-              Text(
-                path.basename(file.path),
-                style:
-                    widget.fileStyle?.fileNameStyle ?? FileStyle().fileNameStyle,
-              ),
-              if (hasUpdate) ...[
-                 const SizedBox(width: 8),
-                 const Icon(Icons.circle, color: Colors.red, size: 8),
-              ],
-              ...widget.fileActions ?? [],
-              if (widget.enableDeleteFileOption)
-                IconButton(
-                  onPressed: () {
-                    file.deleteSync(recursive: true);
-                    setState(() {});
-                  },
-                  icon:
-                      widget.fileStyle?.iconForDeleteFile ??
-                      FileStyle().iconForDeleteFile,
+        onTapDown: (details) {
+          // if (!isDocx) return; // Removed restriction to allow selection
+          if (widget.onFileTap != null) {
+            widget.onFileTap!(file, details);
+          }
+        },
+        onSecondaryTapDown: (details) {
+          if (widget.onFileSecondaryTap != null) {
+            widget.onFileSecondaryTap!(file, details);
+          }
+        },
+        child: MouseRegion(
+          cursor: isDocx ? SystemMouseCursors.click : SystemMouseCursors.forbidden,
+          child: Container(
+             color: isSelected ? Colors.blue.withValues(alpha: 0.1) : Colors.transparent,
+             padding: const EdgeInsets.symmetric(vertical: 2),
+             child: Row(
+              children: [
+                isDocx ? customIcon : const Icon(Icons.error_outline, size: 16, color: Colors.grey),
+                const SizedBox(width: 8),
+                Text(
+                  displayName,
+                  style: (widget.fileStyle?.fileNameStyle ?? FileStyle().fileNameStyle)
+                      ?.copyWith(
+                          color: isDocx ? null : Colors.grey,
+                          fontStyle: isDocx ? null : FontStyle.italic,
+                      ),
                 ),
-            ],
+                if (hasUpdate) ...[
+                   const SizedBox(width: 8),
+                   const Icon(Icons.circle, color: Colors.red, size: 8),
+                ],
+                ...widget.fileActions ?? [],
+                if (widget.enableDeleteFileOption)
+                  IconButton(
+                    onPressed: () {
+                      file.deleteSync(recursive: true);
+                      setState(() {});
+                    },
+                    icon:
+                        widget.fileStyle?.iconForDeleteFile ??
+                        FileStyle().iconForDeleteFile,
+                  ),
+              ],
+            ),
           ),
         ),
-      ),
     );
   }
 
