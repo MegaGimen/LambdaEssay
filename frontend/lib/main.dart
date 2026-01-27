@@ -4248,6 +4248,7 @@ class _GraphViewState extends State<_GraphView>
   final Set<String> _requestedTxtPreviews = {};
 
   Future<void> _startPdfPolling() async {
+    return;//暂时关闭
     if (widget.data.commits.isEmpty) return;
 
     _bgPollTimer?.cancel();
