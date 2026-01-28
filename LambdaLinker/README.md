@@ -18,6 +18,14 @@ Install:
 pip install -r requirements.txt
 ```
 
+If you use uv:
+```
+uv venv --python=3.12 .venv
+source .venv/bin/activate   # Linux/macOS
+# or .venv\\Scripts\\activate on Windows
+uv pip install -r requirements.txt
+```
+
 Create .env from .env.example and fill:
 ```
 LLM_API_KEY=YOUR_TOKEN
