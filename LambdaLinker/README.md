@@ -30,6 +30,11 @@ Run:
 python run_test.py
 ```
 
+Minimal flow (3 steps):
+1) Install dependencies
+2) Copy `.env.example` to `.env` in `LambdaLinker/` and fill in your token
+3) Run `python run_test.py`
+
 ## MarkItDown MCP install (optional)
 If you want to use the MarkItDown MCP server:
 ```
@@ -52,6 +57,8 @@ If you use MCP to parse documents or describe images:
 MCP_WORD_CONFIG=/path/to/mcp-config.json
 MCP_WORD_SERVER_NAME=markitdown
 ```
+
+Note: place `.env` and `mcp-config.json` under `LambdaLinker/` (same folder as the code).
 
 mcp-config.json example:
 ```
