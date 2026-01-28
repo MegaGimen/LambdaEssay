@@ -485,31 +485,10 @@ Future<ComparisonResult> compareReposWithLocal(
 }
 
 ComparisonResult computeComparison(GraphResponse a, GraphResponse b, String summary, Map<String, dynamic> details) {
-  // 1. Collect all commits
-  final allCommits = <CommitNode>{};
-  final byId = <String, CommitNode>{};
-
-  for (final c in a.commits) {
-    allCommits.add(c);
-    byId[c.id] = c;
-  }
-  for (final c in b.commits) {
-    if (!byId.containsKey(c.id)) {
-      allCommits.add(c);
-      byId[c.id] = c;
-    }
-  }
-
-  // 2. Sort by date desc
-  final sorted = allCommits.toList()
-    ..sort((x, y) {
-      return y.date.compareTo(x.date);
-    });
-
-  // 3. Assign rows
+  final ordered = _buildUnifiedOrder(a, b);
   final mapping = <String, int>{};
-  for (var i = 0; i < sorted.length; i++) {
-    mapping[sorted[i].id] = i;
+  for (var i = 0; i < ordered.length; i++) {
+    mapping[ordered[i].id] = i;
   }
 
   return ComparisonResult(
@@ -519,4 +498,69 @@ ComparisonResult computeComparison(GraphResponse a, GraphResponse b, String summ
     summary: summary,
     details: details,
   );
+}
+
+List<CommitNode> _buildUnifiedOrder(GraphResponse a, GraphResponse b) {
+  final byId = <String, CommitNode>{};
+  for (final c in a.commits) {
+    byId[c.id] = c;
+  }
+  for (final c in b.commits) {
+    byId.putIfAbsent(c.id, () => c);
+  }
+
+  final adj = <String, Set<String>>{};
+  final indeg = <String, int>{};
+  for (final id in byId.keys) {
+    adj[id] = <String>{};
+    indeg[id] = 0;
+  }
+
+  void addEdge(String from, String to) {
+    if (from == to) return;
+    final set = adj[from]!;
+    if (set.add(to)) {
+      indeg[to] = (indeg[to] ?? 0) + 1;
+    }
+  }
+
+  for (var i = 0; i + 1 < a.commits.length; i++) {
+    addEdge(a.commits[i].id, a.commits[i + 1].id);
+  }
+  for (var i = 0; i + 1 < b.commits.length; i++) {
+    addEdge(b.commits[i].id, b.commits[i + 1].id);
+  }
+
+  int compareId(String x, String y) {
+    final dx = byId[x]?.date ?? '';
+    final dy = byId[y]?.date ?? '';
+    final d = dy.compareTo(dx);
+    if (d != 0) return d;
+    return y.compareTo(x);
+  }
+
+  final remaining = <String>{...byId.keys};
+  final zero = remaining.where((id) => indeg[id] == 0).toList()..sort(compareId);
+  final ordered = <CommitNode>[];
+
+  while (remaining.isNotEmpty) {
+    if (zero.isEmpty) {
+      final rest = remaining.toList()..sort(compareId);
+      zero.add(rest.first);
+    }
+    final id = zero.removeAt(0);
+    if (!remaining.remove(id)) {
+      continue;
+    }
+    ordered.add(byId[id]!);
+    for (final next in adj[id]!) {
+      indeg[next] = (indeg[next] ?? 0) - 1;
+      if (indeg[next] == 0) {
+        zero.add(next);
+      }
+    }
+    zero.sort(compareId);
+  }
+
+  return ordered;
 }

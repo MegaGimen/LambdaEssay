@@ -486,6 +486,7 @@ class _BackupPageState extends State<BackupPage> {
                                                     ghostNodes:
                                                         comparison.ghostsA,
                                                     showCurrentHead: false,
+                                                    totalRows: comparison.mapping.length,
                                                   ),
                                                 ),
                                               ),
@@ -520,6 +521,7 @@ class _BackupPageState extends State<BackupPage> {
                                                     ghostNodes:
                                                         comparison.ghostsB,
                                                     showCurrentHead: false,
+                                                    totalRows: comparison.mapping.length,
                                                   ),
                                                 ),
                                               ),
@@ -623,6 +625,7 @@ class _CompareResultPageState extends State<CompareResultPage> {
                             customNodeColors: widget.customNodeColors,
                             ghostNodes: widget.ghostsA,
                             showCurrentHead: false,
+                            totalRows: widget.rowMapping.length,
                           ),
                         ),
                       ],
@@ -645,6 +648,7 @@ class _CompareResultPageState extends State<CompareResultPage> {
                             customNodeColors: widget.customNodeColors,
                             ghostNodes: widget.ghostsB,
                             showCurrentHead: false,
+                            totalRows: widget.rowMapping.length,
                           ),
                         ),
                       ],
