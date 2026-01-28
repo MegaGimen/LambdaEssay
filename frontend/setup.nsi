@@ -70,6 +70,33 @@ Section "VC++ 运行库" SecVCRedist
     ${EndIf}
 SectionEnd
 
+; Git 检测与安装
+Section "Git" SecGit
+    SectionIn RO
+    
+    ; 初始化检测结果变量
+    StrCpy $0 0
+    
+    ; 检测 Git 是否安装 (检查卸载注册表项)
+    ReadRegStr $0 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Git_is1" "InstallLocation"
+    
+    ${If} $0 == ""
+        DetailPrint "未检测到 Git，正在安装..."
+        
+        ; 释放 Git 安装包
+        SetOutPath "$TEMP"
+        File "Git-2.52.0-64-bit.exe"
+        
+        DetailPrint "正在安装 Git..."
+        ; 静默安装参数
+        ExecWait '"$TEMP\Git-2.52.0-64-bit.exe" /VERYSILENT /NORESTART /SP- /SUPPRESSMSGBOXES'
+        Delete "$TEMP\Git-2.52.0-64-bit.exe"
+        DetailPrint "Git 安装完成"
+    ${Else}
+        DetailPrint "已检测到 Git。"
+    ${EndIf}
+SectionEnd
+
 ; 默认安装选项
 Section "主程序" SecMain
     SetOutPath "$INSTDIR"
