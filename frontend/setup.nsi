@@ -1,5 +1,6 @@
 ﻿; NSIS 安装脚本
 !include "MUI2.nsh"
+!include "LogicLib.nsh"
 Icon "windows/runner/resources/app_icon.ico"
 UninstallIcon  "windows/runner/resources/app_icon.ico"
 
@@ -38,6 +39,67 @@ RequestExecutionLevel admin
 
 ; 设置语言
 !insertmacro MUI_LANGUAGE "SimpChinese"
+
+; VC++ 运行库检测与安装
+Section "VC++ 运行库" SecVCRedist
+    SectionIn RO
+    
+    ; 初始化检测结果变量
+    StrCpy $0 0
+    
+    ; 检测 VC++ 2015-2022 x64 运行库
+    ReadRegDWORD $0 HKLM "SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64" "Installed"
+    
+    ${If} $0 != 1
+        DetailPrint "未检测到 VC++ 运行库，准备下载..."
+        
+        ; 下载 VC_redist.x64.exe
+        NSISdl::download "https://download.visualstudio.microsoft.com/download/pr/6f02464a-5e9b-486d-a506-c99a17db9a83/8995548DFFFCDE7C49987029C764355612BA6850EE09A7B6F0FDDC85BDC5C280/VC_redist.x64.exe" "$TEMP\VC_redist.x64.exe"
+        
+        Pop $0
+        ${If} $0 == "success"
+            DetailPrint "下载成功，正在安装 VC++ 运行库..."
+            ExecWait '"$TEMP\VC_redist.x64.exe" /install /quiet /norestart'
+            Delete "$TEMP\VC_redist.x64.exe"
+            DetailPrint "VC++ 运行库安装完成"
+        ${Else}
+            MessageBox MB_OK|MB_ICONEXCLAMATION "VC++ 运行库下载失败: $0。程序可能无法正常运行，请手动安装 VC++ Redistributable。"
+        ${EndIf}
+    ${Else}
+        DetailPrint "已检测到 VC++ 运行库。"
+    ${EndIf}
+SectionEnd
+
+; Git 检测与安装
+Section "Git" SecGit
+    SectionIn RO
+    
+    ; 初始化检测结果变量
+    StrCpy $0 0
+    
+    ; 检测 Git 是否安装 (检查卸载注册表项)
+    ReadRegStr $0 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Git_is1" "InstallLocation"
+    
+    ${If} $0 == ""
+        DetailPrint "未检测到 Git，准备下载..."
+        
+        ; 下载 Git 安装包
+        NSISdl::download "https://github.com/git-for-windows/git/releases/download/v2.52.0.windows.1/Git-2.52.0-64-bit.exe" "$TEMP\Git-Installer.exe"
+        
+        Pop $0
+        ${If} $0 == "success"
+            DetailPrint "下载成功，正在安装 Git..."
+            ; 静默安装参数
+            ExecWait '"$TEMP\Git-Installer.exe" /VERYSILENT /NORESTART /SP- /SUPPRESSMSGBOXES'
+            Delete "$TEMP\Git-Installer.exe"
+            DetailPrint "Git 安装完成"
+        ${Else}
+            MessageBox MB_OK|MB_ICONEXCLAMATION "Git 下载失败: $0。请手动安装 Git。"
+        ${EndIf}
+    ${Else}
+        DetailPrint "已检测到 Git。"
+    ${EndIf}
+SectionEnd
 
 ; 默认安装选项
 Section "主程序" SecMain
