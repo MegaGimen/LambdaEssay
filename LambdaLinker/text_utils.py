@@ -35,7 +35,7 @@ def extract_text_from_tool_result(result: object) -> str:
     if isinstance(result, str):
         return result
     if isinstance(result, dict):
-        for key in ("text", "content", "result", "data"):
+        for key in ("text", "content", "result", "data", "markdown"):
             value = result.get(key)
             if isinstance(value, str):
                 return value

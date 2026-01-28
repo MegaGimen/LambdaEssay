@@ -11,7 +11,11 @@ try:
     from .rendering import render_document
     from .stats import DiffStats, compute_basic_stats
     from .text_utils import format_bullet_points
-    from .word_reader import read_docx_paragraphs
+    from .word_reader import (
+        format_comments_for_prompt,
+        read_docx_comments,
+        read_docx_paragraphs,
+    )
 except ImportError:  # pragma: no cover - fallback for direct execution
     from agent import LLMInvoker, default_agent_from_env
     from output_parser import parse_json_output
@@ -19,7 +23,7 @@ except ImportError:  # pragma: no cover - fallback for direct execution
     from rendering import render_document
     from stats import DiffStats, compute_basic_stats
     from text_utils import format_bullet_points
-    from word_reader import read_docx_paragraphs
+    from word_reader import format_comments_for_prompt, read_docx_comments, read_docx_paragraphs
 
 
 def compare_word_docs(
@@ -37,6 +41,7 @@ def compare_word_docs(
     mcp_server: Optional[str] = None,
     mcp_config_path: Optional[str] = None,
     mcp_server_name: Optional[str] = None,
+    include_comments: bool = False,
 ) -> dict:
     """读取两个 .docx 文件，由 LLM 进行语义级别对比。
 
@@ -87,6 +92,15 @@ def compare_word_docs(
         max_total_chars=max_doc_chars,
         doc_label="B",
     )
+    if not include_comments and os.getenv("INCLUDE_COMMENTS", "").strip().lower() in {"1", "true", "yes"}:
+        include_comments = True
+    if include_comments:
+        comments_a = read_docx_comments(doc_a_path) if doc_a_path.lower().endswith(".docx") else []
+        comments_b = read_docx_comments(doc_b_path) if doc_b_path.lower().endswith(".docx") else []
+        if comments_a:
+            doc_a_text += "\n\n[Comments]\n" + format_comments_for_prompt(comments_a)
+        if comments_b:
+            doc_b_text += "\n\n[Comments]\n" + format_comments_for_prompt(comments_b)
 
     system_prompt, user_prompt = build_prompts(
         doc_a_name=os.path.basename(doc_a_path),
@@ -96,6 +110,11 @@ def compare_word_docs(
         stats=asdict(stats),
         language=language,
     )
+    if os.getenv("PRINT_PROMPTS", "").strip() in {"1", "true", "yes"}:
+        print("=== SYSTEM PROMPT ===")
+        print(system_prompt)
+        print("\n=== USER PROMPT ===")
+        print(user_prompt)
 
     raw_output = call_llm(llm_client, system_prompt, user_prompt)
     parsed = parse_json_output(raw_output)
@@ -134,4 +153,3 @@ def call_llm(
     if hasattr(llm_client, "invoke"):
         return llm_client.invoke(system_prompt, user_prompt)
     raise TypeError("llm_client 必须是可调用对象或提供 invoke() 方法。")
-

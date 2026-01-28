@@ -13,6 +13,8 @@ except Exception as exc:  # pragma: no cover - optional dependency
 
 
 def make_docx(path: str, paragraphs: list[str]) -> None:
+    if os.path.exists(path):
+        return
     doc = Document()
     for paragraph in paragraphs:
         doc.add_paragraph(paragraph)
@@ -69,8 +71,8 @@ def main() -> None:
 
     use_mcp = os.getenv("USE_MCP", "").strip() != "0"
     result = ll.compare_word_docs(
-        "a.docx",
-        "b.docx",
+        os.path.join("LambdaEssay", "LambdaLinker", "a.docx"),
+        os.path.join("LambdaEssay", "LambdaLinker", "b.docx"),
         use_mcp=use_mcp,
         **(mcp_args if use_mcp else {}),
     )
