@@ -30,6 +30,22 @@ Run:
 python run_test.py
 ```
 
+## MarkItDown MCP install (optional)
+If you want to use the MarkItDown MCP server:
+```
+pip install 'markitdown[all]'
+```
+
+Or install only common formats:
+```
+pip install 'markitdown[pdf,docx,pptx]'
+```
+
+Start the MCP server:
+```
+python markitdown_mcp_server.py
+```
+
 ## MCP (optional)
 If you use MCP to parse documents or describe images:
 ```
