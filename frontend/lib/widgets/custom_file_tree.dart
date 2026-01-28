@@ -373,6 +373,36 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
               children: [
                 ...entries.map((entry) {
                   if (entry is Directory) {
+                    // Check if this directory is a docx repo (Solo Project)
+                    // Logic: Has .git AND (Has content.docx OR Has ONLY .git)
+                    bool isDocxRepo = false;
+                    if (_isGitRepo(entry)) {
+                      final contentDocx =
+                          File(path.join(entry.path, 'content.docx'));
+                      if (contentDocx.existsSync()) {
+                        isDocxRepo = true;
+                      } else {
+                        // Check if only .git exists
+                        try {
+                          final children = entry.listSync();
+                          bool hasOther = false;
+                          for (final child in children) {
+                            if (path.basename(child.path) != '.git') {
+                              hasOther = true;
+                              break;
+                            }
+                          }
+                          if (!hasOther) {
+                            isDocxRepo = true;
+                          }
+                        } catch (_) {}
+                      }
+                    }
+
+                    if (isDocxRepo) {
+                      return _buildRepoItem(entry);
+                    }
+
                     return _buildDirectoryTree(
                       Directory(entry.path),
                       stateNotifier,
