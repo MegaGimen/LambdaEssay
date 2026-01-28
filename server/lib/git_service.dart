@@ -651,7 +651,26 @@ Future<bool> _isFolderProject(String repoPath) async {
   // Solo Project: Has .git AND content.docx
 
   final contentDocx = File(p.join(repoPath, 'content.docx'));
-  return !contentDocx.existsSync();
+  if (contentDocx.existsSync()) {
+    return false;
+  }
+
+  // If the directory contains ONLY .git, treat it as a docx project (Solo Project)
+  // This allows empty repositories to be treated as single-file projects initially
+  final entities = Directory(repoPath).listSync();
+  bool hasOtherFiles = false;
+  for (final entity in entities) {
+    if (p.basename(entity.path) != '.git') {
+      hasOtherFiles = true;
+      break;
+    }
+  }
+
+  if (!hasOtherFiles) {
+    return false;
+  }
+
+  return true;
 }
 
 
