@@ -4028,7 +4028,15 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                       Expanded(
                         child: data == null
                             ? const Center(child: Text('输入路径并点击加载'))
-                            : (showRemotePreview && remoteData != null)
+                            : isFolderProject
+                                ? const Center(
+                                    child: Text(
+                                      '文件夹模式下，请在左侧选择文件以查看其版本历史',
+                                      style: TextStyle(
+                                          color: Colors.grey, fontSize: 16),
+                                    ),
+                                  )
+                                : (showRemotePreview && remoteData != null)
                                 ? Row(
                                     children: [
                                       Expanded(

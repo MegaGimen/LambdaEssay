@@ -530,6 +530,9 @@ Future<List<List<String>>> _collectAllEdges(
 Future<GraphResponse> getGraph(String repoPath,
     {int? limit, bool includeLocal = true, List<String>? remoteNames}) async {
   return _withRepoLock(repoPath, () async {
+    if (await _isFolderProject(repoPath)) {
+      return GraphResponse(commits: [], branches: [], chains: {});
+    }
     return _getGraphUnlocked(repoPath,
         limit: limit, includeLocal: includeLocal, remoteNames: remoteNames);
   });
