@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import asdict
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 try:
-    from .agent import LLMInvoker, default_agent_from_env
+    from .agent import LLMInvoker, UserPrompt, default_agent_from_env, default_env_path, load_env_file
     from .output_parser import parse_json_output
     from .prompts import build_prompts
     from .rendering import render_document
@@ -17,7 +18,7 @@ try:
         read_docx_paragraphs,
     )
 except ImportError:  # pragma: no cover - fallback for direct execution
-    from agent import LLMInvoker, default_agent_from_env
+    from agent import LLMInvoker, UserPrompt, default_agent_from_env, default_env_path, load_env_file
     from output_parser import parse_json_output
     from prompts import build_prompts
     from rendering import render_document
@@ -29,7 +30,7 @@ except ImportError:  # pragma: no cover - fallback for direct execution
 def compare_word_docs(
     doc_a_path: str,
     doc_b_path: str,
-    llm_client: Optional[LLMInvoker | Callable[[str, str], str]] = None,
+    llm_client: Optional[LLMInvoker | Callable[[str, UserPrompt], str]] = None,
     *,
     max_diff_blocks: int = 80,
     max_block_paragraphs: int = 5,
@@ -59,6 +60,7 @@ def compare_word_docs(
     mcp_config_path, mcp_server_name
         指定 MCP 配置文件路径或服务名（默认 word-document-server）。
     """
+    load_env_file(default_env_path())
     paragraphs_a = read_docx_paragraphs(
         doc_a_path,
         use_mcp=use_mcp,
@@ -116,7 +118,8 @@ def compare_word_docs(
         print("\n=== USER PROMPT ===")
         print(user_prompt)
 
-    raw_output = call_llm(llm_client, system_prompt, user_prompt)
+    user_content = build_user_content_with_images(user_prompt)
+    raw_output = call_llm(llm_client, system_prompt, user_content)
     parsed = parse_json_output(raw_output)
     if parsed is None:
         result = {
@@ -142,9 +145,9 @@ def compare_word_docs(
 
 
 def call_llm(
-    llm_client: Optional[LLMInvoker | Callable[[str, str], str]],
+    llm_client: Optional[LLMInvoker | Callable[[str, UserPrompt], str]],
     system_prompt: str,
-    user_prompt: str,
+    user_prompt: UserPrompt,
 ) -> str:
     if llm_client is None:
         llm_client = default_agent_from_env()
@@ -153,3 +156,51 @@ def call_llm(
     if hasattr(llm_client, "invoke"):
         return llm_client.invoke(system_prompt, user_prompt)
     raise TypeError("llm_client 必须是可调用对象或提供 invoke() 方法。")
+
+
+_IMAGE_MD_RE = re.compile(r"!\[([^\]]*)\]\((data:image/[^)]+)\)")
+_IMAGE_HTML_RE = re.compile(r"<img[^>]*src=['\"](data:image/[^'\"]+)['\"][^>]*>", re.IGNORECASE)
+_ALT_HTML_RE = re.compile(r"alt=['\"]([^'\"]*)['\"]", re.IGNORECASE)
+
+
+def build_user_content_with_images(user_prompt: str) -> UserPrompt:
+    matches: list[tuple[int, int, str, str]] = []
+    for match in _IMAGE_MD_RE.finditer(user_prompt):
+        matches.append((match.start(), match.end(), match.group(1).strip(), match.group(2)))
+    for match in _IMAGE_HTML_RE.finditer(user_prompt):
+        alt = ""
+        alt_match = _ALT_HTML_RE.search(match.group(0))
+        if alt_match:
+            alt = alt_match.group(1).strip()
+        matches.append((match.start(), match.end(), alt, match.group(1)))
+    if not matches:
+        return user_prompt
+    matches.sort(key=lambda item: item[0])
+    content: list[dict[str, Any]] = []
+    cursor = 0
+    for start, end, alt, data_uri in matches:
+        if start < cursor:
+            continue
+        if start > cursor:
+            content.append({"type": "text", "text": user_prompt[cursor:start]})
+        label = f"[Image: {alt}]" if alt else "[Image]"
+        content.append({"type": "text", "text": label})
+        content.append({"type": "image_url", "image_url": {"url": data_uri}})
+        cursor = end
+    if cursor < len(user_prompt):
+        content.append({"type": "text", "text": user_prompt[cursor:]})
+    return merge_text_content(content)
+
+
+def merge_text_content(content: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    for item in content:
+        if (
+            merged
+            and merged[-1].get("type") == "text"
+            and item.get("type") == "text"
+        ):
+            merged[-1]["text"] = (merged[-1].get("text") or "") + (item.get("text") or "")
+            continue
+        merged.append(item)
+    return merged

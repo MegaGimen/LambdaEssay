@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Optional, Protocol
+from typing import Any, Optional, Protocol
 from client import get_openai_client
 
 
+UserPrompt = str | list[dict[str, Any]]
+
+
 class LLMInvoker(Protocol):
-    def invoke(self, system_prompt: str, user_prompt: str) -> str:  # pragma: no cover - protocol
+    def invoke(self, system_prompt: str, user_prompt: UserPrompt) -> str:  # pragma: no cover - protocol
         ...
 
 
@@ -53,7 +56,7 @@ class SemanticDiffAgent:
             max_retries=config.max_retries,
         )
 
-    def invoke(self, system_prompt: str, user_prompt: str) -> str:
+    def invoke(self, system_prompt: str, user_prompt: UserPrompt) -> str:
         params = {
             "model": self.config.model,
             "messages": [
@@ -89,7 +92,7 @@ def load_env_file(path: str) -> None:
     if not os.path.exists(path):
         return
     try:
-        with open(path, "r", encoding="utf-8") as handle:
+        with open(path, "r", encoding="utf-8-sig") as handle:
             for raw_line in handle:
                 line = raw_line.strip()
                 if not line or line.startswith("#"):

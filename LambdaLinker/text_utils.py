@@ -62,6 +62,11 @@ def extract_text_from_content(content: object) -> Optional[str]:
             if isinstance(item, dict):
                 if isinstance(item.get("text"), str):
                     parts.append(item["text"])
+                continue
+            if hasattr(item, "text"):
+                item_text = getattr(item, "text")
+                if isinstance(item_text, str):
+                    parts.append(item_text)
         if parts:
             return "\n".join(parts)
     return None

@@ -23,16 +23,20 @@ def read_docx_paragraphs(
     mcp_server: Optional[str] = None,
     mcp_config_path: Optional[str] = None,
     mcp_server_name: Optional[str] = None,
+    include_images: Optional[bool] = None,
 ) -> list[str]:
     if not os.path.exists(path):
         raise FileNotFoundError(f"File not found: {path}")
 
     if use_mcp:
+        if include_images is None:
+            include_images = os.getenv("INCLUDE_IMAGES", "").strip().lower() in {"1", "true", "yes"}
         text = get_document_text_via_mcp(
             path,
             server=mcp_server,
             config_path=mcp_config_path,
             server_name=mcp_server_name,
+            include_images=include_images,
         )
         return split_text_to_paragraphs(text)
 
