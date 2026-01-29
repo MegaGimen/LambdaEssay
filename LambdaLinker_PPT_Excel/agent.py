@@ -65,7 +65,7 @@ class SemanticDiffAgent:
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
-            ],
+            ]
         )
         return (resp.choices[0].message.content or "").strip()
 
