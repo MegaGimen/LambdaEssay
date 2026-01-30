@@ -1,6 +1,18 @@
 from __future__ import annotations
 
+import re
 from typing import Optional
+
+
+def count_images_in_markdown(text: str) -> int:
+    """统计 markdown 中的图片数量（包括 base64 图片和普通链接）"""
+    if not text:
+        return 0
+    # 匹配 ![alt](url) 格式
+    md_images = len(re.findall(r'!\[.*?\]\([^)]+\)', text))
+    # 匹配 <img src="..."> 格式
+    html_images = len(re.findall(r'<img[^>]*src=[^>]*>', text, re.IGNORECASE))
+    return md_images + html_images
 
 
 def normalize_text(text: str) -> str:
@@ -59,14 +71,16 @@ def extract_text_from_content(content: object) -> Optional[str]:
             if isinstance(item, str):
                 parts.append(item)
                 continue
+            # 处理字典形式的 TextContent
             if isinstance(item, dict):
                 if isinstance(item.get("text"), str):
                     parts.append(item["text"])
                 continue
+            # 处理对象形式的 TextContent (有 type 和 text 属性)
             if hasattr(item, "text"):
-                item_text = getattr(item, "text")
-                if isinstance(item_text, str):
-                    parts.append(item_text)
+                text = getattr(item, "text")
+                if isinstance(text, str):
+                    parts.append(text)
         if parts:
             return "\n".join(parts)
     return None

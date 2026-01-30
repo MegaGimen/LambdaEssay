@@ -3,7 +3,7 @@
     "markitdown": {
       "command": "D:/helloagent/.venv/Scripts/python.exe",
       "args": [
-        "D:/helloagent/LambdaEssay/LambdaLinker/markitdown_mcp_server.py"
+        "D:/helloagent/LambdaEssay-new/LambdaLinker/mcp_modules/markitdown_mcp_server.py"
       ]
     }
   }

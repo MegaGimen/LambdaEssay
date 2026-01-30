@@ -1,16 +1,33 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import os
+import re
 import zipfile
 import xml.etree.ElementTree as ET
 from typing import Optional
 
-try:
-    from .mcp_word import get_document_text_via_mcp
-    from .text_utils import normalize_text, split_text_to_paragraphs, truncate_text
-except ImportError:  # pragma: no cover - fallback for direct execution
-    from mcp_word import get_document_text_via_mcp
-    from text_utils import normalize_text, split_text_to_paragraphs, truncate_text
+from .text_utils import normalize_text, split_text_to_paragraphs, truncate_text
+from openai import OpenAI
+
+# 动态导入 MCP 相关模块
+def _get_mcp_word():
+    try:
+        from mcp_modules.mcp_word import get_document_text_via_mcp
+        return get_document_text_via_mcp
+    except ImportError:
+        from mcp_word import get_document_text_via_mcp
+        return get_document_text_via_mcp
+
+def _get_replace_images():
+    try:
+        from mcp_modules.markitdown_mcp_server import _replace_images_with_descriptions
+        return _replace_images_with_descriptions
+    except ImportError:
+        from markitdown_mcp_server import _replace_images_with_descriptions
+        return _replace_images_with_descriptions
+
+get_document_text_via_mcp = _get_mcp_word()
+_replace_images_with_descriptions = _get_replace_images()
 
 DOCX_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 NSMAP = {"w": DOCX_NS}
@@ -38,6 +55,25 @@ def read_docx_paragraphs(
             server_name=mcp_server_name,
             include_images=include_images,
         )
+
+        # 如果启用了图片处理且配置了 LLM，后处理图片描述
+        if include_images and 'data:image/' in text:
+            llm_api_key = os.getenv("MARKITDOWN_LLM_API_KEY") or os.getenv("LLM_API_KEY")
+            llm_base_url = os.getenv("MARKITDOWN_LLM_BASE_URL") or os.getenv("LLM_BASE_URL")
+            llm_model = os.getenv("MARKITDOWN_LLM_MODEL")
+
+            if llm_api_key and llm_model:
+                try:
+                    client_kwargs = {"api_key": llm_api_key}
+                    if llm_base_url:
+                        client_kwargs["base_url"] = llm_base_url
+                    llm_client = OpenAI(**client_kwargs)
+                    # 直接处理图片描述，绕过 MCP 缓存
+                    text = _replace_images_with_descriptions(text, path, llm_client, llm_model, "请描述这张图片的内容，简洁明了")
+                except Exception as e:
+                    # 如果处理失败，使用原始文本
+                    pass
+
         return split_text_to_paragraphs(text)
 
     if not path.lower().endswith(".docx"):

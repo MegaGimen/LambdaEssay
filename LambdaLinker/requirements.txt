@@ -1,6 +1,18 @@
+# LLM API
 openai
+
+# MCP (Model Context Protocol)
+mcp
 fastmcp
+
+# Office 文档处理
 python-docx
+python-pptx
+markitdown
+
+# 文档转换工具
 msoffcrypto-tool
 docx2pdf
+
+# 环境变量管理
 python-dotenv
