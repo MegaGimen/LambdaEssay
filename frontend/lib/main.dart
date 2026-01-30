@@ -4252,74 +4252,6 @@ class _GraphViewState extends State<_GraphView>
   bool _legendPanelCollapsed = false;
 
   Timer? _bgPollTimer;
-  final Set<String> _requestedPreviews = {};
-  final Set<String> _requestedTxtPreviews = {};
-
-  Future<void> _startPdfPolling() async {
-    if (widget.data.commits.isEmpty) return;
-
-    _bgPollTimer?.cancel();
-    _bgPollTimer = Timer.periodic(const Duration(seconds: 3), (timer) async {
-      if (!mounted) {
-        return;
-      }
-      if (widget.data.commits.isEmpty) return;
-
-      await ensureAppDataCacheDir();
-
-      final missingPdfIds = <String>[];
-      final missingTxtIds = <String>[];
-
-      for (final commit in widget.data.commits) {
-        // Check PDF
-        final pdfPath = cachePdfPathForSha(commit.id);
-        final f = File(pdfPath);
-        if (!f.existsSync()) {
-          if (!_requestedPreviews.contains(commit.id)) {
-            missingPdfIds.add(commit.id);
-          }
-        } else {
-          _requestedPreviews.remove(commit.id);
-        }
-        
-        // Check TXT
-        final txtPath = cacheTxtPathForSha(commit.id);
-        final fTxt = File(txtPath);
-        bool txtExists = fTxt.existsSync();
-        if (txtExists && fTxt.lengthSync() == 0) {
-           txtExists = false;
-        }
-        
-        if (!txtExists) {
-           if (!_requestedTxtPreviews.contains(commit.id)) {
-              missingTxtIds.add(commit.id);
-           }
-        } else {
-           _requestedTxtPreviews.remove(commit.id);
-        }
-      }
-
-      if (missingPdfIds.isNotEmpty) {
-        _requestedPreviews.addAll(missingPdfIds);
-        for (final id in missingPdfIds) {
-           _requestPreviewCache(id);
-        }
-      }
-      
-      if (missingTxtIds.isNotEmpty) {
-         _requestedTxtPreviews.addAll(missingTxtIds);
-         for (final id in missingTxtIds) {
-             _requestTxtSummary(id).then((success) {
-                 if (!success && mounted) {
-                    setState(() {
-                       _requestedTxtPreviews.remove(id);
-                    });
-                 }
-             });
-         }
-      }
-    });
-  }
 
   Offset _clampPanelOffset(Offset value, Size panelSize, Size parentSize) {
     final scaledW = panelSize.width * widget.uiScale;
@@ -4381,32 +4313,6 @@ class _GraphViewState extends State<_GraphView>
     } catch (_) {}
   }
 
-  Future<bool> _requestTxtSummary(String commitId) async {
-    try {
-      final repoName = widget.projectName ?? '';
-      if (repoName.isEmpty) return false;
-
-      final response = await http.post(
-        Uri.parse('http://localhost:8080/summarize_commit'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'repoName': repoName, 'commitId': commitId}),
-      );
-      
-      if (response.statusCode == 200) {
-        final body = jsonDecode(response.body);
-        final output = body['output'] as String?;
-        if (output != null && output.isNotEmpty) {
-           final txtPath = cacheTxtPathForSha(commitId);
-           await File(txtPath).writeAsString(output);
-           return true;
-        }
-      }
-    } catch (e) {
-      // print('TXT summary failed for $commitId: $e');
-    }
-    return false;
-  }
-
   Future<void> _showPdfBytesDialog(Uint8List bytes,
       {required String title}) async {
     await showDialog<void>(
@@ -4443,14 +4349,6 @@ class _GraphViewState extends State<_GraphView>
       duration: const Duration(milliseconds: 800),
     )..repeat(reverse: true);
     _loadLayoutPrefs();
-
-    // Auto start background conversion if data exists
-    if (widget.data.commits.isNotEmpty) {
-      // Delay slightly to let UI render first
-      Future.delayed(const Duration(milliseconds: 500), () {
-        if (mounted) _startPdfPolling();
-      });
-    }
   }
 
   Future<void> _loadLayoutPrefs() async {
@@ -4585,14 +4483,6 @@ class _GraphViewState extends State<_GraphView>
       _rightPanStart = null;
       _selectedNodes.clear();
       _comparing = false;
-    }
-
-    // If data changed, restart background conversion
-    if (widget.data.commits.isNotEmpty &&
-        !identical(oldWidget.data, widget.data)) {
-      Future.delayed(const Duration(milliseconds: 500), () {
-        if (mounted) _startPdfPolling();
-      });
     }
   }
 
