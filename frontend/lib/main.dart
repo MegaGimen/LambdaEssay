@@ -591,6 +591,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   final TextEditingController pathCtrl = TextEditingController();
   final TextEditingController limitCtrl = TextEditingController(text: '500');
   final TextEditingController docxPathCtrl = TextEditingController();
+  final TextEditingController packageRootCtrl = TextEditingController();
   GraphData? data;
   GraphData? remoteData; // New: Remote graph data
   bool showRemotePreview =
@@ -624,6 +625,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     pathCtrl.dispose();
     limitCtrl.dispose();
     docxPathCtrl.dispose();
+    packageRootCtrl.dispose();
     userCtrl.dispose();
     passCtrl.dispose();
     emailCtrl.dispose();
@@ -1418,7 +1420,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     if (choice == null || choice == 'cancel') return;
 
     if (choice.startsWith('preview_')) {
-      if (currentProjectName == null || _username == null || _token == null) {
+      final repoPath = pathCtrl.text.trim();
+      if (repoPath.isEmpty || _username == null || _token == null) {
         return;
       }
 
@@ -1431,7 +1434,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           context,
           MaterialPageRoute(
               builder: (_) => PullPreviewPage(
-                    repoName: currentProjectName!,
+                    repoName: repoPath,
                     username: _username!,
                     token: _token!,
                     type: type,
@@ -1460,15 +1463,16 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     setState(() => loading = true);
     try {
       final resp = await _postJson('http://localhost:8080/pull', {
-        'repoName': currentProjectName,
+        'repoName': pathCtrl.text.trim(),
         'username': _username,
         'token': _token,
         'force': true,
       });
 
       final isFresh = resp['isFresh'] == true;
-      if (currentProjectName != null) {
-        await _checkAndSetupTracking(currentProjectName!, isFresh);
+      if (currentProjectName != null && pathCtrl.text.trim().isNotEmpty) {
+        await _checkAndSetupTracking(
+            currentProjectName!, pathCtrl.text.trim(), isFresh);
       }
 
       if (mounted) {
@@ -1490,7 +1494,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     try {
       // Rebase pull
       await _postJson('http://localhost:8080/pull_rebase', {
-        'repoName': currentProjectName,
+        'repoName': pathCtrl.text.trim(),
         'username': _username,
         'token': _token,
       });
@@ -1555,7 +1559,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     setState(() => loading = true);
     try {
       await _postJson('http://localhost:8080/fork_local', {
-        'repoName': currentProjectName,
+        'repoName': pathCtrl.text.trim(),
         'newBranch': newBranch,
       });
 
@@ -1581,23 +1585,19 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     }
   }
 
-  Future<void> _checkAndSetupTracking(String repoName, bool isFresh) async {
+  Future<void> _checkAndSetupTracking(
+      String packagePath, String repoPath, bool isFresh) async {
     setState(() {
       if (isFresh) {
-        currentProjectName = repoName;
+        currentProjectName = packagePath;
       }
     });
 
     if (isFresh) {
-      // Check if folder_meta.json exists to determine if it is a folder project
-      bool isFolderProject = false;
+      bool isFolderProject = true;
       try {
-        final appData = Platform.environment['APPDATA'];
-        if (appData != null) {
-          final repoPath = p.join(appData, 'gitdocx', repoName);
-          isFolderProject =
-              File(p.join(repoPath, 'folder_meta.json')).existsSync();
-        }
+        final gitDir = Directory(p.join(repoPath, '.git'));
+        isFolderProject = !gitDir.existsSync();
       } catch (_) {}
 
       final docxCtrl = TextEditingController();
@@ -1671,7 +1671,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         if (docx.isNotEmpty) {
           try {
             await _postJson('http://localhost:8080/track/update', {
-              'name': repoName,
+              'packagePath': packagePath,
               'newDocxPath': docx,
               'opIdentical': false,
             });
@@ -1682,7 +1682,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
             if (isFolderProject) {
               // Refresh project to load sub-repos
-              await _openProject(repoName, isFolderProject: true);
+              await _openProject(packagePath, isFolderProject: true);
             }
           } catch (e) {
             if (mounted) {
@@ -1737,36 +1737,31 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         return;
       }
 
-      // Auto-Pull Sub-Repo (Folder Mode) logic
       if (isFolderProject &&
-          _folderRootPath != null &&
+          packageRootCtrl.text.isNotEmpty &&
           pathCtrl.text.isNotEmpty &&
           data != null) {
         final normalizedPath = pathCtrl.text.replaceAll(r'\', '/');
-        final normalizedRoot = _folderRootPath!.replaceAll(r'\', '/');
+        final normalizedRoot = packageRootCtrl.text.replaceAll(r'\', '/');
         if (normalizedPath.startsWith(normalizedRoot) &&
             normalizedPath != normalizedRoot) {
-          // Calculate Hash and Relative Path
-          final relPath = p.relative(pathCtrl.text, from: _folderRootPath!);
+          final relPath = p.relative(pathCtrl.text, from: packageRootCtrl.text);
           final normalizedRel = relPath.replaceAll(r'\', '/');
           final hash = md5.convert(utf8.encode(normalizedRel)).toString();
-
-          // Construct repoName as "Project/RelativePath"
-          // This helps Backend locate the repo in gitdocx
-          final subRepoName = '$currentProjectName/$normalizedRel';
-
-          print(
-              'Pulling Sub-Repo: Name=$subRepoName, Hash=$hash, Rel=$normalizedRel');
-
-          // Pass targetRepoName (Hash) so Backend pulls from the hashed remote
-          await _executePull(repoName: subRepoName, targetRepoName: hash);
+          await _executePull(
+              repoName: pathCtrl.text.trim(),
+              repoPath: pathCtrl.text.trim(),
+              targetRepoName: hash);
           return;
         }
       }
 
-      // Normal Pull for Current Project
-      await _executePull(
-          repoName: currentProjectName!, repoPath: pathCtrl.text.trim());
+      final repoPath = pathCtrl.text.trim();
+      if (repoPath.isEmpty) {
+        setState(() => error = '未选择具体追踪节点');
+        return;
+      }
+      await _executePull(repoName: repoPath, repoPath: repoPath);
       return;
     }
 
@@ -1788,8 +1783,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       if (localProjects.contains(targetRepoName)) {
         // Open it
         try {
-          final resp = await _postJson(
-              'http://localhost:8080/track/open', {'name': targetRepoName});
+          final resp = await _postJson('http://localhost:8080/track/open',
+              {'packagePath': targetRepoName});
           final repoPath = resp['repoPath'];
           final docxPath = resp['docxPath'];
           final type = resp['type'] as String? ?? 'file';
@@ -1799,6 +1794,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             currentProjectName = targetRepoName;
             pathCtrl.text = repoPath;
             docxPathCtrl.text = docxPath ?? '';
+            packageRootCtrl.text = repoPath;
             isFolderProject = type == 'folder';
             _folderRootPath = isFolderProject ? repoPath : null;
             // Clear graph/data as we are at root
@@ -1807,8 +1803,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           });
 
           if (isFolderProject) {
-            final reposResp = await _postJson(
-                'http://localhost:8080/track/repos', {'name': targetRepoName});
+          final reposResp = await _postJson('http://localhost:8080/track/repos',
+              {'packagePath': targetRepoName});
             final repos =
                 (reposResp['repos'] as List).cast<Map<String, dynamic>>();
             if (!mounted) return;
@@ -1821,7 +1817,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           }
 
           // Perform Pull for the opened project (Mode 1 logic)
-          await _executePull(repoName: currentProjectName!, repoPath: repoPath);
+          await _executePull(repoName: repoPath, repoPath: repoPath);
         } catch (e) {
           setState(() => error = '打开项目失败: $e');
         }
@@ -1897,8 +1893,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       final isFresh = resp['isFresh'] == true;
 
       // Only setup tracking if we have a repoName (project context)
-      if (repoName != null) {
-        await _checkAndSetupTracking(repoName, isFresh);
+      if (repoName != null && pathCtrl.text.trim().isNotEmpty) {
+        await _checkAndSetupTracking(repoName, pathCtrl.text.trim(), isFresh);
       }
 
       // Reload again to update graph if needed (e.g. fresh clone or new commits)
@@ -1923,7 +1919,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
     try {
       final resp = await _postJson('http://localhost:8080/track/update', {
-        'name': name,
+        'packagePath': name,
         'opIdentical': false,
       });
       if (!mounted) return;
@@ -2030,89 +2026,92 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   }
 
   Future<void> _showImportProjectDialog(Directory targetDir) async {
-    List<String> projects = [];
-    try {
-      final resp = await _getJson('$baseUrl/project/list');
-      projects = (jsonDecode(resp.body) as List).cast<String>();
-    } catch (e) {
-      setState(() => error = '无法获取项目列表: $e');
-      return;
-    }
-
-    final targetName = p.basename(targetDir.path);
-    projects.remove(targetName);
-
-    if (!mounted) return;
-
-    showDialog(
-        context: context,
-        builder: (ctx) {
-          String? selectedProject;
-          bool deleteSource = false;
-          return StatefulBuilder(builder: (ctx, setDialogState) {
-            return AlertDialog(
-              title: const Text('导入追踪项目'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
+    final sourceCtrl = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('导入文档/文件夹到追踪包'),
+        content: SizedBox(
+          width: 500,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
                 children: [
-                  DropdownButton<String>(
-                    hint: const Text('选择项目'),
-                    value: selectedProject,
-                    items: projects
-                        .map((p) => DropdownMenuItem(value: p, child: Text(p)))
-                        .toList(),
-                    onChanged: (v) => setDialogState(() => selectedProject = v),
+                  Expanded(
+                    child: TextField(
+                      controller: sourceCtrl,
+                      decoration:
+                          const InputDecoration(labelText: 'docx文件或文件夹路径'),
+                    ),
                   ),
-                  CheckboxListTile(
-                    title: const Text('删除源项目'),
-                    value: deleteSource,
-                    onChanged: (v) => setDialogState(() => deleteSource = v!),
+                  IconButton(
+                    icon: const Icon(Icons.insert_drive_file),
+                    tooltip: '选择docx文件',
+                    onPressed: () async {
+                      FilePickerResult? result =
+                          await FilePicker.platform.pickFiles(
+                        type: FileType.custom,
+                        allowedExtensions: ['docx'],
+                      );
+                      if (result != null && result.files.single.path != null) {
+                        sourceCtrl.text = result.files.single.path!;
+                      }
+                    },
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.folder_open),
+                    tooltip: '选择文件夹',
+                    onPressed: () async {
+                      String? selectedDirectory =
+                          await FilePicker.platform.getDirectoryPath();
+                      if (selectedDirectory != null) {
+                        sourceCtrl.text = selectedDirectory;
+                      }
+                    },
                   ),
                 ],
               ),
-              actions: [
-                TextButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    child: const Text('取消')),
-                ElevatedButton(
-                  onPressed: selectedProject == null
-                      ? null
-                      : () async {
-                          Navigator.pop(ctx);
-                          await _importProject(
-                              selectedProject!, targetDir.path, deleteSource);
-                        },
-                  child: const Text('导入'),
-                ),
-              ],
-            );
-          });
-        });
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消')),
+          ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('导入')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final sourcePath = sourceCtrl.text.trim();
+    if (sourcePath.isEmpty) return;
+    await _importProject(sourcePath, targetDir.path);
   }
 
-  Future<void> _importProject(
-      String sourceName, String targetPath, bool deleteSource) async {
+  Future<void> _importProject(String sourcePath, String targetPath) async {
     setState(() => loading = true);
     try {
       await _postJson('$baseUrl/project/copy', {
-        'sourceName': sourceName,
-        'targetRelPath': targetPath,
-        'deleteSource': deleteSource
+        'packagePath': currentProjectName,
+        'targetDir': targetPath,
+        'sourcePath': sourcePath
       });
 
       final reposResp = await _postJson('$baseUrl/track/repos', {
-        'name': currentProjectName!,
+        'packagePath': currentProjectName,
       });
       if (!mounted) return;
       final repos = (reposResp['repos'] as List).cast<Map<String, dynamic>>();
 
       setState(() {
         subRepos = repos;
-        // Force tree refresh if possible, currently rely on file system watcher or user action
       });
-      if (_treeNotifier.isUnfolded(targetPath, docxPathCtrl.text.trim())) {
-        _treeNotifier.toggleFolder(targetPath, docxPathCtrl.text.trim());
-        _treeNotifier.toggleFolder(targetPath, docxPathCtrl.text.trim());
+      if (_treeNotifier.isUnfolded(targetPath, packageRootCtrl.text.trim())) {
+        _treeNotifier.toggleFolder(targetPath, packageRootCtrl.text.trim());
+        _treeNotifier.toggleFolder(targetPath, packageRootCtrl.text.trim());
       }
     } catch (e) {
       if (mounted) {
@@ -2126,13 +2125,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   Future<void> _deleteSelectedProject([bool forcedelete=false]) async {
     if (_selectedFilePath == null) return;
     print(_selectedFilePath);
-    final appData = Platform.environment['APPDATA']!;
-    final trackingBase = docxPathCtrl.text.trim();
+    final trackingBase = packageRootCtrl.text.trim();
     print(trackingBase);
-    final relPath = p.relative(_selectedFilePath!, from: trackingBase);
-    final gitdocxPath =
-        p.join(appData, 'gitdocx', currentProjectName!, relPath);
-    print(gitdocxPath);
 
     // Check if it exists as directory or file
     bool exists = await Directory(_selectedFilePath!).exists();
@@ -2165,18 +2159,17 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       try {
         final parent = p.dirname(_selectedFilePath!);
         await _postJson('$baseUrl/project/delete', {
-          'gitdocxPath': gitdocxPath,
-          "trackingPath": _selectedFilePath,
-          "trackingBase": trackingBase
+          'packagePath': currentProjectName,
+          'targetPath': _selectedFilePath,
         });
         setState(() {
           _selectedFilePath = null;
         });
 
         // Refresh parent folder in tree
-        if (_treeNotifier.isUnfolded(parent, docxPathCtrl.text.trim())) {
-          _treeNotifier.toggleFolder(parent, docxPathCtrl.text.trim());
-          _treeNotifier.toggleFolder(parent, docxPathCtrl.text.trim());
+        if (_treeNotifier.isUnfolded(parent, packageRootCtrl.text.trim())) {
+          _treeNotifier.toggleFolder(parent, packageRootCtrl.text.trim());
+          _treeNotifier.toggleFolder(parent, packageRootCtrl.text.trim());
         }
       } catch (e) {
         setState(() => error = '删除失败: $e');
@@ -2366,7 +2359,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
               children: [
                 TextField(
                   controller: nameCtrl,
-                  decoration: const InputDecoration(labelText: '项目名称'),
+                  decoration: const InputDecoration(labelText: '追踪包文件路径(.tracking)'),
                 ),
                 const SizedBox(height: 8),
                 Row(
@@ -2375,18 +2368,18 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                       child: TextField(
                         controller: docxCtrl,
                         decoration: const InputDecoration(
-                          labelText: 'docx文件路径或解包文件夹',
+                          labelText: 'docx文件路径或文件夹',
                         ),
                       ),
                     ),
                     IconButton(
                       icon: const Icon(Icons.insert_drive_file),
-                      tooltip: '选择文件',
+                      tooltip: '选择docx或tracking文件',
                       onPressed: () async {
                         FilePickerResult? result =
                             await FilePicker.platform.pickFiles(
                           type: FileType.custom,
-                          allowedExtensions: ['docx'],
+                          allowedExtensions: ['docx', 'tracking'],
                         );
                         if (result != null &&
                             result.files.single.path != null) {
@@ -2425,19 +2418,15 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     );
     if (ok != true) return;
     if (!mounted) return;
-    final name = nameCtrl.text.trim();
+    final packagePath = nameCtrl.text.trim();
     final docx = docxCtrl.text.trim();
-    if (name.isEmpty) {
-      setState(() => error = '请输入项目名称');
-      return;
-    }
-    if (name == 'cache' || name == 'preview') {
-      setState(() => error = '项目名称不能为 "cache" 或 "preview" (保留名称)');
+    if (packagePath.isEmpty) {
+      setState(() => error = '请输入追踪包文件路径');
       return;
     }
     try {
       final resp = await _postJson('http://localhost:8080/track/create', {
-        'name': name,
+        'packagePath': packagePath,
         'docxPath': docx.isEmpty ? null : docx,
       });
       if (!mounted) return;
@@ -2446,14 +2435,15 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
       if (type == 'folder') {
         final reposResp = await _postJson('http://localhost:8080/track/repos', {
-          'name': name,
+          'packagePath': packagePath,
         });
         final repos = (reposResp['repos'] as List).cast<Map<String, dynamic>>();
 
         if (!mounted) return;
         setState(() {
-          currentProjectName = name;
+          currentProjectName = packagePath;
           pathCtrl.text = repoPath;
+          packageRootCtrl.text = repoPath;
           docxPathCtrl.text = docx;
           isFolderProject = true;
           subRepos = repos;
@@ -2474,14 +2464,15 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         }
       } else {
         setState(() {
-          currentProjectName = name;
+          currentProjectName = packagePath;
           pathCtrl.text = repoPath;
+          packageRootCtrl.text = repoPath;
           docxPathCtrl.text = docx;
           isFolderProject = false;
           subRepos = [];
         });
         final up = await _postJson('http://localhost:8080/track/update', {
-          'name': name,
+          'packagePath': packagePath,
           'opIdentical': false,
         });
         if (!mounted) return;
@@ -2512,65 +2503,17 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   }
 
   Future<void> _onOpenTrackProject() async {
-    setState(() => loading = true);
-    final projects = await _fetchProjectList();
-    if (!mounted) return;
-    setState(() => loading = false);
-
-    String? selected = projects.isNotEmpty ? projects.first : null;
-
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, innerSetState) => AlertDialog(
-          title: const Text('打开追踪项目'),
-          content: SizedBox(
-            width: 360,
-            child: projects.isEmpty
-                ? const Text('没有找到任何项目 (appdata/gitdocx)')
-                : DropdownButton<String>(
-                    isExpanded: true,
-                    value: selected,
-                    items: projects
-                        .map((p) => DropdownMenuItem(
-                              value: p,
-                              child: Text(p),
-                            ))
-                        .toList(),
-                    onChanged: (v) {
-                      innerSetState(() => selected = v);
-                    },
-                  ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消'),
-            ),
-            ElevatedButton(
-              onPressed: selected == null
-                  ? null
-                  : () {
-                      // 立即设置loading，防止UI延迟
-                      setState(() => loading = true);
-                      Navigator.pop(context, true);
-                    },
-              child: const Text('打开'),
-            ),
-          ],
-        ),
-      ),
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['tracking'],
     );
-    if (ok != true || selected == null) return;
-    if (!mounted) return;
-    final name = selected!;
+    if (result == null || result.files.single.path == null) return;
+    final packagePath = result.files.single.path!;
 
-    // 立即显示加载遮罩
     setState(() => loading = true);
-
     try {
       final resp = await _postJson('http://localhost:8080/track/open', {
-        'name': name,
+        'packagePath': packagePath,
       });
       if (!mounted) return;
       final repoPath = resp['repoPath'] as String;
@@ -2579,13 +2522,14 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
       if (type == 'folder') {
         final reposResp = await _postJson('http://localhost:8080/track/repos', {
-          'name': name,
+          'packagePath': packagePath,
         });
         if (!mounted) return;
         final repos = (reposResp['repos'] as List).cast<Map<String, dynamic>>();
         setState(() {
-          currentProjectName = name;
+          currentProjectName = packagePath;
           pathCtrl.text = repoPath;
+          packageRootCtrl.text = repoPath;
           docxPathCtrl.text = docxPath ?? '';
           isFolderProject = true;
           subRepos = repos;
@@ -2601,8 +2545,9 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         }
       } else {
         setState(() {
-          currentProjectName = name;
+          currentProjectName = packagePath;
           pathCtrl.text = repoPath;
+          packageRootCtrl.text = repoPath;
           docxPathCtrl.text = docxPath ?? '';
           isFolderProject = false;
           subRepos = [];
@@ -2631,7 +2576,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
     try {
       final resp = await _postJson('$baseUrl/track/find_identical', {
-        'name': currentProjectName,
+        'packagePath': currentProjectName,
       });
       if (!mounted) return;
       final commitIds = (resp['commitIds'] as List?)?.cast<String>() ?? [];
@@ -2760,7 +2705,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       try {
         final swUpdate = Stopwatch()..start();
         final resp = await _postJson('http://localhost:8080/track/update', {
-          'name': name,
+          'packagePath': name,
           'opIdentical': false,
           'repoPath': specificRepoPath,
           'docxPath': specificDocxPath,
@@ -2835,7 +2780,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
           if (docx != null && docx.isNotEmpty) {
             final up = await _postJson('http://localhost:8080/track/update', {
-              'name': name,
+              'packagePath': name,
               'newDocxPath': docx,
               'opIdentical': false,
             });
@@ -2911,7 +2856,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         Uri.parse('http://localhost:8080/prepare_merge'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'repoName': currentProjectName ?? '',
+          'repoName': pathCtrl.text.trim(),
           'targetBranch': targetBranch,
         }),
       );
@@ -2959,7 +2904,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           await http.post(
             Uri.parse('http://localhost:8080/restore_docx'),
             headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'repoName': currentProjectName ?? ''}),
+            body: jsonEncode({'repoName': pathCtrl.text.trim()}),
           );
           if (!mounted) return;
           setState(() => loading = false);
@@ -3009,7 +2954,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         Uri.parse('http://localhost:8080/complete_merge'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'repoName': currentProjectName ?? '',
+          'repoName': pathCtrl.text.trim(),
           'targetBranch': targetBranch,
         }),
       );
@@ -3114,7 +3059,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
       try {
         final up = await _postJson('http://localhost:8080/track/update', {
-          'name': name,
+          'packagePath': name,
           'newDocxPath': newPath,
           'opIdentical': false,
         });
@@ -3142,7 +3087,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     setState(() => loading = true);
     try {
       final resp = await _postJson('http://localhost:8080/track/open', {
-        'name': name,
+        'packagePath': name,
       });
       if (!mounted) return;
       final repoPath = resp['repoPath'] as String;
@@ -3151,13 +3096,14 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
       if (type == 'folder') {
         final reposResp = await _postJson('http://localhost:8080/track/repos', {
-          'name': name,
+          'packagePath': name,
         });
         if (!mounted) return;
         final repos = (reposResp['repos'] as List).cast<Map<String, dynamic>>();
         setState(() {
           currentProjectName = name;
           pathCtrl.text = repoPath;
+          packageRootCtrl.text = repoPath;
           docxPathCtrl.text = docxPath ?? '';
           _selectedFilePath = docxPath;
           this.isFolderProject = true;
@@ -3179,6 +3125,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         setState(() {
           currentProjectName = name;
           pathCtrl.text = repoPath;
+          packageRootCtrl.text = repoPath;
           docxPathCtrl.text = docxPath ?? '';
           _selectedFilePath = docxPath;
           this.isFolderProject = false;
@@ -3198,7 +3145,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     setState(() => loading = true);
     try {
       final resp = await _postJson('http://localhost:8080/track/sync_folder',
-          {'name': currentProjectName});
+          {'packagePath': currentProjectName});
       if (resp['status'] == 'ok') {
         // Reload project list/repos
         await _openProject(currentProjectName!, isFolderProject: true);
@@ -3373,7 +3320,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       }
 
       final reposResp = await _postJson('http://localhost:8080/track/repos', {
-        'name': currentProjectName!,
+        'packagePath': currentProjectName!,
       });
       if (!mounted) return;
       final repos = (reposResp['repos'] as List).cast<Map<String, dynamic>>();
@@ -3531,7 +3478,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   }
 
   Widget _buildSidebar() {
-    final rootPath = docxPathCtrl.text.trim();
+    final rootPath = packageRootCtrl.text.trim();
     bool isValid = rootPath.isNotEmpty;
     try {
       if (isValid && !Directory(rootPath).existsSync()) {
@@ -3547,7 +3494,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           border: Border(right: BorderSide(color: Colors.grey.shade300)),
           color: Colors.grey.shade50,
         ),
-        child: Center(child: Text("请先选择或创建一个包含子项目的文件夹项目\n当前路径: $rootPath")),
+        child: Center(child: Text("请先选择或创建一个追踪包\n当前路径: $rootPath")),
       );
     }
 
@@ -3711,12 +3658,12 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             ),
             body: Row(
               children: [
-                if (isFolderProject)
+                if (packageRootCtrl.text.trim().isNotEmpty)
                   SizedBox(
                     width: _sidebarWidth,
                     child: _buildSidebar(),
                   ),
-                if (isFolderProject)
+                if (packageRootCtrl.text.trim().isNotEmpty)
                   MouseRegion(
                     cursor: SystemMouseCursors.resizeColumn,
                     child: GestureDetector(
@@ -3866,7 +3813,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                                     Padding(
                                       padding: const EdgeInsets.only(bottom: 4),
                                       child: SelectableText(
-                                          '当前文件: ${p.relative(pathCtrl.text, from: docxPathCtrl.text)}'),
+                                          '当前文件: ${p.relative(pathCtrl.text, from: packageRootCtrl.text)}'),
                                     ),
                                 ],
                               ),

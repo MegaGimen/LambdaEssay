@@ -465,28 +465,24 @@ Future<void> main(List<String> args) async {
   router.post('/project/delete', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
-    var gitdocxPath = _sanitizePath(data['gitdocxPath'] as String?);
-    var trackingPath= _sanitizePath(data['trackingPath'] as String?);
-    var trackingBase = _sanitizePath(data["trackingBase"] as String?);
+    var packagePath = _sanitizePath(data['packagePath'] as String?)
+        .trim();
+    if (packagePath.isEmpty) {
+      packagePath = _sanitizePath(data['gitdocxPath'] as String?);
+    }
+    final targetPath = _sanitizePath(data['targetPath'] as String?)
+        .trim()
+        .isNotEmpty
+        ? _sanitizePath(data['targetPath'] as String?)
+        : _sanitizePath(data['trackingPath'] as String?);
 
-    if (gitdocxPath.isEmpty) {
+    if (packagePath.isEmpty) {
       return _cors(Response(400,
-          body: jsonEncode({'error': 'No gitdocxPath'}),
+          body: jsonEncode({'error': 'No packagePath'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
-    if(trackingPath.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'No trackingPath'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    if(trackingBase.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'No trackingBase'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-
     try {
-      await deleteProject(gitdocxPath,  trackingPath,  trackingBase);
+      await deleteProject(packagePath, targetPath);
       return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
         'Content-Type': 'application/json; charset=utf-8',
       }));
@@ -513,18 +509,18 @@ Future<void> main(List<String> args) async {
   router.post('/project/copy', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
-    final sourceName = _sanitizePath(data['sourceName'] as String?);
-    final targetRelPath = _sanitizePath(data['targetRelPath'] as String?);
-    final deleteSource = data['deleteSource'] == true;
+    final packagePath = _sanitizePath(data['packagePath'] as String?);
+    final targetDir = _sanitizePath(data['targetDir'] as String?);
+    final sourcePath = _sanitizePath(data['sourcePath'] as String?);
 
-    if (sourceName.isEmpty || targetRelPath.isEmpty) {
+    if (packagePath.isEmpty || targetDir.isEmpty || sourcePath.isEmpty) {
       return _cors(Response(400,
-          body: jsonEncode({'error': 'sourceName and targetRelPath required'}),
+          body: jsonEncode({'error': 'packagePath, targetDir, sourcePath required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
 
     try {
-      await copyTrackingProject(sourceName, targetRelPath, deleteSource);
+      await importTrackingSource(packagePath, targetDir, sourcePath);
       return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
         'Content-Type': 'application/json; charset=utf-8',
       }));
@@ -1088,11 +1084,13 @@ Future<void> main(List<String> args) async {
   router.post('/track/create', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
-    final name = (data['name'] as String?)?.trim() ?? '';
+    final name = (data['packagePath'] as String?)?.trim() ??
+        (data['name'] as String?)?.trim() ??
+        '';
     final docxPath = data['docxPath'] as String?;
     if (name.isEmpty) {
       return _cors(Response(400,
-          body: jsonEncode({'error': 'name required'}),
+          body: jsonEncode({'error': 'packagePath required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
@@ -1132,10 +1130,12 @@ Future<void> main(List<String> args) async {
   router.post('/track/open', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
-    final name = (data['name'] as String?)?.trim() ?? '';
+    final name = (data['packagePath'] as String?)?.trim() ??
+        (data['name'] as String?)?.trim() ??
+        '';
     if (name.isEmpty) {
       return _cors(Response(400,
-          body: jsonEncode({'error': 'name required'}),
+          body: jsonEncode({'error': 'packagePath required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
@@ -1153,10 +1153,12 @@ Future<void> main(List<String> args) async {
   router.post('/track/repos', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
-    final name = (data['name'] as String?)?.trim() ?? '';
+    final name = (data['packagePath'] as String?)?.trim() ??
+        (data['name'] as String?)?.trim() ??
+        '';
     if (name.isEmpty) {
       return _cors(Response(400,
-          body: jsonEncode({'error': 'name required'}),
+          body: jsonEncode({'error': 'packagePath required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
@@ -1174,18 +1176,23 @@ Future<void> main(List<String> args) async {
   router.post('/track/update', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
-    final name = (data['name'] as String?)?.trim() ?? '';
+    final name = (data['packagePath'] as String?)?.trim() ??
+        (data['name'] as String?)?.trim() ??
+        '';
     final opIdentical = (data['opIdentical'] as bool?) ?? false;
     final newDocxPath = data['newDocxPath'] as String?;
     final repoPath = data['repoPath'] as String?;
     final docxPath = data['docxPath'] as String?;
     if (name.isEmpty) {
       return _cors(Response(400,
-          body: jsonEncode({'error': 'name required'}),
+          body: jsonEncode({'error': 'packagePath required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
-      final resp = await updateTrackingProject(name,opIdentical, newDocxPath: newDocxPath, repoPath: repoPath, docxPath: docxPath);
+      final resp = await updateTrackingProject(name, opIdentical,
+          newDocxPath: newDocxPath,
+          repoPath: repoPath,
+          docxPath: docxPath);
       return _cors(Response.ok(jsonEncode(resp), headers: {
         'Content-Type': 'application/json; charset=utf-8',
       }));
@@ -1199,10 +1206,12 @@ Future<void> main(List<String> args) async {
   router.post('/track/sync_folder', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
-    final name = (data['name'] as String?)?.trim() ?? '';
+    final name = (data['packagePath'] as String?)?.trim() ??
+        (data['name'] as String?)?.trim() ??
+        '';
     if (name.isEmpty) {
       return _cors(Response(400,
-          body: jsonEncode({'error': 'name required'}),
+          body: jsonEncode({'error': 'packagePath required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {

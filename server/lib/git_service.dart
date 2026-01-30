@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:async';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
+import 'package:archive/archive.dart';
 import 'package:path/path.dart' as p;
 import 'models.dart';
 
@@ -114,6 +115,8 @@ final Map<String, PullPreviewResult> _previewCache = {};
 
 const String kContentDirName = 'doc_content';
 const String kRepoDocxName = 'content.docx';
+const String kTrackingExt = '.tracking';
+const String kWorkspaceMetaFile = '.tracking_workspace.json';
 
 void clearCache() {
   _graphCache.clear();
@@ -645,30 +648,17 @@ Future<GraphResponse> _getGraphUnlocked(String repoPath,
 
 Future<bool> _isFolderProject(String repoPath) async {
   final gitDir = Directory(p.join(repoPath, '.git'));
-  if (!gitDir.existsSync()) return false;
+  if (gitDir.existsSync()) return false;
 
-  // Folder Project: Has .git but NO content.docx
-  // Solo Project: Has .git AND content.docx
-
-  final contentDocx = File(p.join(repoPath, 'content.docx'));
-  if (contentDocx.existsSync()) {
-    return false;
-  }
-
-  // If the directory contains ONLY .git, treat it as a docx project (Solo Project)
-  // This allows empty repositories to be treated as single-file projects initially
-  final entities = Directory(repoPath).listSync();
-  bool hasOtherFiles = false;
-  for (final entity in entities) {
-    if (p.basename(entity.path) != '.git') {
-      hasOtherFiles = true;
-      break;
+  try {
+    final entities = Directory(repoPath).listSync();
+    for (final entity in entities) {
+      if (entity is Directory &&
+          p.basename(entity.path).toLowerCase().endsWith(kTrackingExt)) {
+        return true;
+      }
     }
-  }
-
-  if (!hasOtherFiles) {
-    return false;
-  }
+  } catch (_) {}
 
   return true;
 }
@@ -870,6 +860,12 @@ Future<void> commitChanges(
 
     // Notify parent folder project if applicable
     await _notifyParentFolderProject(repoPath);
+
+    try {
+      await _persistTrackingPackageForRepo(repoPath);
+    } catch (e) {
+      print('Persist tracking package failed: $e');
+    }
 
     clearCache();
   });
@@ -1207,6 +1203,200 @@ String _baseDir() {
   return p.join(Directory.systemTemp.path, 'gitdocx');
 }
 
+String _workspaceBaseDir() {
+  final app = Platform.environment['APPDATA'];
+  if (app != null && app.isNotEmpty) return p.join(app, 'tracking_workspace');
+  final home = Platform.environment['HOME'] ?? '';
+  if (home.isNotEmpty) return p.join(home, '.tracking_workspace');
+  return p.join(Directory.systemTemp.path, 'tracking_workspace');
+}
+
+String _packageKey(String packagePath) {
+  final norm = p.normalize(packagePath).toLowerCase();
+  return md5.convert(utf8.encode(norm)).toString();
+}
+
+String _workspaceDirForPackage(String packagePath) {
+  return p.join(_workspaceBaseDir(), _packageKey(packagePath));
+}
+
+Future<void> _writeWorkspaceMeta(String workspaceDir, String packagePath) async {
+  final f = File(p.join(workspaceDir, kWorkspaceMetaFile));
+  await f.writeAsString(jsonEncode({'packagePath': packagePath}));
+}
+
+Future<String?> _readWorkspacePackagePath(String workspaceDir) async {
+  final f = File(p.join(workspaceDir, kWorkspaceMetaFile));
+  if (!f.existsSync()) return null;
+  try {
+    final j = jsonDecode(await f.readAsString()) as Map<String, dynamic>;
+    return j['packagePath'] as String?;
+  } catch (_) {
+    return null;
+  }
+}
+
+Future<String?> _findWorkspaceRoot(String repoPath) async {
+  String current = p.normalize(repoPath);
+  final root = p.rootPrefix(current);
+  while (true) {
+    final metaFile = File(p.join(current, kWorkspaceMetaFile));
+    if (metaFile.existsSync()) return current;
+    final parent = p.dirname(current);
+    if (parent == current || parent == root) break;
+    current = parent;
+  }
+  return null;
+}
+
+Future<void> _persistTrackingPackageForRepo(String repoPath) async {
+  final root = await _findWorkspaceRoot(repoPath);
+  if (root == null) return;
+  final packagePath = await _readWorkspacePackagePath(root);
+  if (packagePath == null || packagePath.isEmpty) return;
+  await _exportFolderToTrackingPackage(root, packagePath);
+}
+
+Future<void> _extractTrackingPackage(String packagePath, String outDir) async {
+  final f = File(packagePath);
+  if (!f.existsSync()) {
+    throw Exception('Tracking package not found: $packagePath');
+  }
+  final bytes = await f.readAsBytes();
+  final archive = ZipDecoder().decodeBytes(bytes);
+  for (final file in archive) {
+    final filename = p.normalize(p.join(outDir, file.name));
+    if (file.isFile) {
+      final outFile = File(filename);
+      outFile.parent.createSync(recursive: true);
+      outFile.writeAsBytesSync(file.content as List<int>);
+    } else {
+      Directory(filename).createSync(recursive: true);
+    }
+  }
+  await _expandTrackingEntries(outDir);
+}
+
+Future<void> _expandTrackingEntries(String rootDir) async {
+  final entries = Directory(rootDir).listSync(recursive: true);
+  for (final entity in entries) {
+    if (entity is File && entity.path.toLowerCase().endsWith(kTrackingExt)) {
+      final targetDir = entity.path;
+      final tmp = await Directory.systemTemp.createTemp('tracking_unzip_');
+      try {
+        final bytes = await entity.readAsBytes();
+        final archive = ZipDecoder().decodeBytes(bytes);
+        for (final file in archive) {
+          final filename = p.normalize(p.join(tmp.path, file.name));
+          if (file.isFile) {
+            final outFile = File(filename);
+            outFile.parent.createSync(recursive: true);
+            outFile.writeAsBytesSync(file.content as List<int>);
+          } else {
+            Directory(filename).createSync(recursive: true);
+          }
+        }
+
+        try {
+          entity.deleteSync();
+        } catch (e) {
+          print('Failed to delete tracking file for expand: $e');
+          continue;
+        }
+        final dir = Directory(targetDir);
+        dir.createSync(recursive: true);
+        await _copyDir(tmp.path, dir.path);
+      } finally {
+        try {
+          tmp.deleteSync(recursive: true);
+        } catch (_) {}
+      }
+    }
+  }
+}
+
+Future<void> _packTrackingDirectory(String srcDir, String outPackagePath) async {
+  final archive = Archive();
+  final root = Directory(srcDir);
+  if (!root.existsSync()) {
+    throw Exception('Tracking workspace not found: $srcDir');
+  }
+
+  void addEntry(String base, FileSystemEntity entity) {
+    if (entity.path.endsWith(kWorkspaceMetaFile)) return;
+    final rel = p.relative(entity.path, from: base);
+    if (entity is File) {
+      final data = entity.readAsBytesSync();
+      archive.addFile(ArchiveFile(rel, data.length, data));
+      return;
+    }
+    if (entity is Directory) {
+      final name = p.basename(entity.path);
+      if (name.toLowerCase().endsWith(kTrackingExt)) {
+        final tmpFile = File(p.join(
+            Directory.systemTemp.path,
+            '${DateTime.now().microsecondsSinceEpoch}.tracking'));
+        _packTrackingDirectory(entity.path, tmpFile.path);
+        final data = tmpFile.readAsBytesSync();
+        archive.addFile(ArchiveFile(rel, data.length, data));
+        try {
+          tmpFile.deleteSync();
+        } catch (_) {}
+        return;
+      }
+
+      final children = entity.listSync();
+      if (children.isEmpty) {
+        archive.addFile(ArchiveFile('$rel/', 0, []));
+        return;
+      }
+      for (final child in children) {
+        addEntry(base, child);
+      }
+    }
+  }
+
+  for (final entity in root.listSync()) {
+    addEntry(srcDir, entity);
+  }
+
+  final bytes = ZipEncoder().encode(archive);
+  if (bytes == null) {
+    throw Exception('Failed to encode tracking package');
+  }
+  final outFile = File(outPackagePath);
+  outFile.parent.createSync(recursive: true);
+  outFile.writeAsBytesSync(bytes, flush: true);
+}
+
+Future<String> _ensureWorkspace(String packagePath) async {
+  final normalized = _sanitizeFsPath(packagePath);
+  final workspaceDir = _workspaceDirForPackage(normalized);
+  final dir = Directory(workspaceDir);
+
+  if (dir.existsSync()) {
+    final metaPath = await _readWorkspacePackagePath(workspaceDir);
+    if (metaPath != null && p.equals(metaPath, normalized)) {
+      return workspaceDir;
+    }
+    try {
+      dir.deleteSync(recursive: true);
+    } catch (e) {
+      print('Failed to clear workspace: $e');
+    }
+  }
+
+  dir.createSync(recursive: true);
+  await _extractTrackingPackage(normalized, workspaceDir);
+  await _writeWorkspaceMeta(workspaceDir, normalized);
+  return workspaceDir;
+}
+
+Future<void> _exportFolderToTrackingPackage(
+    String workspaceDir, String packagePath) async {
+  await _packTrackingDirectory(workspaceDir, packagePath);
+}
+
 Directory _globalPreviewCacheDir() {
   final app = Platform.environment['APPDATA'];
   if (app != null && app.isNotEmpty) {
@@ -1447,14 +1637,6 @@ Future<Map<String, dynamic>> _resolveTrackingInfo(String repoPath) async {
             'docxPath': fullDocxPath,
             // 'internalPath': relPath, // Optional, but full path is enough
           };
-          await _writeTracking(p.basename(repoPath),
-              subTracking); // Note: _writeTracking uses _trackingFile which uses _projectDir(name).
-          // But here repoPath IS the project dir.
-          // Wait, _writeTracking uses _projectDir(name) -> _baseDir()/name.
-          // If repoPath is NOT in _baseDir(), this might be wrong.
-          // But usually repoPath IS in _baseDir() (or subfolder).
-          // Actually, let's just write to repoPath directly.
-
           final f = File(p.join(repoPath, 'tracking.json'));
           await f.writeAsString(jsonEncode(subTracking));
 
@@ -1532,11 +1714,19 @@ Future<void> _writeTracking(String name, Map<String, dynamic> data) async {
 }
 
 String _projectDir(String name) {
+  final normalized = _sanitizeFsPath(name);
+  if (p.isAbsolute(normalized)) {
+    if (normalized.toLowerCase().endsWith(kTrackingExt)) {
+      return _workspaceDirForPackage(normalized);
+    }
+    return normalized;
+  }
   return p.normalize(p.join(_baseDir(), name));
 }
 
 String _getPreviewDir(String name) {
-  return p.normalize(p.join(_baseDir(), 'preview', name));
+  final key = p.isAbsolute(name) ? _packageKey(name) : name;
+  return p.normalize(p.join(_baseDir(), 'preview', key));
 }
 
 // Deprecated: _findRepoDocx (we use kContentDirName now)
@@ -1625,7 +1815,9 @@ Future<Uint8List> compareCommits(
 }
 
 Future<void> _ensureFolderProjectStructure(String projDir, String docxPath,
-    {bool forceUpdate = false}) async {
+    {bool forceUpdate = false,
+    String trackingExt = '',
+    String? packagePath}) async {
   // 1. Ensure Root is a Git Repo (for metadata like folder_meta.json, edges)
   final rootDir = Directory(projDir);
   if (!rootDir.existsSync()) {
@@ -1656,21 +1848,30 @@ Future<void> _ensureFolderProjectStructure(String projDir, String docxPath,
     if (p.basename(file.path).startsWith('~\$')) continue;
 
     final relPath = p.relative(file.path, from: docxPath);
-    final targetRepoPath = p.join(projDir, relPath);
+    final relTrackingPath = trackingExt.isNotEmpty
+        ? p.setExtension(relPath, trackingExt)
+        : relPath;
+    final targetRepoPath = p.join(projDir, relTrackingPath);
 
     if (!forceUpdate) {
       final gitDir = Directory(p.join(targetRepoPath, '.git'));
       if (gitDir.existsSync()) continue;
     }
 
-    await _initSingleRepo(targetRepoPath, file.path);
+    if (packagePath != null && packagePath.isNotEmpty) {
+      await _initTrackingRepo(targetRepoPath, file.path, packagePath);
+    } else {
+      await _initSingleRepo(targetRepoPath, file.path);
+    }
   }
 
   // 3. Update folder_meta.json
-  await _scanAndUpdateFolderMeta(projDir, docxPath);
+  await _scanAndUpdateFolderMeta(projDir, docxPath,
+      trackingExt: trackingExt);
 }
 
-Future<void> _scanAndUpdateFolderMeta(String projDir, String docxPath) async {
+Future<void> _scanAndUpdateFolderMeta(String projDir, String docxPath,
+    {String trackingExt = ''}) async {
   final metaFile = File(p.join(projDir, 'folder_meta.json'));
   Map<String, dynamic> meta = {};
   if (metaFile.existsSync()) {
@@ -1689,16 +1890,19 @@ Future<void> _scanAndUpdateFolderMeta(String projDir, String docxPath) async {
     if (p.basename(file.path).startsWith('~\$')) continue;
 
     final relPath = p.relative(file.path, from: docxPath);
+    final relTrackingPath = trackingExt.isNotEmpty
+        ? p.setExtension(relPath, trackingExt)
+        : relPath;
     final childName = p.basenameWithoutExtension(file.path);
 
     // Keep existing remote info if available
     String existingRemote = '';
 
-    if (meta['items'][relPath] != null) {
-      existingRemote = meta['items'][relPath]['remoteUrl'] ?? '';
+    if (meta['items'][relTrackingPath] != null) {
+      existingRemote = meta['items'][relTrackingPath]['remoteUrl'] ?? '';
     }
 
-    meta['items'][relPath] = {
+    meta['items'][relTrackingPath] = {
       'name': childName,
       'remoteUrl': existingRemote,
       'lastUpdate': DateTime.now().toIso8601String(),
@@ -1721,55 +1925,100 @@ Future<void> _scanAndUpdateFolderMeta(String projDir, String docxPath) async {
 
 Future<Map<String, dynamic>> createTrackingProject(
     String name, String? docxPath) async {
-  final projDir = _projectDir(name);
+  final packagePath = _sanitizeFsPath(name);
+  final projDir = _projectDir(packagePath);
   final dir = Directory(projDir);
 
-  // Clean up existing if any (or maybe we should fail if exists?)
-  // For now, assume fresh creation or overwrite
   if (dir.existsSync()) {
-    // If it was a single file repo before, or a folder repo, this might be dangerous.
-    // But let's follow existing logic which seems to assume it's okay to reuse or user handles it.
-    // Actually, existing logic only creates if not exists.
-    if (!dir.existsSync()) {
-      dir.createSync(recursive: true);
+    try {
+      dir.deleteSync(recursive: true);
+    } catch (e) {
+      throw Exception('Failed to clear tracking workspace: $e');
     }
-  } else {
-    dir.createSync(recursive: true);
   }
+  dir.createSync(recursive: true);
 
   bool isFolderMode = false;
-  if (docxPath != null && docxPath.trim().isNotEmpty) {
-    if (FileSystemEntity.isDirectorySync(docxPath)) {
+  final normalizedDocx = docxPath == null ? '' : _sanitizeFsPath(docxPath);
+  if (normalizedDocx.isNotEmpty) {
+    if (FileSystemEntity.isDirectorySync(normalizedDocx)) {
       isFolderMode = true;
     }
   }
 
   if (isFolderMode) {
-    await _ensureFolderProjectStructure(projDir, docxPath!, forceUpdate: true);
+    await _ensureFolderProjectStructure(projDir, normalizedDocx,
+        forceUpdate: true,
+        trackingExt: kTrackingExt,
+        packagePath: packagePath);
   } else {
-    // Single file mode (legacy or file selection)
-    // Here projDir IS the repo path
-    await _initSingleRepo(projDir, docxPath);
+    await _initSingleRepo(projDir, normalizedDocx.isEmpty ? null : normalizedDocx);
   }
 
-  final tracking = await _readTracking(name);
-  tracking['name'] = name;
-  if (docxPath != null && docxPath.trim().isNotEmpty) {
-    tracking['docxPath'] = _sanitizeFsPath(docxPath);
+  final tracking = await _readTracking(packagePath);
+  tracking['name'] = packagePath;
+  tracking['packagePath'] = packagePath;
+  if (normalizedDocx.isNotEmpty) {
+    tracking['docxPath'] = normalizedDocx;
     tracking['type'] = isFolderMode ? 'folder' : 'file';
   } else {
-    tracking['type'] =
-        'file'; // Default to file if no path provided (empty repo)
+    tracking['type'] = 'file';
   }
-  // repoDocxPath is ambiguous for folder mode, maybe point to root?
   tracking['repoDocxPath'] = p.join(projDir, kContentDirName);
+  await _writeTracking(packagePath, tracking);
 
-  await _writeTracking(name, tracking);
+  if (packagePath.toLowerCase().endsWith(kTrackingExt)) {
+    await _writeWorkspaceMeta(projDir, packagePath);
+    await _exportFolderToTrackingPackage(projDir, packagePath);
+  }
+
   return {
-    'name': name,
+    'name': packagePath,
     'repoPath': projDir,
     'type': tracking['type'],
   };
+}
+
+Future<Map<String, dynamic>> docx2package(
+    String docxPath, String packagePath) async {
+  return createTrackingProject(packagePath, docxPath);
+}
+
+Future<Map<String, dynamic>> importTrackingSource(
+    String packagePath, String targetDir, String sourcePath) async {
+  final pkg = _sanitizeFsPath(packagePath);
+  final workspace = await _ensureWorkspace(pkg);
+  final target = _sanitizeFsPath(targetDir);
+  if (!p.isWithin(workspace, target) && !p.equals(workspace, target)) {
+    throw Exception('Target not within tracking workspace');
+  }
+  if (!Directory(target).existsSync()) {
+    Directory(target).createSync(recursive: true);
+  }
+
+  final source = _sanitizeFsPath(sourcePath);
+  if (FileSystemEntity.isFileSync(source)) {
+    final baseName = p.basenameWithoutExtension(source);
+    final trackingDir = p.join(target, '$baseName$kTrackingExt');
+    if (Directory(trackingDir).existsSync()) {
+      throw Exception('Target already exists: $trackingDir');
+    }
+    await _initTrackingRepo(trackingDir, source, pkg);
+  } else if (Directory(source).existsSync()) {
+    final files = _findDocxFiles(source);
+    for (final file in files) {
+      final relPath = p.relative(file.path, from: source);
+      final relTrackingPath = p.setExtension(relPath, kTrackingExt);
+      final targetRepoPath = p.join(target, relTrackingPath);
+      if (Directory(targetRepoPath).existsSync()) continue;
+      await _initTrackingRepo(targetRepoPath, file.path, pkg);
+    }
+  } else {
+    throw Exception('Source not found: $source');
+  }
+
+  await _persistTrackingPackageForRepo(target);
+  return {'workspacePath': workspace};
 }
 
 Future<void> _initSingleRepo(String repoPath, String? sourceDocxPath) async {
@@ -1791,6 +2040,18 @@ Future<void> _initSingleRepo(String repoPath, String? sourceDocxPath) async {
   } else {
     await _ensureRepoDocx(repoPath);
   }
+}
+
+Future<void> _initTrackingRepo(
+    String repoPath, String docxPath, String packagePath) async {
+  await _initSingleRepo(repoPath, docxPath);
+  final trackingFile = File(p.join(repoPath, 'tracking.json'));
+  final tracking = {
+    'docxPath': docxPath,
+    'packagePath': packagePath,
+    'type': 'file',
+  };
+  await trackingFile.writeAsString(jsonEncode(tracking));
 }
 
 Future<List<Map<String, dynamic>>> listProjectRepos(String name) async {
@@ -1817,7 +2078,8 @@ Future<List<Map<String, dynamic>>> listProjectRepos(String name) async {
 
         String? subDocxPath;
         if (rootDocxPath != null) {
-          subDocxPath = p.join(rootDocxPath, relPath);
+          final mapped = p.setExtension(relPath, '.docx');
+          subDocxPath = p.join(rootDocxPath, mapped);
         }
 
         results.add({
@@ -1860,19 +2122,26 @@ Future<void> syncFolderProject(String name) async {
   // 2. Update or Create repos
   for (final file in sourceFiles) {
     final relPath = p.relative(file.path, from: sourceRoot);
-    sourceRelPaths.add(relPath);
+    final relTrackingPath = p.setExtension(relPath, kTrackingExt);
+    sourceRelPaths.add(relTrackingPath);
 
-    final targetRepoPath = p.join(projDir, relPath);
+    final targetRepoPath = p.join(projDir, relTrackingPath);
     // This will create if not exists, or update content.docx if exists
     if (!Directory(targetRepoPath).existsSync()) {
-      await _initSingleRepo(targetRepoPath, file.path);
+      final packagePath = tracking['packagePath'] as String? ?? '';
+      if (packagePath.isNotEmpty) {
+        await _initTrackingRepo(targetRepoPath, file.path, packagePath);
+      } else {
+        await _initSingleRepo(targetRepoPath, file.path);
+      }
     } else {
       await _updateContentDocx(targetRepoPath, file.path);
     }
   }
 
   // 3. Update folder_meta.json
-  await _scanAndUpdateFolderMeta(projDir, sourceRoot);
+  await _scanAndUpdateFolderMeta(projDir, sourceRoot,
+      trackingExt: kTrackingExt);
 
   // 4. Scan target folder for repos (directories with .git)
   // We need to be careful not to delete the root projDir itself if it happens to be a repo (unlikely in folder mode)
@@ -1900,19 +2169,45 @@ Future<void> syncFolderProject(String name) async {
       }
     }
   }
+
+  final packagePath = tracking['packagePath'] as String?;
+  if (packagePath != null && packagePath.isNotEmpty) {
+    try {
+      await _exportFolderToTrackingPackage(projDir, packagePath);
+    } catch (e) {
+      print('Failed to export tracking package: $e');
+    }
+  }
 }
 
 Future<Map<String, dynamic>> openTrackingProject(String name) async {
-  final projDir = _projectDir(name);
+  final packagePath = _sanitizeFsPath(name);
+  final projDir = packagePath.toLowerCase().endsWith(kTrackingExt)
+      ? await _ensureWorkspace(packagePath)
+      : _projectDir(name);
   final dir = Directory(projDir);
   if (!dir.existsSync()) {
     throw Exception('project not found');
   }
-  final tracking = await _readTracking(name);
+  final tracking = await _readTracking(packagePath);
+
+  if (tracking.isEmpty) {
+    final detectedType = Directory(p.join(projDir, '.git')).existsSync()
+        ? 'file'
+        : 'folder';
+    final initial = {
+      'name': packagePath,
+      'packagePath': packagePath,
+      'type': detectedType,
+    };
+    await _writeTracking(packagePath, initial);
+  }
 
   // Check and auto-init structure for folder projects if needed
   if (tracking['type'] == 'folder' && tracking['docxPath'] != null) {
-    await _ensureFolderProjectStructure(projDir, tracking['docxPath']);
+    final pkgPath = (tracking['packagePath'] as String?) ?? packagePath;
+    await _ensureFolderProjectStructure(projDir, tracking['docxPath'],
+        trackingExt: kTrackingExt, packagePath: pkgPath);
   }
 
   // Always try to notify parent folder project (if any) to keep metadata fresh
@@ -1920,41 +2215,38 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
   await _notifyParentFolderProject(projDir);
 
   return {
-    'name': name,
+    'name': packagePath,
     'repoPath': projDir,
     'docxPath': tracking['docxPath'],
     'type': tracking['type'] ?? 'file',
+    'packagePath': packagePath,
   };
 }
 
 Future<Map<String, dynamic>?> getTrackingInfo(String repoPath) async {
-  final base = Directory(_baseDir());
-  if (!base.existsSync()) return null;
   final normalized = p.normalize(repoPath);
-  try {
-    final ents = base.listSync().whereType<Directory>();
-    for (final d in ents) {
-      final name = p.basename(d.path);
-      if (name.startsWith('.')) continue;
-      if (p.normalize(d.path) == normalized) {
-        final tracking = await _readTracking(name);
-        return {
-          'name': name,
-          'docxPath': tracking['docxPath'],
-          'repoDocxPath': tracking['repoDocxPath']
-        };
-      }
-    }
-  } catch (_) {}
-  return null;
+  final root = await _findWorkspaceRoot(normalized);
+  if (root == null) return null;
+  final packagePath = await _readWorkspacePackagePath(root) ?? '';
+  final tracking = await _readTracking(packagePath.isNotEmpty ? packagePath : root);
+  return {
+    'name': packagePath.isNotEmpty ? packagePath : root,
+    'docxPath': tracking['docxPath'],
+    'repoDocxPath': tracking['repoDocxPath'],
+    'packagePath': packagePath,
+  };
 }
 
 Future<Map<String, dynamic>> updateTrackingProject(
     String name, bool opIdentical,
     {String? newDocxPath, String? repoPath, String? docxPath}) async {
-  final projDir = repoPath ?? _projectDir(name);
+  final normalizedName = _sanitizeFsPath(name);
+  var projDir = repoPath ?? _projectDir(normalizedName);
+  if (repoPath == null && normalizedName.toLowerCase().endsWith(kTrackingExt)) {
+    projDir = await _ensureWorkspace(normalizedName);
+  }
   return _withRepoLock(projDir, () async {
-    _isUpdating[name] = true;
+    _isUpdating[normalizedName] = true;
     final totalSw = Stopwatch()..start();
     final sectionSw = Stopwatch()..start();
 
@@ -1966,12 +2258,14 @@ Future<Map<String, dynamic>> updateTrackingProject(
 
       Map<String, dynamic> tracking;
       if (repoPath != null) {
+        final info = await _resolveTrackingInfo(projDir);
         tracking = {
-          'name': name,
-          'docxPath': docxPath,
+          'name': normalizedName,
+          'docxPath': info['docxPath'] ?? docxPath,
+          'packagePath': info['packagePath'] ?? normalizedName,
         };
       } else {
-        tracking = await _readTracking(name);
+        tracking = await _readTracking(normalizedName);
       }
 
       String? sourcePath = tracking['docxPath'] as String?;
@@ -2005,7 +2299,7 @@ Future<Map<String, dynamic>> updateTrackingProject(
       tracking['repoDocxPath'] = contentDir.path;
 
       if (repoPath == null) {
-        await _writeTracking(name, tracking);
+        await _writeTracking(normalizedName, tracking);
       }
 
       print(
@@ -2020,6 +2314,12 @@ Future<Map<String, dynamic>> updateTrackingProject(
 
         await _notifyParentFolderProject(projDir);
         await syncFolderProject(name);
+
+        try {
+          await _persistTrackingPackageForRepo(projDir);
+        } catch (e) {
+          print('Persist tracking package failed: $e');
+        }
 
         return {
           'repoPath': projDir,
@@ -2105,6 +2405,12 @@ Future<Map<String, dynamic>> updateTrackingProject(
 
       await _notifyParentFolderProject(projDir);
 
+      try {
+        await _persistTrackingPackageForRepo(projDir);
+      } catch (e) {
+        print('Persist tracking package failed: $e');
+      }
+
       return {
         'repoPath': projDir,
         'workingChanged': changed,
@@ -2112,7 +2418,7 @@ Future<Map<String, dynamic>> updateTrackingProject(
       };
     } finally {
       // await Future.delayed(const Duration(milliseconds: 1000));
-      _isUpdating[name] = false;
+      _isUpdating[normalizedName] = false;
     }
   });
 }
@@ -2121,8 +2427,8 @@ Future<void> _syncToExternal(String repoPath) async {
   final sw = Stopwatch()..start();
   // Sync doc_content -> content.docx -> External
   // This should be called after operations that modify the working tree (pull, merge, reset, checkout)
-  final tracking = await _readTracking(p.basename(repoPath));
-  final docxPath = tracking['docxPath'] as String?;
+  final info = await _resolveTrackingInfo(repoPath);
+  final docxPath = info['docxPath'] as String?;
   if (docxPath == null) return;
 
   print('Syncing internal doc_content to external: $docxPath');
@@ -2157,6 +2463,12 @@ Future<void> _syncToExternal(String repoPath) async {
     sw.reset();
   }
   sw.stop();
+
+  try {
+    await _persistTrackingPackageForRepo(repoPath);
+  } catch (e) {
+    print('Persist tracking package failed: $e');
+  }
 }
 
 Future<bool> _checkDocxIdentical(
@@ -2439,33 +2751,15 @@ String _calculateHash(String input) {
 }
 
 Future<String?> _findParentFolderProject(String path) async {
-  final baseDir = Directory(_baseDir());
-  final target = Directory(path);
-
   try {
-    if (p.equals(path, baseDir.path)) return null;
-    if (!p.isWithin(baseDir.path, path)) {
-      print('DEBUG: _findParentFolderProject: $path is not within ${baseDir.path}');
-      return null;
-    }
-
-    Directory current = target.parent;
-    while (true) {
-      if (p.equals(current.path, baseDir.path)) break;
-      if (!p.isWithin(baseDir.path, current.path)) break;
-
-      if (File(p.join(current.path, 'folder_meta.json')).existsSync()) {
-        return current.path;
-      }
-
-      final parent = current.parent;
-      if (parent.path == current.path) break;
-      current = parent;
-    }
+    final root = await _findWorkspaceRoot(path);
+    if (root == null) return null;
+    if (!p.isWithin(root, path) && !p.equals(root, path)) return null;
+    return root;
   } catch (e) {
-    print('Error finding parent folder project: $e');
+    print('Error finding parent tracking root: $e');
+    return null;
   }
-  return null;
 }
 
 Future<void> _ensureUniqueRemote(
@@ -2933,6 +3227,12 @@ Future<Map<String, dynamic>> pullFromRemote(
       await _notifyParentFolderProject(projDir);
     }
 
+    try {
+      await _persistTrackingPackageForRepo(projDir);
+    } catch (e) {
+      print('Persist tracking package failed: $e');
+    }
+
     clearCache();
     return {
       'status': 'success',
@@ -2948,10 +3248,20 @@ Future<Map<String, dynamic>> checkPullStatus(
   return _withRepoLock(projDir, () async {
     // Folder project check removed to allow root pull status check
 
-    final remoteName = repoName.toLowerCase();
-    final owner = await _resolveRepoOwner(repoName, token);
+    String effectiveRemoteRepoName;
+    final parentRoot = await _findParentFolderProject(projDir);
+    if (parentRoot != null && !p.equals(parentRoot, projDir)) {
+      final relativePath = p.relative(projDir, from: parentRoot);
+      final normalizedRelPath = relativePath.replaceAll(r'\', '/');
+      effectiveRemoteRepoName = _calculateHash(normalizedRelPath);
+    } else {
+      effectiveRemoteRepoName = p.basename(projDir);
+    }
+
+    final remoteName = effectiveRemoteRepoName.toLowerCase();
+    final owner = await _resolveRepoOwner(effectiveRemoteRepoName, token);
     final remoteUrl =
-        'http://$username:$token@47.242.109.145:3000/$owner/$repoName.git';
+        'http://$username:$token@47.242.109.145:3000/$owner/$effectiveRemoteRepoName.git';
 
     try {
       await addRemote(projDir, remoteName, remoteUrl);
@@ -2998,18 +3308,7 @@ Future<Map<String, dynamic>> checkPullStatus(
 }
 
 Future<List<String>> listProjects() async {
-  final base = Directory(_baseDir());
-  if (!base.existsSync()) return [];
-  final projects = <String>[];
-  try {
-    final ents = base.listSync().whereType<Directory>();
-    for (final d in ents) {
-      final name = p.basename(d.path);
-      if (name.startsWith('.')) continue;
-      projects.add(name);
-    }
-  } catch (_) {}
-  return projects;
+  return [];
 }
 
 Future<String?> findProjectByDocxPath(String docxPath) async {
@@ -3042,10 +3341,20 @@ Future<void> rebasePull(String repoName, String username, String token) async {
     throw Exception('Cannot rebase on Folder Project Root.');
   }
 
-  final remoteName = repoName.toLowerCase();
-  final owner = await _resolveRepoOwner(repoName, token);
+  String effectiveRemoteRepoName;
+  final parentRoot = await _findParentFolderProject(projDir);
+  if (parentRoot != null && !p.equals(parentRoot, projDir)) {
+    final relativePath = p.relative(projDir, from: parentRoot);
+    final normalizedRelPath = relativePath.replaceAll(r'\', '/');
+    effectiveRemoteRepoName = _calculateHash(normalizedRelPath);
+  } else {
+    effectiveRemoteRepoName = p.basename(projDir);
+  }
+
+  final remoteName = effectiveRemoteRepoName.toLowerCase();
+  final owner = await _resolveRepoOwner(effectiveRemoteRepoName, token);
   final remoteUrl =
-      'http://$username:$token@47.242.109.145:3000/$owner/$repoName.git';
+      'http://$username:$token@47.242.109.145:3000/$owner/$effectiveRemoteRepoName.git';
 
   await addRemote(projDir, remoteName, remoteUrl);
   final current = await getCurrentBranch(projDir);
@@ -3060,6 +3369,11 @@ Future<void> rebasePull(String repoName, String username, String token) async {
       await _runGit(['rebase', '--abort'], projDir);
     } catch (_) {}
     throw Exception('Rebase failed (likely conflicts): $e');
+  }
+  try {
+    await _persistTrackingPackageForRepo(projDir);
+  } catch (e) {
+    print('Persist tracking package failed: $e');
   }
   clearCache();
 }
@@ -3099,10 +3413,19 @@ Future<PullPreviewResult> previewPull(
     await _copyDir(projDir, previewDir);
 
     // From now on, operate on previewDir
-    final remoteName = repoName.toLowerCase();
-    final owner = await _resolveRepoOwner(repoName, token);
+    String effectiveRemoteRepoName;
+    final parentRoot = await _findParentFolderProject(projDir);
+    if (parentRoot != null && !p.equals(parentRoot, projDir)) {
+      final relativePath = p.relative(projDir, from: parentRoot);
+      final normalizedRelPath = relativePath.replaceAll(r'\\', '/');
+      effectiveRemoteRepoName = _calculateHash(normalizedRelPath);
+    } else {
+      effectiveRemoteRepoName = p.basename(projDir);
+    }
+    final remoteName = effectiveRemoteRepoName.toLowerCase();
+    final owner = await _resolveRepoOwner(effectiveRemoteRepoName, token);
     final remoteUrl =
-        'http://$username:$token@47.242.109.145:3000/$owner/$repoName.git';
+        'http://$username:$token@47.242.109.145:3000/$owner/$effectiveRemoteRepoName.git';
 
     // Ensure remote exists in preview repo
     await addRemote(previewDir, remoteName, remoteUrl);
@@ -3199,92 +3522,59 @@ Future<PullPreviewResult> previewPull(
   });
 }
 
-Future<void> deleteProject(String gitdocxPath,
-    [String? trackingPath, String? trackingbase]) async {
-  final gitdocxbase = _baseDir();
-  print(
-      "debug,trackingbase:$trackingbase, gitdocxbase:$gitdocxbase,gitdocxPath:$gitdocxPath, trackingPath:$trackingPath");
+Future<void> deleteProject(String packagePath,
+    [String? targetPath, String? trackingbase]) async {
+  final pkg = _sanitizeFsPath(packagePath);
+  if (pkg.toLowerCase().endsWith(kTrackingExt)) {
+    final workspace = await _ensureWorkspace(pkg);
+    if (targetPath == null || targetPath.trim().isEmpty) {
+      try {
+        final f = File(pkg);
+        if (f.existsSync()) f.deleteSync();
+      } catch (e) {
+        throw Exception('Failed to delete tracking package: $e');
+      }
+      try {
+        final d = Directory(workspace);
+        if (d.existsSync()) d.deleteSync(recursive: true);
+      } catch (_) {}
+      return;
+    }
 
-  // 仅当提供了 trackingPath 和 trackingbase 时才检查 tracking 路径
-  if (!p.isWithin(gitdocxbase, gitdocxPath) ||
-      (trackingPath != null &&
-          trackingbase != null &&
-          !p.isWithin(trackingbase, trackingPath))) {
-    throw Exception('Access denied: Cannot delete outside of base directory');
-  }
+    final normalizedTarget = _sanitizeFsPath(targetPath);
+    if (!p.isWithin(workspace, normalizedTarget)) {
+      throw Exception('Access denied: target not within workspace');
+    }
 
-  final girdocxdir = Directory(gitdocxPath);
-  final trackingFile = trackingPath != null ? File(trackingPath) : null;
-  final trackingDir = trackingPath != null ? Directory(trackingPath) : null;
-
-  // Clean up parent metadata if needed
-  final parentPath = girdocxdir.parent.path;
-  final metaFile = File(p.join(parentPath, 'folder_meta.json'));
-
-  // 更新父文件夹
-  if (metaFile.existsSync()) {
     try {
-      final meta = jsonDecode(await metaFile.readAsString());
-      final items = meta['items'] as Map<String, dynamic>?;
-      if (items != null) {
-        final relPath = p.relative(gitdocxPath, from: parentPath);
-        bool changed = false;
-        // Try exact match
-        if (items.containsKey(relPath)) {
-          items.remove(relPath);
-          changed = true;
-        } else {
-          // Try forward slash version
-          final forward = relPath.replaceAll(r'\', '/');
-          if (items.containsKey(forward)) {
-            items.remove(forward);
-            changed = true;
-          }
-          // Try backward slash version
-          final back = relPath.replaceAll('/', r'\');
-          if (items.containsKey(back)) {
-            items.remove(back);
-            changed = true;
-          }
-        }
-
-        if (changed) {
-          await metaFile.writeAsString(jsonEncode(meta));
-          // Commit metadata change
-          await _runGit(['add', 'folder_meta.json'], parentPath);
-          try {
-            await _runGit([
-              'commit',
-              '-m',
-              'Remove deleted project ${p.basename(gitdocxPath)}'
-            ], parentPath);
-          } catch (_) {}
-        }
+      if (File(normalizedTarget).existsSync()) {
+        File(normalizedTarget).deleteSync();
+      } else if (Directory(normalizedTarget).existsSync()) {
+        Directory(normalizedTarget).deleteSync(recursive: true);
       }
     } catch (e) {
-      print('Failed to update parent metadata during deletion: $e');
+      throw Exception('Failed to delete target: $e');
     }
+
+    try {
+      await _persistTrackingPackageForRepo(normalizedTarget);
+    } catch (e) {
+      print('Persist tracking package failed: $e');
+    }
+    return;
   }
 
-  try {
-    girdocxdir.deleteSync(recursive: true);
-    if (trackingFile != null && trackingFile.existsSync()) {
-      try {
-        trackingFile.deleteSync();
-      } catch (e) {
-        print('Failed to delete tracking file: $e');
-      }
-    }
-    if (trackingDir != null && trackingDir.existsSync()) {
-      try {
-        trackingDir.deleteSync(recursive: true);
-      } catch (e) {
-        print('Failed to delete tracking directory: $e');
-      }
-    }
-  } catch (e) {
-    throw Exception('Failed to delete directory: $e');
-  }
+  throw Exception('Legacy delete is not supported for non-tracking packages');
+}
+
+List<File> _findDocxFiles(String rootPath) {
+  if (!Directory(rootPath).existsSync()) return [];
+  return Directory(rootPath)
+      .listSync(recursive: true)
+      .whereType<File>()
+      .where((f) => p.extension(f.path).toLowerCase() == '.docx')
+      .where((f) => !p.basename(f.path).startsWith('~\$'))
+      .toList();
 }
 
 Future<String?> _findStoragePath(String trackingPath) async {
@@ -3317,94 +3607,7 @@ Future<String?> _findStoragePath(String trackingPath) async {
 
 Future<void> copyTrackingProject(
     String sourceName, String targetRelPath, bool deleteSource) async {
-  final base = _baseDir();
-  // sourceName is a project name in gitdocx
-  final sourcePath = p.join(base, sourceName);
-
-  if (!Directory(sourcePath).existsSync()) {
-    throw Exception('Source project not found');
-  }
-
-  final sourceDocx = File(p.join(sourcePath, kRepoDocxName));
-  if (!sourceDocx.existsSync()) {
-    throw Exception('content.docx not found in source project');
-  }
-
-  String? storageDestDir;
-  String? trackingDestDir;
-
-  if (p.isAbsolute(targetRelPath)) {
-    trackingDestDir = targetRelPath;
-    storageDestDir = await _findStoragePath(trackingDestDir);
-
-    if (storageDestDir == null) {
-      // Fallback: maybe targetRelPath IS inside a gitdocx folder?
-      if (p.isWithin(base, targetRelPath)) {
-        storageDestDir = targetRelPath;
-        // Try to resolve tracking from storage
-        final info = await _resolveTrackingInfo(storageDestDir);
-        trackingDestDir = info['docxPath'];
-      } else {
-        throw Exception(
-            'Could not determine storage location for $targetRelPath. Is it part of a tracked project?');
-      }
-    }
-  } else {
-    storageDestDir = p.join(base, targetRelPath);
-    // Resolve tracking
-    final info = await _resolveTrackingInfo(storageDestDir);
-    trackingDestDir = info['docxPath'];
-  }
-
-  // Ensure directories exist
-  if (!Directory(storageDestDir).existsSync()) {
-    Directory(storageDestDir).createSync(recursive: true);
-  }
-  if (!Directory(trackingDestDir!).existsSync()) {
-    Directory(trackingDestDir).createSync(recursive: true);
-  }
-
-  final destName = '$sourceName.docx';
-  // Storage target: A directory named <sourceName>
-  final storageTargetDir = p.join(storageDestDir, sourceName);
-  // Tracking target: A file named <sourceName>.docx
-  final trackingFile = p.join(trackingDestDir, destName);
-
-  if (Directory(storageTargetDir).existsSync()) {
-    throw Exception('Directory already exists in storage: $storageTargetDir');
-  }
-  if (File(trackingFile).existsSync()) {
-    throw Exception('File already exists in tracking: $trackingFile');
-  }
-
-  // 1. Copy entire folder to Storage
-  // Create the target directory first
-  String targetDirWithSuffix = "$storageTargetDir.docx";
-  Directory(targetDirWithSuffix).createSync(recursive: true);
-  await _copyDir(sourcePath, targetDirWithSuffix);
-
-  // 2. Copy content.docx to Tracking
-  sourceDocx.copySync(trackingFile);
-
-  // 3. Update tracking.json in the new storage repo
-  final newTrackingFile = File(p.join(targetDirWithSuffix, 'tracking.json'));
-  Map<String, dynamic> tracking = {};
-  if (newTrackingFile.existsSync()) {
-    try {
-      tracking = jsonDecode(await newTrackingFile.readAsString());
-    } catch (_) {}
-  }
-  tracking['docxPath'] = trackingFile;
-  await newTrackingFile.writeAsString(jsonEncode(tracking));
-
-  // 4. Notify parent folder project to update its index
-  await _notifyParentFolderProject(targetDirWithSuffix);
-
-  // If delete source
-  if (deleteSource) {
-    // Use deleteProject to handle metadata cleanup for the source
-    await deleteProject(sourceName);
-  }
+  throw Exception('Copy tracking project is not supported for tracking packages');
 }
 
 // Map<String, int> _computeUnifiedMapping(List<GraphResponse> graphs) {
