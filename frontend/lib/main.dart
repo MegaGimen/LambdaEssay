@@ -2357,9 +2357,40 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                TextField(
-                  controller: nameCtrl,
-                  decoration: const InputDecoration(labelText: '追踪包文件路径(.tracking)'),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: nameCtrl,
+                        readOnly: true,
+                        decoration: const InputDecoration(
+                          labelText: '追踪包文件路径(.tracking)',
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.save_alt),
+                      tooltip: '选择保存位置',
+                      onPressed: () async {
+                        String? outputFile =
+                            await FilePicker.platform.saveFile(
+                          dialogTitle: '新建追踪包',
+                          fileName: 'new_project.tracking',
+                          type: FileType.custom,
+                          allowedExtensions: ['tracking'],
+                        );
+                        if (outputFile != null) {
+                          if (!outputFile
+                              .toLowerCase()
+                              .endsWith('.tracking')) {
+                            outputFile =
+                                p.setExtension(outputFile, '.tracking');
+                          }
+                          nameCtrl.text = outputFile;
+                        }
+                      },
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 8),
                 Row(
@@ -2368,18 +2399,18 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                       child: TextField(
                         controller: docxCtrl,
                         decoration: const InputDecoration(
-                          labelText: 'docx文件路径或文件夹',
+                          labelText: 'docx文件路径或文件夹(可选)',
                         ),
                       ),
                     ),
                     IconButton(
                       icon: const Icon(Icons.insert_drive_file),
-                      tooltip: '选择docx或tracking文件',
+                      tooltip: '选择docx文件',
                       onPressed: () async {
                         FilePickerResult? result =
                             await FilePicker.platform.pickFiles(
                           type: FileType.custom,
-                          allowedExtensions: ['docx', 'tracking'],
+                          allowedExtensions: ['docx'],
                         );
                         if (result != null &&
                             result.files.single.path != null) {
@@ -2471,20 +2502,29 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           isFolderProject = false;
           subRepos = [];
         });
-        final up = await _postJson('http://localhost:8080/track/update', {
-          'packagePath': packagePath,
-          'opIdentical': false,
-        });
-        if (!mounted) return;
-        setState(() {
-          working = WorkingState(
-            changed: up['workingChanged'] == true,
-            baseId: up['head'] as String?,
-          );
-        });
+        if (docx.isNotEmpty) {
+          final up = await _postJson('http://localhost:8080/track/update', {
+            'packagePath': packagePath,
+            'opIdentical': false,
+          });
+          if (!mounted) return;
+          if (up['needDocx'] != true) {
+            setState(() {
+              working = WorkingState(
+                changed: up['workingChanged'] == true,
+                baseId: up['head'] as String?,
+              );
+            });
+          }
+        } else {
+          setState(() {
+            working = WorkingState(changed: false, baseId: null);
+          });
+        }
         await _load();
       }
     } catch (e) {
+      print('Create tracking project failed: $e');
       if (mounted) setState(() => error = e.toString());
     }
   }
