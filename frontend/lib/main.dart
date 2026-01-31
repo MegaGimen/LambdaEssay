@@ -3128,10 +3128,6 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       value: 'delete',
       child: Text('删除项目', style: TextStyle(color: Colors.red)),
     ));
-    items.add(const PopupMenuItem(
-      value: 'import',
-      child: Text('导入已有追踪项目'),
-    ));
 
     final position = RelativeRect.fromLTRB(
       details.globalPosition.dx,
