@@ -960,6 +960,84 @@ Future<void> main(List<String> args) async {
     }
   });
 
+  // 🔥 新增：AI 对比端点
+  router.post('/compare_ai', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    
+    final repoPath = _sanitizePath(data['repoPath'] as String?);
+    final commit1 = (data['commit1'] as String? ?? '').trim();
+    final commit2 = (data['commit2'] as String? ?? '').trim();
+    final docType = (data['docType'] as String? ?? 'word').trim();
+    
+    if (repoPath.isEmpty || commit1.isEmpty || commit2.isEmpty) {
+      return _cors(Response.badRequest(
+        body: jsonEncode({'error': 'repoPath, commit1, commit2 不能为空'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+      ));
+    }
+    
+    try {
+      print('[API] AI对比请求: $commit1 vs $commit2 ($docType)');
+      
+      final result = await compareCommitsWithAI(
+        repoPath,
+        commit1,
+        commit2,
+        docType: docType,
+      );
+      
+      return _cors(Response.ok(jsonEncode({
+        'success': true,
+        'commit1': commit1,
+        'commit2': commit2,
+        'docType': docType,
+        'result': result,
+      }), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      print('[API] AI对比失败: $e');
+      return _cors(Response.internalServerError(
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+      ));
+    }
+  });
+
+  // 🔥 新增：AI 缓存统计端点
+  router.get('/ai_cache/stats', (Request req) async {
+    try {
+      final stats = await AIDiffService.getCacheStats();
+      return _cors(Response.ok(jsonEncode(stats), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response.internalServerError(
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+      ));
+    }
+  });
+
+  // 🔥 新增：清空 AI 缓存端点
+  router.delete('/ai_cache', (Request req) async {
+    try {
+      final deleted = await AIDiffService.clearCache();
+      return _cors(Response.ok(jsonEncode({
+        'success': true,
+        'deleted': deleted,
+      }), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response.internalServerError(
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+      ));
+    }
+  });
+
   router.post('/preview_cache', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;

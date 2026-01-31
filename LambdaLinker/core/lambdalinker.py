@@ -8,6 +8,7 @@ from dataclasses import asdict
 from typing import Any, Callable, Optional
 
 from .agent import LLMInvoker, UserPrompt, default_agent_from_env
+from .cache_manager import get_cached_result, save_cached_result
 from .output_parser import parse_json_output
 from .prompts import build_prompts
 from .rendering import render_document
@@ -95,7 +96,14 @@ def compare_word_docs(
     mcp_config_path: Optional[str] = None,
     mcp_server_name: Optional[str] = None,
     include_comments: bool = False,
+    use_cache: bool = True,
 ) -> dict:
+    # 🔥 检查缓存
+    if use_cache:
+        cached = get_cached_result(doc_a_path, doc_b_path, doc_type="word")
+        if cached is not None:
+            logging.getLogger(__name__).info("✅ 使用缓存结果（Word）")
+            return cached
     paragraphs_a = read_docx_paragraphs(
         doc_a_path,
         use_mcp=use_mcp,
@@ -178,7 +186,7 @@ def compare_word_docs(
     key_changes = parsed.get("key_changes")
     differences = format_bullet_points(summary)
 
-    return {
+    result = {
         "summary": summary,
         "analysis": analysis,
         "key_changes": key_changes,
@@ -186,6 +194,12 @@ def compare_word_docs(
         "raw_output": raw_output,
         "stats": asdict(stats),
     }
+    
+    # 🔥 保存到缓存
+    if use_cache:
+        save_cached_result(doc_a_path, doc_b_path, result, doc_type="word")
+    
+    return result
 
 
 def compare_ppt_decks(
@@ -203,10 +217,17 @@ def compare_ppt_decks(
     mcp_config_path: Optional[str] = None,
     mcp_server_name: Optional[str] = None,
     max_slides: Optional[int] = None,
+    use_cache: bool = True,
 ) -> dict:
     """
     读取两个 .pptx 文件（通过 MarkItDown MCP 转 Markdown），由 LLM 进行语义级别对比。
     """
+    # 🔥 检查缓存
+    if use_cache:
+        cached = get_cached_result(ppt_a_path, ppt_b_path, doc_type="ppt")
+        if cached is not None:
+            logging.getLogger(__name__).info("✅ 使用缓存结果（PPT）")
+            return cached
     blocks_a = read_ppt_blocks(
         ppt_a_path,
         use_mcp=use_mcp,
@@ -287,7 +308,14 @@ def compare_excel_docs(
     mcp_server: Optional[str] = None,
     mcp_config_path: Optional[str] = None,
     mcp_server_name: Optional[str] = None,
+    use_cache: bool = True,
 ) -> dict:
+    # 🔥 检查缓存
+    if use_cache:
+        cached = get_cached_result(excel_a_path, excel_b_path, doc_type="excel")
+        if cached is not None:
+            logging.getLogger(__name__).info("✅ 使用缓存结果（Excel）")
+            return cached
     for path in (excel_a_path, excel_b_path):
         if not os.path.exists(path):
             raise FileNotFoundError(f"File not found: {path}")
@@ -357,7 +385,7 @@ def compare_excel_docs(
     key_changes = parsed.get("key_changes")
     differences = format_bullet_points(summary)
 
-    return {
+    result = {
         "summary": summary,
         "analysis": analysis,
         "key_changes": key_changes,
@@ -365,6 +393,12 @@ def compare_excel_docs(
         "raw_output": raw_output,
         "stats": asdict(stats),
     }
+    
+    # 🔥 保存到缓存
+    if use_cache:
+        save_cached_result(excel_a_path, excel_b_path, result, doc_type="excel")
+    
+    return result
 
 
 def call_llm(

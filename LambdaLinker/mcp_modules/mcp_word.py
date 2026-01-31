@@ -73,8 +73,34 @@ def path_to_uri(path: str) -> str:
 
 
 def run_async(coro: Any) -> Any:
+    """运行异步协程，兼容已有事件循环"""
     try:
-        asyncio.get_running_loop()
+        loop = asyncio.get_running_loop()
+        # 如果已经在事件循环中，创建新的线程来运行
+        import concurrent.futures
+        import threading
+        
+        result = None
+        exception = None
+        
+        def run_in_thread():
+            nonlocal result, exception
+            try:
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
+                result = new_loop.run_until_complete(coro)
+                new_loop.close()
+            except Exception as e:
+                exception = e
+        
+        thread = threading.Thread(target=run_in_thread)
+        thread.start()
+        thread.join()
+        
+        if exception:
+            raise exception
+        return result
+        
     except RuntimeError:
+        # 没有运行中的事件循环，直接运行
         return asyncio.run(coro)
-    raise RuntimeError("Detected a running event loop; call this from async context.")

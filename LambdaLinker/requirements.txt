@@ -5,14 +5,19 @@ openai
 mcp
 fastmcp
 
-# Office 文档处理
+# Office document processing
 python-docx
 python-pptx
 markitdown
 
-# 文档转换工具
+# Document conversion tools
 msoffcrypto-tool
 docx2pdf
 
-# 环境变量管理
+# Environment variables
 python-dotenv
+
+# Web API server (for Dart integration)
+fastapi
+uvicorn[standard]
+pydantic

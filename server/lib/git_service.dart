@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'models.dart';
+import 'ai_diff_service.dart';  // 🔥 新增：AI 对比服务
 
 import 'package:crypto/crypto.dart';
 
@@ -1600,6 +1601,119 @@ Future<Uint8List> compareCommits(
       } catch (_) {}
     }
   });
+}
+
+// 🔥 新增：AI 语义对比（带缓存）
+/// 使用 AI 对比两个 commit 的文档差异
+/// 
+/// [repoPath] 仓库路径
+/// [commit1] 第一个 commit ID
+/// [commit2] 第二个 commit ID
+/// [docType] 文档类型: word, ppt, excel (默认: word)
+/// 
+/// 返回: AI 分析结果 (JSON)
+Future<Map<String, dynamic>> compareCommitsWithAI(
+  String repoPath,
+  String commit1,
+  String commit2, {
+  String docType = 'word',
+}) async {
+  // 检查 AI 服务是否可用
+  final available = await AIDiffService.isAvailable();
+  if (!available) {
+    throw Exception('AI 服务不可用，请确保 Python API 服务已启动 (端口 8765)');
+  }
+  
+  // 使用锁保护
+  return _withRepoLock(repoPath, () async {
+    final tmpDir = await Directory.systemTemp.createTemp('ai_cmp_');
+    
+    try {
+      // 确定文件扩展名
+      final ext = docType == 'word' ? '.docx' 
+                : docType == 'ppt' ? '.pptx' 
+                : docType == 'excel' ? '.xlsx'
+                : '.docx';
+      
+      final doc1Path = p.join(tmpDir.path, 'doc1$ext');
+      final doc2Path = p.join(tmpDir.path, 'doc2$ext');
+      
+      print('[AI对比] 提取文档: $commit1 vs $commit2 ($docType)');
+      
+      // 提取两个 commit 的文档
+      await _extractDocFromCommit(repoPath, commit1, doc1Path);
+      await _extractDocFromCommit(repoPath, commit2, doc2Path);
+      
+      // 验证文件存在
+      if (!await File(doc1Path).exists()) {
+        throw Exception('无法提取文档 (commit: $commit1)');
+      }
+      if (!await File(doc2Path).exists()) {
+        throw Exception('无法提取文档 (commit: $commit2)');
+      }
+      
+      print('[AI对比] 调用 AI 服务...');
+      
+      // 调用 AI 服务（自动使用缓存）
+      final result = await AIDiffService.compareDocuments(
+        doc1Path,
+        doc2Path,
+        docType,
+        useCache: true,
+        useMcp: true,
+      );
+      
+      print('[AI对比] 分析完成');
+      
+      return result;
+    } catch (e) {
+      print('[AI对比] 错误: $e');
+      rethrow;
+    } finally {
+      // 清理临时文件
+      try {
+        await tmpDir.delete(recursive: true);
+      } catch (_) {}
+    }
+  });
+}
+
+/// 从 commit 提取文档文件
+/// 
+/// [repoPath] 仓库路径
+/// [commitId] commit ID
+/// [outputPath] 输出文件路径
+Future<void> _extractDocFromCommit(
+  String repoPath,
+  String commitId,
+  String outputPath,
+) async {
+  // 创建临时目录
+  final tmpDir = await Directory.systemTemp.createTemp('extract_');
+  
+  try {
+    // 使用 git show 命令提取文件
+    final docPath = p.join(kContentDirName, kRepoDocxName);
+    
+    final result = await Process.run(
+      'mingw64/bin/git.exe',
+      ['show', '$commitId:$docPath'],
+      workingDirectory: repoPath,
+      stdoutEncoding: null,  // 二进制输出
+    );
+    
+    if (result.exitCode != 0) {
+      throw Exception('提取文档失败 (commit: $commitId): ${result.stderr}');
+    }
+    
+    // 写入文件
+    await File(outputPath).writeAsBytes(result.stdout as List<int>);
+    
+  } finally {
+    try {
+      await tmpDir.delete(recursive: true);
+    } catch (_) {}
+  }
 }
 
 Future<void> _ensureFolderProjectStructure(String projDir, String docxPath,

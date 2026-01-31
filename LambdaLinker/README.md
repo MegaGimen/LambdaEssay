@@ -7,6 +7,7 @@
 - ✅ **Word 文档对比** - 支持文本、评论、图片的语义分析
 - ✅ **PPT 演示文稿对比** - 支持幻灯片内容变化检测
 - ✅ **Excel 表格对比** - 支持数据变化分析
+- ✅ **智能缓存机制** - 自动缓存对比结果，避免重复调用 LLM
 - ✅ **智能图片描述** - 使用视觉 LLM 生成图片内容描述
 - ✅ **评论追踪** - 检测 Word 文档评论变化（作者、内容、上下文）
 - ✅ **多格式报告** - 生成 Markdown 格式的对比报告
@@ -17,6 +18,7 @@
 .
 ├── core/                      # 核心模块
 │   ├── agent.py              # LLM 客户端封装
+│   ├── cache_manager.py      # AI 缓存管理器（新增）
 │   ├── lambdalinker.py       # 主入口（对比函数）
 │   ├── output_parser.py      # LLM 输出解析
 │   ├── prompts.py            # Prompt 模板构建
@@ -38,6 +40,8 @@
 ├── reports/                   # 对比报告输出目录
 ├── mcp-config.json           # MCP 配置
 ├── runtest.py                # 测试脚本
+├── test_cache.py             # 缓存测试脚本（新增）
+├── cache_cli.py              # 缓存管理CLI工具（新增）
 └── requirements.txt          # Python 依赖
 ```
 
@@ -70,6 +74,12 @@ INCLUDE_COMMENTS=1
 INCLUDE_IMAGES=1
 PRINT_PROMPTS=0
 
+# 缓存配置（可选）
+LAMBDALINKER_CACHE_ENABLED=1
+LAMBDALINKER_CACHE_DIR=  # 留空使用默认位置（Windows: AppData/LambdaLinker_cache）
+LAMBDALINKER_CACHE_MAX_SIZE_MB=500
+LAMBDALINKER_CACHE_MAX_ENTRIES=1000
+
 # MCP 配置
 MCP_OFFICE_CONFIG=./mcp-config.json
 MCP_SERVER_NAME=markitdown
@@ -94,6 +104,22 @@ python runtest.py all
 
 测试报告将自动保存到 `reports/` 目录。
 
+### 缓存管理
+
+```bash
+# 查看缓存统计
+python cache_cli.py stats
+
+# 列出所有缓存
+python cache_cli.py list
+
+# 清空缓存
+python cache_cli.py clear
+
+# 测试缓存性能
+python test_cache.py performance
+```
+
 ### 使用示例
 
 #### Word 文档对比
@@ -111,6 +137,7 @@ result = compare_word_docs(
     language="zh",
     use_mcp=True,
     include_comments=True,
+    use_cache=True,  # 启用缓存（默认已启用）
 )
 
 print(result["differences"])
@@ -176,6 +203,7 @@ result = compare_excel_docs(
 - **fastmcp** - MCP 服务器实现
 - **OpenAI API** - LLM 语义分析
 - **视觉 LLM** - 图片内容描述生成
+- **智能缓存** - 基于文件哈希的结果缓存系统
 
 ## 环境变量说明
 
@@ -189,6 +217,9 @@ result = compare_excel_docs(
 | `INCLUDE_COMMENTS` | ❌ | 是否包含评论对比（默认: 0） |
 | `INCLUDE_IMAGES` | ❌ | 是否包含图片对比（默认: 0） |
 | `PRINT_PROMPTS` | ❌ | 是否打印提示词（默认: 0） |
+| `LAMBDALINKER_CACHE_ENABLED` | ❌ | 是否启用缓存（默认: 1） |
+| `LAMBDALINKER_CACHE_MAX_SIZE_MB` | ❌ | 缓存最大大小MB（默认: 500） |
+| `LAMBDALINKER_CACHE_MAX_ENTRIES` | ❌ | 缓存最大条目数（默认: 1000） |
 
 ## 注意事项
 
@@ -197,6 +228,11 @@ result = compare_excel_docs(
 3. MCP 服务器配置在 `mcp-config.json` 中
 4. 建议使用环境变量管理敏感配置
 5. Windows 运行时需要设置 UTF-8 编码输出
+6. **缓存功能**：
+   - 默认启用，基于文件哈希自动缓存结果
+   - 缓存位置：Windows `AppData/LambdaLinker_cache`，Linux/Mac `~/.cache/LambdaLinker`
+   - 相同文件对比将直接返回缓存结果（速度提升 100x+）
+   - 可通过 `cache_cli.py` 管理缓存
 
 ## 许可证
 
