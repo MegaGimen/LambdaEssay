@@ -1342,9 +1342,12 @@ Future<void> _packTrackingDirectory(
   int dirCount = 0;
 
   void addEntry(String base, FileSystemEntity entity) {
-    if (entity.path.endsWith(kWorkspaceMetaFile)) return;
+    print(entity.path);
+    print(kWorkspaceMetaFile);
+    // if (entity.path.endsWith(kWorkspaceMetaFile)) return;
     final rel = p.relative(entity.path, from: base);
     if (entity is File) {
+      print("Add file $entity");
       final data = entity.readAsBytesSync();
       archive.addFile(ArchiveFile(rel, data.length, data));
       fileCount++;
@@ -1355,6 +1358,7 @@ Future<void> _packTrackingDirectory(
     }
     if (entity is Directory) {
       final name = p.basename(entity.path);
+      // final entityDir = Directory(entity.path);
       if (name.toLowerCase().endsWith(kTrackingExt)) {
         print('[pack] 递归打包子跟踪目录：${entity.path}');
         final tmpFile = File(p.join(Directory.systemTemp.path,
@@ -1369,9 +1373,6 @@ Future<void> _packTrackingDirectory(
       }
 
       final children = entity.listSync();
-      if (children.isEmpty) {
-        return;
-      }
       dirCount++;
       for (final child in children) {
         addEntry(base, child);
@@ -1381,6 +1382,7 @@ Future<void> _packTrackingDirectory(
 
   print('[pack] 遍历根目录：$srcDir');
   for (final entity in root.listSync()) {
+    print("[遍历根目录] $entity,$srcDir");
     addEntry(srcDir, entity);
   }
 
@@ -1980,41 +1982,24 @@ Future<Map<String, dynamic>> createTrackingProject(
   dir.createSync(recursive: true);
   print('[createTrackingProject] 项目目录已创建: $projDir');
 
-  // New structure: Create a subfolder with the project name
+  // 创建一个子文件夹，以满足用户要求“文件夹里只有预留的meta文件”
   final projectName = p.basenameWithoutExtension(packagePath);
   final repoPath = p.join(projDir, projectName);
   Directory(repoPath).createSync(recursive: true);
-  print('[createTrackingProject] 仓库目录已创建: $repoPath');
 
-  bool isFolderMode = false;
-  print('[createTrackingProject] 无外部源，将创建空项目');
-
-  print('[createTrackingProject] 初始化单仓库...');
-  await _initSingleRepo(repoPath, null,createGit: false);
-  //只需创建文件夹然后打包。在dir文件夹下新建一个空文件夹
-
-  // We manually write tracking.json to the subfolder (repoPath)
-  // instead of using _writeTracking which defaults to projDir if file missing.
-  // Note: _readTracking calls _trackingFile which now checks subfolder.
-  final tracking = await _readTracking(
-      packagePath); // This might return empty as file doesn't exist yet
-  tracking['name'] = packagePath;
-  tracking['packagePath'] = packagePath;
-  tracking['docxPath'] = ''; //默认新建空项目，未来再导入docx
-  tracking['type'] = 'file';
-  tracking['repoDocxPath'] = p.join(repoPath, kContentDirName);
+  // 只创建预留的meta文件
+  await _writeWorkspaceMeta(projDir, packagePath);
 
   if (packagePath.toLowerCase().endsWith(kTrackingExt)) {
-    print('[createTrackingProject] 以 .tracking 结尾，写入工作区元数据并打包...');
-    await _writeWorkspaceMeta(projDir, packagePath);
+    print('[createTrackingProject] 以 .tracking 结尾，打包...');
     await _exportFolderToTrackingPackage(projDir, packagePath);
   }
 
   print('[createTrackingProject] 项目创建完成，返回信息');
   return {
     'name': packagePath,
-    'repoPath': repoPath,
-    'type': tracking['type'],
+    'repoPath': projDir,
+    'type': 'file',
   };
 }
 
@@ -3648,33 +3633,7 @@ List<File> _findDocxFiles(String rootPath) {
       .toList();
 }
 
-Future<String?> _findStoragePath(String trackingPath) async {
-  final base = _baseDir();
-  final dir = Directory(base);
-  if (!dir.existsSync()) return null;
 
-  final trackingPathNorm = p.normalize(trackingPath);
-
-  try {
-    await for (final entity in dir.list()) {
-      if (entity is Directory) {
-        try {
-          final tracking = await _readTracking(p.basename(entity.path));
-          if (tracking.containsKey('docxPath')) {
-            final rootTrackingPath = p.normalize(tracking['docxPath']);
-
-            if (rootTrackingPath == trackingPathNorm ||
-                p.isWithin(rootTrackingPath, trackingPathNorm)) {
-              final rel = p.relative(trackingPathNorm, from: rootTrackingPath);
-              return p.join(entity.path, rel);
-            }
-          }
-        } catch (_) {}
-      }
-    }
-  } catch (_) {}
-  return null;
-}
 
 Future<void> copyTrackingProject(
     String sourceName, String targetRelPath, bool deleteSource) async {
