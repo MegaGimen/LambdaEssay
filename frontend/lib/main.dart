@@ -1700,6 +1700,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       setState(() => error = '请先登录');
       return;
     }
+    if (!mounted) return;
 
     // Mode Selection
     final mode = await showDialog<String>(
@@ -2029,7 +2030,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     final sourceCtrl = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('导入文档/文件夹到追踪包'),
         content: SizedBox(
           width: 500,
@@ -2077,10 +2078,10 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
+              onPressed: () => Navigator.pop(dialogContext, false),
               child: const Text('取消')),
           ElevatedButton(
-              onPressed: () => Navigator.pop(context, true),
+              onPressed: () => Navigator.pop(dialogContext, true),
               child: const Text('导入')),
         ],
       ),
@@ -2134,6 +2135,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       exists = await File(_selectedFilePath!).exists();
     }
     if (!exists) return;
+    if (!mounted) return;
 
     final confirm = forcedelete
         ? true
@@ -3071,9 +3073,11 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         await _onUpdateRepoAction(forcePull: true, opIdentical: false);
       }
     } catch (e) {
-      setState(() => error = e.toString());
+      if (mounted) {
+        setState(() => error = e.toString());
+      }
     } finally {
-      setState(() => loading = false);
+      if (mounted) setState(() => loading = false);
     }
   }
 
@@ -3091,9 +3095,9 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             .showSnackBar(const SnackBar(content: Text('文件夹同步完成')));
       }
     } catch (e) {
-      setState(() => error = e.toString());
+      if (mounted) setState(() => error = e.toString());
     } finally {
-      setState(() => loading = false);
+      if (mounted) setState(() => loading = false);
     }
   }
 
