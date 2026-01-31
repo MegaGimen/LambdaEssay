@@ -663,8 +663,6 @@ Future<bool> _isFolderProject(String repoPath) async {
   return true;
 }
 
-
-
 Future<void> _updateFolderMeta(String parentRepoPath, String childRelPath,
     String childName, String childRemoteUrl) async {
   return _withRepoLock(parentRepoPath, () async {
@@ -1220,7 +1218,8 @@ String _workspaceDirForPackage(String packagePath) {
   return p.join(_workspaceBaseDir(), _packageKey(packagePath));
 }
 
-Future<void> _writeWorkspaceMeta(String workspaceDir, String packagePath) async {
+Future<void> _writeWorkspaceMeta(
+    String workspaceDir, String packagePath) async {
   final f = File(p.join(workspaceDir, kWorkspaceMetaFile));
   await f.writeAsString(jsonEncode({'packagePath': packagePath}));
 }
@@ -1330,12 +1329,17 @@ Future<void> _expandTrackingEntries(String rootDir) async {
   }
 }
 
-Future<void> _packTrackingDirectory(String srcDir, String outPackagePath) async {
+Future<void> _packTrackingDirectory(
+    String srcDir, String outPackagePath) async {
+  print('[pack] 开始打包，srcDir=$srcDir, outPackagePath=$outPackagePath');
   final archive = Archive();
   final root = Directory(srcDir);
   if (!root.existsSync()) {
     throw Exception('Tracking workspace not found: $srcDir');
   }
+
+  int fileCount = 0;
+  int dirCount = 0;
 
   void addEntry(String base, FileSystemEntity entity) {
     if (entity.path.endsWith(kWorkspaceMetaFile)) return;
@@ -1343,13 +1347,17 @@ Future<void> _packTrackingDirectory(String srcDir, String outPackagePath) async 
     if (entity is File) {
       final data = entity.readAsBytesSync();
       archive.addFile(ArchiveFile(rel, data.length, data));
+      fileCount++;
+      if (fileCount % 50 == 0) {
+        print('[pack] 已添加 $fileCount 个文件，当前：${entity.path}');
+      }
       return;
     }
     if (entity is Directory) {
       final name = p.basename(entity.path);
       if (name.toLowerCase().endsWith(kTrackingExt)) {
-        final tmpFile = File(p.join(
-            Directory.systemTemp.path,
+        print('[pack] 递归打包子跟踪目录：${entity.path}');
+        final tmpFile = File(p.join(Directory.systemTemp.path,
             '${DateTime.now().microsecondsSinceEpoch}.tracking'));
         _packTrackingDirectory(entity.path, tmpFile.path);
         final data = tmpFile.readAsBytesSync();
@@ -1362,26 +1370,36 @@ Future<void> _packTrackingDirectory(String srcDir, String outPackagePath) async 
 
       final children = entity.listSync();
       if (children.isEmpty) {
-        archive.addFile(ArchiveFile('$rel/', 0, []));
         return;
       }
+      dirCount++;
       for (final child in children) {
         addEntry(base, child);
       }
     }
   }
 
+  print('[pack] 遍历根目录：$srcDir');
   for (final entity in root.listSync()) {
     addEntry(srcDir, entity);
   }
 
-  final bytes = ZipEncoder().encode(archive);
-  if (bytes == null) {
-    throw Exception('Failed to encode tracking package');
+  print('[pack] 打包完成，文件数：$fileCount，目录数：$dirCount，开始编码…');
+  try {
+    final bytes = ZipEncoder().encode(archive);
+    if (bytes == null) {
+      throw Exception('Failed to encode tracking package');
+    }
+    print('[pack] 编码成功，字节数：${bytes.length}，写出到：$outPackagePath');
+    final outFile = File(outPackagePath);
+    outFile.parent.createSync(recursive: true);
+    outFile.writeAsBytesSync(bytes, flush: true);
+    print('[pack] 写出完成');
+  } catch (e, s) {
+    print('[pack] 编码失败: $e');
+    print(s);
+    rethrow;
   }
-  final outFile = File(outPackagePath);
-  outFile.parent.createSync(recursive: true);
-  outFile.writeAsBytesSync(bytes, flush: true);
 }
 
 Future<String> _ensureWorkspace(String packagePath) async {
@@ -1863,9 +1881,8 @@ Future<void> _ensureFolderProjectStructure(String projDir, String docxPath,
     if (p.basename(file.path).startsWith('~\$')) continue;
 
     final relPath = p.relative(file.path, from: docxPath);
-    final relTrackingPath = trackingExt.isNotEmpty
-        ? p.setExtension(relPath, trackingExt)
-        : relPath;
+    final relTrackingPath =
+        trackingExt.isNotEmpty ? p.setExtension(relPath, trackingExt) : relPath;
     final targetRepoPath = p.join(projDir, relTrackingPath);
 
     if (!forceUpdate) {
@@ -1881,8 +1898,7 @@ Future<void> _ensureFolderProjectStructure(String projDir, String docxPath,
   }
 
   // 3. Update folder_meta.json
-  await _scanAndUpdateFolderMeta(projDir, docxPath,
-      trackingExt: trackingExt);
+  await _scanAndUpdateFolderMeta(projDir, docxPath, trackingExt: trackingExt);
 }
 
 Future<void> _scanAndUpdateFolderMeta(String projDir, String docxPath,
@@ -1905,9 +1921,8 @@ Future<void> _scanAndUpdateFolderMeta(String projDir, String docxPath,
     if (p.basename(file.path).startsWith('~\$')) continue;
 
     final relPath = p.relative(file.path, from: docxPath);
-    final relTrackingPath = trackingExt.isNotEmpty
-        ? p.setExtension(relPath, trackingExt)
-        : relPath;
+    final relTrackingPath =
+        trackingExt.isNotEmpty ? p.setExtension(relPath, trackingExt) : relPath;
     final childName = p.basenameWithoutExtension(file.path);
 
     // Keep existing remote info if available
@@ -1940,34 +1955,44 @@ Future<void> _scanAndUpdateFolderMeta(String projDir, String docxPath,
 
 Future<Map<String, dynamic>> createTrackingProject(
     String name, String? docxPath) async {
+  print('[createTrackingProject] 开始创建项目，name=$name, docxPath=$docxPath');
   final packagePath = _sanitizeFsPath(name);
   final projDir = _projectDir(packagePath);
   final dir = Directory(projDir);
 
   if (dir.existsSync()) {
+    print('[createTrackingProject] 清理已存在的项目目录: $projDir');
     try {
       dir.deleteSync(recursive: true);
     } catch (e) {
+      print('[createTrackingProject] 清理失败: $e');
       throw Exception('Failed to clear tracking workspace: $e');
     }
   }
   dir.createSync(recursive: true);
+  print('[createTrackingProject] 项目目录已创建: $projDir');
 
   bool isFolderMode = false;
   final normalizedDocx = docxPath == null ? '' : _sanitizeFsPath(docxPath);
   if (normalizedDocx.isNotEmpty) {
     if (FileSystemEntity.isDirectorySync(normalizedDocx)) {
       isFolderMode = true;
+      print('[createTrackingProject] 检测到文件夹模式，docxPath=$normalizedDocx');
+    } else {
+      print('[createTrackingProject] 检测到单文件模式，docxPath=$normalizedDocx');
     }
+  } else {
+    print('[createTrackingProject] 无外部源，将创建空项目');
   }
 
   if (isFolderMode) {
+    print('[createTrackingProject] 初始化文件夹结构...');
     await _ensureFolderProjectStructure(projDir, normalizedDocx,
-        forceUpdate: true,
-        trackingExt: kTrackingExt,
-        packagePath: packagePath);
+        forceUpdate: true, trackingExt: kTrackingExt, packagePath: packagePath);
   } else {
-    await _initSingleRepo(projDir, normalizedDocx.isEmpty ? null : normalizedDocx);
+    print('[createTrackingProject] 初始化单仓库...');
+    await _initSingleRepo(
+        projDir, normalizedDocx.isEmpty ? null : normalizedDocx);
   }
 
   final tracking = await _readTracking(packagePath);
@@ -1981,12 +2006,15 @@ Future<Map<String, dynamic>> createTrackingProject(
   }
   tracking['repoDocxPath'] = p.join(projDir, kContentDirName);
   await _writeTracking(packagePath, tracking);
+  print('[createTrackingProject] tracking.json 已写入: ${tracking}');
 
   if (packagePath.toLowerCase().endsWith(kTrackingExt)) {
+    print('[createTrackingProject] 以 .tracking 结尾，写入工作区元数据并打包...');
     await _writeWorkspaceMeta(projDir, packagePath);
     await _exportFolderToTrackingPackage(projDir, packagePath);
   }
 
+  print('[createTrackingProject] 项目创建完成，返回信息');
   return {
     'name': packagePath,
     'repoPath': projDir,
@@ -2207,9 +2235,8 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
   final tracking = await _readTracking(packagePath);
 
   if (tracking.isEmpty) {
-    final detectedType = Directory(p.join(projDir, '.git')).existsSync()
-        ? 'file'
-        : 'folder';
+    final detectedType =
+        Directory(p.join(projDir, '.git')).existsSync() ? 'file' : 'folder';
     final initial = {
       'name': packagePath,
       'packagePath': packagePath,
@@ -2243,7 +2270,8 @@ Future<Map<String, dynamic>?> getTrackingInfo(String repoPath) async {
   final root = await _findWorkspaceRoot(normalized);
   if (root == null) return null;
   final packagePath = await _readWorkspacePackagePath(root) ?? '';
-  final tracking = await _readTracking(packagePath.isNotEmpty ? packagePath : root);
+  final tracking =
+      await _readTracking(packagePath.isNotEmpty ? packagePath : root);
   return {
     'name': packagePath.isNotEmpty ? packagePath : root,
     'docxPath': tracking['docxPath'],
@@ -2792,7 +2820,8 @@ Future<void> _ensureUniqueRemote(
   // Check if target remote exists and has correct URL
   bool exists = false;
   try {
-    final currentUrl = await _runGit(['remote', 'get-url', remoteName], repoPath);
+    final currentUrl =
+        await _runGit(['remote', 'get-url', remoteName], repoPath);
     if (currentUrl.isNotEmpty && currentUrl.first.trim() == remoteUrl) {
       exists = true;
     } else {
@@ -3032,7 +3061,8 @@ Future<Map<String, dynamic>> pullFromRemote(
               'Pulling sub-repo as hashed remote: $effectiveRemoteRepoName (rel: $normalizedRelPath)');
         } else {
           effectiveRemoteRepoName = p.basename(repoPath);
-          print("DEBUG: Parent folder not found for $repoPath. Using basename as remote name.");
+          print(
+              "DEBUG: Parent folder not found for $repoPath. Using basename as remote name.");
         }
       }
     }
@@ -3622,7 +3652,8 @@ Future<String?> _findStoragePath(String trackingPath) async {
 
 Future<void> copyTrackingProject(
     String sourceName, String targetRelPath, bool deleteSource) async {
-  throw Exception('Copy tracking project is not supported for tracking packages');
+  throw Exception(
+      'Copy tracking project is not supported for tracking packages');
 }
 
 // Map<String, int> _computeUnifiedMapping(List<GraphResponse> graphs) {
