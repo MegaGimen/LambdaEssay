@@ -3291,6 +3291,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     print("DEBUG: Double clicked file: $filePath");
 
     final ext = p.extension(filePath).toLowerCase();
+    String? expandedType;
     if (ext == '.tracking') {
       try {
         setState(() => loading = true);
@@ -3298,9 +3299,13 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           'filePath': filePath
         });
         if (!mounted) return;
+        expandedType = resp['type'] as String?;
         
         // Refresh project structure
-        await _onSyncFolder();
+        if (currentProjectName != null) {
+          await _openProject(currentProjectName!,
+              isFolderProject: isFolderProject);
+        }
         
         if (resp['type'] == 'file') {
           // If it is a repo, fall through to repo matching logic
@@ -3310,9 +3315,9 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
               SnackBar(content: Text('已展开文件夹: ${p.basename(filePath)}')),
             );
           }
-          return;
         }
       } catch (e) {
+        print('Expand tracking failed: $e');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('展开失败: $e')),
@@ -3365,6 +3370,14 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       if (!mounted) return;
       await _load();
     } else {
+      if (ext == '.tracking') {
+        try {
+          await _openProject(filePath, isFolderProject: expandedType == 'folder');
+          return;
+        } catch (e) {
+          print('Open nested tracking failed: $e');
+        }
+      }
       print("DEBUG: No matching repo found for $filePath");
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -3554,6 +3567,9 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
+    final showFolderHint = isFolderProject &&
+        (pathCtrl.text.trim().isEmpty ||
+            p.equals(pathCtrl.text.trim(), packageRootCtrl.text.trim()));
     return Listener(
       onPointerSignal: (event) {
         if (event is PointerScrollEvent) {
@@ -3922,7 +3938,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                       Expanded(
                         child: data == null
                             ? const Center(child: Text('输入路径并点击加载'))
-                            : isFolderProject
+                            : showFolderHint
                                 ? const Center(
                                     child: Text(
                                       '文件夹模式下，请在左侧选择文件以查看其版本历史',

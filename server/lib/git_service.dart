@@ -1815,6 +1815,10 @@ String _projectDir(String name) {
   final normalized = _sanitizeFsPath(name);
   if (p.isAbsolute(normalized)) {
     if (normalized.toLowerCase().endsWith(kTrackingExt)) {
+      final expandedDir = Directory(normalized);
+      if (expandedDir.existsSync()) {
+        return normalized;
+      }
       return _workspaceDirForPackage(normalized);
     }
     return normalized;
@@ -2137,8 +2141,8 @@ Future<void> _initTrackingRepo(
 Future<List<Map<String, dynamic>>> listProjectRepos(String name) async {
   final projDir = _projectDir(name);
   final tracking = await _readTracking(name);
-
-  if (tracking['type'] != 'folder') {
+  final isFolder = await _isFolderProject(projDir);
+  if (!isFolder) {
     return [
       {'relPath': '.', 'repoPath': projDir, 'docxPath': tracking['docxPath']}
     ];
@@ -2177,10 +2181,9 @@ Future<void> syncFolderProject(String name) async {
   final projDir = _projectDir(name);
   final tracking = await _readTracking(name);
   final sourceRoot = tracking['docxPath'] as String?;
-  final type = tracking['type'];
 
-  if (type != 'folder' || sourceRoot == null) {
-    throw Exception('Not a folder project or docxPath is missing');
+  if (sourceRoot == null) {
+    throw Exception('docxPath is missing');
   }
 
   if (!Directory(sourceRoot).existsSync()) {
@@ -2263,7 +2266,9 @@ Future<void> syncFolderProject(String name) async {
 Future<Map<String, dynamic>> openTrackingProject(String name) async {
   final packagePath = _sanitizeFsPath(name);
   final projDir = packagePath.toLowerCase().endsWith(kTrackingExt)
-      ? await _ensureWorkspace(packagePath)
+      ? (Directory(packagePath).existsSync()
+          ? packagePath
+          : await _ensureWorkspace(packagePath))
       : _projectDir(name);
 
   var repoPath = projDir;
@@ -2290,19 +2295,15 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
     if (zipTracking['docxPath'] != null && zipTracking['docxPath'] != '') {
       print('Recovered docxPath from zip: ${zipTracking['docxPath']}');
       tracking['docxPath'] = zipTracking['docxPath'];
-      if (tracking['type'] == null) tracking['type'] = zipTracking['type'];
       // Persist back to workspace
       await _writeTracking(packagePath, tracking);
     }
   }
 
   if (tracking.isEmpty) {
-    final detectedType =
-        Directory(p.join(repoPath, '.git')).existsSync() ? 'file' : 'folder';
     final initial = {
       'name': packagePath,
       'packagePath': packagePath,
-      'type': detectedType,
     };
     // _writeTracking writes to root by default if file missing,
     // but here we might want to write to repoPath if it's different.
@@ -2317,7 +2318,8 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
   }
 
   // Check and auto-init structure for folder projects if needed
-  if (tracking['type'] == 'folder' && tracking['docxPath'] != null) {
+  final isFolder = await _isFolderProject(repoPath);
+  if (isFolder && tracking['docxPath'] != null) {
     final pkgPath = (tracking['packagePath'] as String?) ?? packagePath;
     await _ensureFolderProjectStructure(repoPath, tracking['docxPath'],
         trackingExt: kTrackingExt, packagePath: pkgPath);
@@ -2331,7 +2333,7 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
     'name': packagePath,
     'repoPath': repoPath,
     'docxPath': tracking['docxPath'],
-    'type': tracking['type'] ?? 'file',
+    'type': isFolder ? 'folder' : 'file',
     'packagePath': packagePath,
   };
 }
@@ -2357,7 +2359,11 @@ Future<Map<String, dynamic>> updateTrackingProject(
   final normalizedName = _sanitizeFsPath(name);
   var projDir = repoPath ?? _projectDir(normalizedName);
   if (repoPath == null && normalizedName.toLowerCase().endsWith(kTrackingExt)) {
-    projDir = await _ensureWorkspace(normalizedName);
+    if (Directory(normalizedName).existsSync()) {
+      projDir = normalizedName;
+    } else {
+      projDir = await _ensureWorkspace(normalizedName);
+    }
     // Resolve repoPath if in subfolder
     final subName = p.basenameWithoutExtension(normalizedName);
     if (subName.isNotEmpty && subName != '.') {
@@ -2431,7 +2437,8 @@ Future<Map<String, dynamic>> updateTrackingProject(
 
       // Check if folder type, if so, we are done with tracking update, return.
       // Folder type projects are containers, not git repos themselves.
-      if (tracking['type'] == 'folder') {
+      final isFolder = await _isFolderProject(projDir);
+      if (isFolder) {
         print(
             '[Perf] Folder project updated. Skipping git operations on root.');
 
@@ -3331,16 +3338,12 @@ Future<Map<String, dynamic>> pullFromRemote(
 
     // Check if it is a folder project (has folder_meta.json)
     if (File(p.join(projDir, 'folder_meta.json')).existsSync()) {
-      // Update tracking.json
       final trackingJsonPath = p.join(projDir, 'tracking.json');
       final tracking = await _readTrackingJson(trackingJsonPath);
-      if (tracking['type'] != 'folder') {
-        tracking['type'] = 'folder';
-        tracking['docxPath'] = projDir; // Root is the docxPath (folder)
+      if (tracking['docxPath'] != projDir) {
+        tracking['docxPath'] = projDir;
         await File(trackingJsonPath).writeAsString(jsonEncode(tracking));
       }
-
-      // Expand
       await _expandFolderProject(projDir);
     }
 
