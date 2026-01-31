@@ -1392,7 +1392,6 @@ Future<void> _packTrackingDirectory(
     }
     print('[pack] 编码成功，字节数：${bytes.length}，写出到：$outPackagePath');
     final outFile = File(outPackagePath);
-    outFile.parent.createSync(recursive: true);
     outFile.writeAsBytesSync(bytes, flush: true);
     print('[pack] 写出完成');
   } catch (e, s) {
@@ -1988,45 +1987,22 @@ Future<Map<String, dynamic>> createTrackingProject(
   print('[createTrackingProject] 仓库目录已创建: $repoPath');
 
   bool isFolderMode = false;
-  final normalizedDocx = docxPath == null ? '' : _sanitizeFsPath(docxPath);
-  if (normalizedDocx.isNotEmpty) {
-    if (FileSystemEntity.isDirectorySync(normalizedDocx)) {
-      isFolderMode = true;
-      print('[createTrackingProject] 检测到文件夹模式，docxPath=$normalizedDocx');
-    } else {
-      print('[createTrackingProject] 检测到单文件模式，docxPath=$normalizedDocx');
-    }
-  } else {
-    print('[createTrackingProject] 无外部源，将创建空项目');
-  }
+  print('[createTrackingProject] 无外部源，将创建空项目');
 
-  if (isFolderMode) {
-    print('[createTrackingProject] 初始化文件夹结构...');
-    await _ensureFolderProjectStructure(repoPath, normalizedDocx,
-        forceUpdate: true, trackingExt: kTrackingExt, packagePath: packagePath);
-  } else {
-    print('[createTrackingProject] 初始化单仓库...');
-    await _initSingleRepo(
-        repoPath, normalizedDocx.isEmpty ? null : normalizedDocx);
-  }
+  print('[createTrackingProject] 初始化单仓库...');
+  await _initSingleRepo(repoPath, null,createGit: false);
+  //只需创建文件夹然后打包。在dir文件夹下新建一个空文件夹
 
   // We manually write tracking.json to the subfolder (repoPath)
   // instead of using _writeTracking which defaults to projDir if file missing.
   // Note: _readTracking calls _trackingFile which now checks subfolder.
-  final tracking = await _readTracking(packagePath); // This might return empty as file doesn't exist yet
+  final tracking = await _readTracking(
+      packagePath); // This might return empty as file doesn't exist yet
   tracking['name'] = packagePath;
   tracking['packagePath'] = packagePath;
-  if (normalizedDocx.isNotEmpty) {
-    tracking['docxPath'] = normalizedDocx;
-    tracking['type'] = isFolderMode ? 'folder' : 'file';
-  } else {
-    tracking['type'] = 'file';
-  }
+  tracking['docxPath'] = ''; //默认新建空项目，未来再导入docx
+  tracking['type'] = 'file';
   tracking['repoDocxPath'] = p.join(repoPath, kContentDirName);
-  
-  final trackingFile = File(p.join(repoPath, 'tracking.json'));
-  await trackingFile.writeAsString(jsonEncode(tracking));
-  print('[createTrackingProject] tracking.json 已写入: $trackingFile');
 
   if (packagePath.toLowerCase().endsWith(kTrackingExt)) {
     print('[createTrackingProject] 以 .tracking 结尾，写入工作区元数据并打包...');
@@ -2084,19 +2060,20 @@ Future<Map<String, dynamic>> importTrackingSource(
   return {'workspacePath': workspace};
 }
 
-Future<void> _initSingleRepo(String repoPath, String? sourceDocxPath) async {
+Future<void> _initSingleRepo(String repoPath, String? sourceDocxPath,
+    {bool createGit = true}) async {
   final dir = Directory(repoPath);
   if (!dir.existsSync()) {
     dir.createSync(recursive: true);
   }
-
-  final gitDir = Directory(p.join(repoPath, '.git'));
-  if (!gitDir.existsSync()) {
-    await _runGit(['init'], repoPath);
-    final gitignore = File(p.join(repoPath, '.gitignore'));
-    await gitignore.writeAsString('tracking.json\n*.docx\n');
+  if (createGit) {
+    final gitDir = Directory(p.join(repoPath, '.git'));
+    if (!gitDir.existsSync()) {
+      await _runGit(['init'], repoPath);
+      final gitignore = File(p.join(repoPath, '.gitignore'));
+      await gitignore.writeAsString('tracking.json\n*.docx\n');
+    }
   }
-
   // Handle doc content
   if (sourceDocxPath != null && sourceDocxPath.trim().isNotEmpty) {
     await _updateContentDocx(repoPath, sourceDocxPath);
@@ -2248,12 +2225,12 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
   final projDir = packagePath.toLowerCase().endsWith(kTrackingExt)
       ? await _ensureWorkspace(packagePath)
       : _projectDir(name);
-  
+
   var repoPath = projDir;
   final subName = p.basenameWithoutExtension(packagePath);
   if (subName.isNotEmpty && subName != '.') {
     final subDir = p.join(projDir, subName);
-    if (Directory(p.join(subDir, '.git')).existsSync() || 
+    if (Directory(p.join(subDir, '.git')).existsSync() ||
         File(p.join(subDir, 'tracking.json')).existsSync()) {
       repoPath = subDir;
     }
@@ -2273,14 +2250,15 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
       'packagePath': packagePath,
       'type': detectedType,
     };
-    // _writeTracking writes to root by default if file missing, 
+    // _writeTracking writes to root by default if file missing,
     // but here we might want to write to repoPath if it's different.
     // However, _writeTracking is not easily overridable without changing signature.
     // We can manually write if repoPath != projDir
     if (repoPath != projDir) {
-       await File(p.join(repoPath, 'tracking.json')).writeAsString(jsonEncode(initial));
+      await File(p.join(repoPath, 'tracking.json'))
+          .writeAsString(jsonEncode(initial));
     } else {
-       await _writeTracking(packagePath, initial);
+      await _writeTracking(packagePath, initial);
     }
   }
 
