@@ -1288,6 +1288,18 @@ Future<void> _extractTrackingPackage(String packagePath, String outDir) async {
 }
 
 Future<Map<String, dynamic>> expandLocalTrackingPackage(String filePath) async {
+  final dir = Directory(filePath);
+  if (dir.existsSync()) {
+    // Already expanded, check content type
+    bool hasTracking = dir.listSync().any((e) => e.path.toLowerCase().endsWith(kTrackingExt));
+    bool hasGit = Directory(p.join(dir.path, '.git')).existsSync();
+    return {
+      'path': filePath,
+      'type': hasTracking ? 'folder' : (hasGit ? 'file' : 'folder'),
+      'hasSubTracking': hasTracking,
+    };
+  }
+
   final file = File(filePath);
   if (!file.existsSync()) {
     throw Exception('File not found: $filePath');

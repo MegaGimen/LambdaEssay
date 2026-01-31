@@ -373,43 +373,57 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
               children: [
                 ...entries.map((entry) {
                   if (entry is Directory) {
-                    // Check if this directory is a docx repo (Solo Project)
-                    // Logic: Has .git AND (Has content.docx OR Has doc_content OR Has ONLY .git)
                     bool isDocxRepo = false;
-                    bool isGit = _isGitRepo(entry);
-                    print("Checking directory: ${path.basename(entry.path)}, isGit: $isGit");
+                    bool isTrackingPkg = path.extension(entry.path).toLowerCase() == '.tracking';
 
-                    if (isGit) {
-                      final contentDocx =
-                          File(path.join(entry.path, 'content.docx'));
-                      final docContent =
-                          Directory(path.join(entry.path, 'doc_content'));
-                      
-                      bool hasContent = contentDocx.existsSync() || docContent.existsSync();
-                      print("Has content: $hasContent (docx: ${contentDocx.existsSync()}, dir: ${docContent.existsSync()})");
+                    if (isTrackingPkg) {
+                      // Rule: Determine if a .tracking is a folder or file by whether it contains .tracking files
+                      bool hasSubTracking = false;
+                      try {
+                        hasSubTracking = entry.listSync().any(
+                            (e) => path.extension(e.path).toLowerCase() == '.tracking');
+                      } catch (_) {}
+                      isDocxRepo = !hasSubTracking;
+                    } else {
+                      // Check if this directory is a docx repo (Solo Project)
+                      // Logic: Has .git AND (Has content.docx OR Has doc_content OR Has ONLY .git)
+                      bool isGit = _isGitRepo(entry);
+                      // print("Checking directory: ${path.basename(entry.path)}, isGit: $isGit");
 
-                      if (hasContent) {
-                        isDocxRepo = true;
-                      } else {
-                        // Check if only .git exists
-                        try {
-                          final children = entry.listSync();
-                          bool hasOther = false;
-                          for (final child in children) {
-                            print("Debug, child: ${path.basename(child.path)}");
-                            if(path.basename(child.path)==".gitignore" || path.basename(child.path)=="tracking.json"){
-                              continue;
+                      if (isGit) {
+                        final contentDocx =
+                            File(path.join(entry.path, 'content.docx'));
+                        final docContent =
+                            Directory(path.join(entry.path, 'doc_content'));
+
+                        bool hasContent =
+                            contentDocx.existsSync() || docContent.existsSync();
+                        // print("Has content: $hasContent (docx: ${contentDocx.existsSync()}, dir: ${docContent.existsSync()})");
+
+                        if (hasContent) {
+                          isDocxRepo = true;
+                        } else {
+                          // Check if only .git exists
+                          try {
+                            final children = entry.listSync();
+                            bool hasOther = false;
+                            for (final child in children) {
+                              // print("Debug, child: ${path.basename(child.path)}");
+                              if (path.basename(child.path) == ".gitignore" ||
+                                  path.basename(child.path) == "tracking.json") {
+                                continue;
+                              }
+                              if (path.basename(child.path) != '.git') {
+                                hasOther = true;
+                                break;
+                              }
                             }
-                            if (path.basename(child.path) != '.git') {
-                              hasOther = true;
-                              break;
+                            if (!hasOther) {
+                              isDocxRepo = true;
                             }
+                          } catch (e) {
+                            print("Error listing children of ${entry.path}: $e");
                           }
-                          if (!hasOther) {
-                            isDocxRepo = true;
-                          }
-                        } catch (e) {
-                          print("Error listing children of ${entry.path}: $e");
                         }
                       }
                     }

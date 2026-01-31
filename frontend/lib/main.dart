@@ -3294,7 +3294,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     if (ext == '.tracking') {
       try {
         setState(() => loading = true);
-        await _postJson('$baseUrl/track/expand', {
+        final resp = await _postJson('$baseUrl/track/expand', {
           'filePath': filePath
         });
         if (!mounted) return;
@@ -3302,10 +3302,15 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         // Refresh project structure
         await _onSyncFolder();
         
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('已展开追踪包: ${p.basename(filePath)}')),
-          );
+        if (resp['type'] == 'file') {
+          // If it is a repo, fall through to repo matching logic
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('已展开文件夹: ${p.basename(filePath)}')),
+            );
+          }
+          return;
         }
       } catch (e) {
         if (mounted) {
@@ -3313,10 +3318,10 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             SnackBar(content: Text('展开失败: $e')),
           );
         }
+        return;
       } finally {
         if (mounted) setState(() => loading = false);
       }
-      return;
     }
 
     Map<String, dynamic>? targetRepo;
