@@ -21,7 +21,9 @@ edges文件定义了所有的需要渲染的合并边，其格式为，第一行
 
 不要进行过分的修改，比如一次删除上千行之类的，更禁止清空或删除文件！！！
 
-注意，我所指的git都不是当前项目的，而是位于APPdata/roaming/gitdocx/<projectname>下的
+注意，我所指的git都不是当前项目的：
+- 如果追踪包是.tracking文件，则工作区位于APPDATA/tracking_workspace/<md5>
+- 如果追踪包不是.tracking文件，则位于APPDATA/roaming/gitdocx/<projectname>
 
 生成commit message，但不要执行实际的git commit。message的格式是：
 
@@ -65,7 +67,7 @@ warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
 同时，任何错误都应当捕获并输出到控制台，方便我排查
 
-本项目分为两个东西，一个叫“追踪对象”，另一个叫“存储地点”。其中追踪对象表示我们要追踪并设置为监控版本的对象，他可以是一个文档，或一个文件夹。另一个是gitdocx下的一个对应的东西，其用git仓库临时存储了这个文档的版本，其路径为APPDATA/gitdocx/<追踪项目名称>
+本项目分为两个东西，一个叫“追踪对象”，另一个叫“存储地点”。其中追踪对象表示我们要追踪并设置为监控版本的对象，他可以是一个文档，或一个文件夹。另一个是追踪包对应的工作区，用git仓库临时存储版本：当追踪包是.tracking文件时，工作区位于APPDATA/tracking_workspace/<md5>；当追踪包不是.tracking文件时，工作区位于APPDATA/roaming/gitdocx/<追踪项目名称>
 
 对于复杂的逻辑，你可以生成一个测试脚本，但是对于简单的逻辑，就不用生成测试脚本了
 
