@@ -1257,6 +1257,13 @@ Future<void> _persistTrackingPackageForRepo(String repoPath) async {
   await _exportFolderToTrackingPackage(root, packagePath);
 }
 
+List<int> _archiveContentBytes(ArchiveFile file) {
+  final content = file.content;
+  if (content is List<int>) return content;
+  if (content is InputStream) return content.toUint8List();
+  return const <int>[];
+}
+
 Future<void> _extractTrackingPackage(String packagePath, String outDir) async {
   final f = File(packagePath);
   if (!f.existsSync()) {
@@ -1269,13 +1276,11 @@ Future<void> _extractTrackingPackage(String packagePath, String outDir) async {
     if (file.isFile) {
       final outFile = File(filename);
       outFile.parent.createSync(recursive: true);
-      final content = file.content;
-      if (content == null) {
+      final bytes = _archiveContentBytes(file);
+      if (bytes.isEmpty) {
         print('Tracking package entry has null content: ${file.name}');
-        outFile.writeAsBytesSync(const <int>[]);
-      } else {
-        outFile.writeAsBytesSync(content as List<int>);
       }
+      outFile.writeAsBytesSync(bytes);
     } else {
       Directory(filename).createSync(recursive: true);
     }
@@ -1297,13 +1302,11 @@ Future<void> _expandTrackingEntries(String rootDir) async {
           if (file.isFile) {
             final outFile = File(filename);
             outFile.parent.createSync(recursive: true);
-            final content = file.content;
-            if (content == null) {
+            final bytes = _archiveContentBytes(file);
+            if (bytes.isEmpty) {
               print('Tracking package entry has null content: ${file.name}');
-              outFile.writeAsBytesSync(const <int>[]);
-            } else {
-              outFile.writeAsBytesSync(content as List<int>);
             }
+            outFile.writeAsBytesSync(bytes);
           } else {
             Directory(filename).createSync(recursive: true);
           }
