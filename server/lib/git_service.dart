@@ -1627,7 +1627,16 @@ Future<Map<String, bool>> ensureCommitPreviewAssets(
 
 File _trackingFile(String name) {
   final dir = _projectDir(name);
-  return File(p.join(dir, 'tracking.json'));
+  final rootFile = File(p.join(dir, 'tracking.json'));
+  if (rootFile.existsSync()) return rootFile;
+
+  final subName = p.basenameWithoutExtension(name);
+  if (subName.isNotEmpty && subName != '.') {
+    final subFile = File(p.join(dir, subName, 'tracking.json'));
+    if (subFile.existsSync()) return subFile;
+  }
+
+  return rootFile;
 }
 
 Future<Map<String, dynamic>> _readTrackingJson(String jsonPath) async {
@@ -1972,6 +1981,12 @@ Future<Map<String, dynamic>> createTrackingProject(
   dir.createSync(recursive: true);
   print('[createTrackingProject] 项目目录已创建: $projDir');
 
+  // New structure: Create a subfolder with the project name
+  final projectName = p.basenameWithoutExtension(packagePath);
+  final repoPath = p.join(projDir, projectName);
+  Directory(repoPath).createSync(recursive: true);
+  print('[createTrackingProject] 仓库目录已创建: $repoPath');
+
   bool isFolderMode = false;
   final normalizedDocx = docxPath == null ? '' : _sanitizeFsPath(docxPath);
   if (normalizedDocx.isNotEmpty) {
@@ -1987,15 +2002,18 @@ Future<Map<String, dynamic>> createTrackingProject(
 
   if (isFolderMode) {
     print('[createTrackingProject] 初始化文件夹结构...');
-    await _ensureFolderProjectStructure(projDir, normalizedDocx,
+    await _ensureFolderProjectStructure(repoPath, normalizedDocx,
         forceUpdate: true, trackingExt: kTrackingExt, packagePath: packagePath);
   } else {
     print('[createTrackingProject] 初始化单仓库...');
     await _initSingleRepo(
-        projDir, normalizedDocx.isEmpty ? null : normalizedDocx);
+        repoPath, normalizedDocx.isEmpty ? null : normalizedDocx);
   }
 
-  final tracking = await _readTracking(packagePath);
+  // We manually write tracking.json to the subfolder (repoPath)
+  // instead of using _writeTracking which defaults to projDir if file missing.
+  // Note: _readTracking calls _trackingFile which now checks subfolder.
+  final tracking = await _readTracking(packagePath); // This might return empty as file doesn't exist yet
   tracking['name'] = packagePath;
   tracking['packagePath'] = packagePath;
   if (normalizedDocx.isNotEmpty) {
@@ -2004,9 +2022,11 @@ Future<Map<String, dynamic>> createTrackingProject(
   } else {
     tracking['type'] = 'file';
   }
-  tracking['repoDocxPath'] = p.join(projDir, kContentDirName);
-  await _writeTracking(packagePath, tracking);
-  print('[createTrackingProject] tracking.json 已写入: ${tracking}');
+  tracking['repoDocxPath'] = p.join(repoPath, kContentDirName);
+  
+  final trackingFile = File(p.join(repoPath, 'tracking.json'));
+  await trackingFile.writeAsString(jsonEncode(tracking));
+  print('[createTrackingProject] tracking.json 已写入: $trackingFile');
 
   if (packagePath.toLowerCase().endsWith(kTrackingExt)) {
     print('[createTrackingProject] 以 .tracking 结尾，写入工作区元数据并打包...');
@@ -2017,7 +2037,7 @@ Future<Map<String, dynamic>> createTrackingProject(
   print('[createTrackingProject] 项目创建完成，返回信息');
   return {
     'name': packagePath,
-    'repoPath': projDir,
+    'repoPath': repoPath,
     'type': tracking['type'],
   };
 }
@@ -2228,7 +2248,18 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
   final projDir = packagePath.toLowerCase().endsWith(kTrackingExt)
       ? await _ensureWorkspace(packagePath)
       : _projectDir(name);
-  final dir = Directory(projDir);
+  
+  var repoPath = projDir;
+  final subName = p.basenameWithoutExtension(packagePath);
+  if (subName.isNotEmpty && subName != '.') {
+    final subDir = p.join(projDir, subName);
+    if (Directory(p.join(subDir, '.git')).existsSync() || 
+        File(p.join(subDir, 'tracking.json')).existsSync()) {
+      repoPath = subDir;
+    }
+  }
+
+  final dir = Directory(repoPath);
   if (!dir.existsSync()) {
     throw Exception('project not found');
   }
@@ -2236,29 +2267,37 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
 
   if (tracking.isEmpty) {
     final detectedType =
-        Directory(p.join(projDir, '.git')).existsSync() ? 'file' : 'folder';
+        Directory(p.join(repoPath, '.git')).existsSync() ? 'file' : 'folder';
     final initial = {
       'name': packagePath,
       'packagePath': packagePath,
       'type': detectedType,
     };
-    await _writeTracking(packagePath, initial);
+    // _writeTracking writes to root by default if file missing, 
+    // but here we might want to write to repoPath if it's different.
+    // However, _writeTracking is not easily overridable without changing signature.
+    // We can manually write if repoPath != projDir
+    if (repoPath != projDir) {
+       await File(p.join(repoPath, 'tracking.json')).writeAsString(jsonEncode(initial));
+    } else {
+       await _writeTracking(packagePath, initial);
+    }
   }
 
   // Check and auto-init structure for folder projects if needed
   if (tracking['type'] == 'folder' && tracking['docxPath'] != null) {
     final pkgPath = (tracking['packagePath'] as String?) ?? packagePath;
-    await _ensureFolderProjectStructure(projDir, tracking['docxPath'],
+    await _ensureFolderProjectStructure(repoPath, tracking['docxPath'],
         trackingExt: kTrackingExt, packagePath: pkgPath);
   }
 
   // Always try to notify parent folder project (if any) to keep metadata fresh
   // This covers the case where we open a sub-project directly
-  await _notifyParentFolderProject(projDir);
+  await _notifyParentFolderProject(repoPath);
 
   return {
     'name': packagePath,
-    'repoPath': projDir,
+    'repoPath': repoPath,
     'docxPath': tracking['docxPath'],
     'type': tracking['type'] ?? 'file',
     'packagePath': packagePath,
@@ -2287,6 +2326,15 @@ Future<Map<String, dynamic>> updateTrackingProject(
   var projDir = repoPath ?? _projectDir(normalizedName);
   if (repoPath == null && normalizedName.toLowerCase().endsWith(kTrackingExt)) {
     projDir = await _ensureWorkspace(normalizedName);
+    // Resolve repoPath if in subfolder
+    final subName = p.basenameWithoutExtension(normalizedName);
+    if (subName.isNotEmpty && subName != '.') {
+      final subDir = p.join(projDir, subName);
+      if (Directory(p.join(subDir, '.git')).existsSync() ||
+          File(p.join(subDir, 'tracking.json')).existsSync()) {
+        projDir = subDir;
+      }
+    }
   }
   return _withRepoLock(projDir, () async {
     _isUpdating[normalizedName] = true;
