@@ -1150,6 +1150,28 @@ Future<void> main(List<String> args) async {
     }
   });
 
+  router.post('/track/expand', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final filePath = (data['filePath'] as String?)?.trim() ?? '';
+    
+    if (filePath.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'filePath required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      final resp = await expandLocalTrackingPackage(filePath);
+      return _cors(Response.ok(jsonEncode(resp), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
   router.post('/track/repos', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;

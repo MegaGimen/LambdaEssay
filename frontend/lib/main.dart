@@ -597,7 +597,6 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   bool showRemotePreview =
       false; // New: Toggle for remote preview (Default false)
   bool isFolderProject = false; // New: Folder project mode
-  String? _folderRootPath; // New: Root path of folder project
   List<Map<String, dynamic>> subRepos = []; // New: Sub-repos for folder project
 
   Map<String, int>? localRowMapping;
@@ -606,8 +605,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   final TransformationController _sharedController = TransformationController();
   late AnimationController _sidebarFlashCtrl;
 
-  Set<String> _fetchingPaths = {};
-  Map<String, bool> _repoUpdates = {};
+  final Set<String> _fetchingPaths = {};
+  final Map<String, bool> _repoUpdates = {};
   String? _selectedFilePath;
   bool _comConnected = false;
   // path -> true if updated
@@ -1797,7 +1796,6 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             docxPathCtrl.text = docxPath ?? '';
             packageRootCtrl.text = repoPath;
             isFolderProject = type == 'folder';
-            _folderRootPath = isFolderProject ? repoPath : null;
             // Clear graph/data as we are at root
             data = null;
             remoteData = null;
@@ -1969,14 +1967,6 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     }
     if (resp.body.isEmpty) return {};
     return jsonDecode(resp.body) as Map<String, dynamic>;
-  }
-
-  Future<http.Response> _getJson(String url) async {
-    final resp = await http.get(Uri.parse(url));
-    if (resp.statusCode != 200) {
-      throw Exception(resp.body);
-    }
-    return resp;
   }
 
   void _handleDirTap(Directory dir, TapDownDetails details) {
@@ -3108,20 +3098,6 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       _selectedFilePath = file.path;
     });
 
-    final isRepo = Directory(p.join(file.path, '.git')).existsSync();
-
-    // Check if it's a tracked file in subRepos
-    bool isTracked = false;
-    final normalizedPath = file.path.replaceAll(r'\', '/');
-    for (final repo in subRepos) {
-      final dPath = (repo['docxPath'] as String?)?.replaceAll(r'\', '/');
-      if (dPath != null &&
-          (dPath == normalizedPath || p.equals(repo['docxPath'], file.path))) {
-        isTracked = true;
-        break;
-      }
-    }
-
     final List<PopupMenuItem<String>> items = [];
 
     items.add(const PopupMenuItem(
@@ -3313,6 +3289,35 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     }
 
     print("DEBUG: Double clicked file: $filePath");
+
+    final ext = p.extension(filePath).toLowerCase();
+    if (ext == '.tracking') {
+      try {
+        setState(() => loading = true);
+        await _postJson('$baseUrl/track/expand', {
+          'filePath': filePath
+        });
+        if (!mounted) return;
+        
+        // Refresh project structure
+        await _onSyncFolder();
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('已展开追踪包: ${p.basename(filePath)}')),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('展开失败: $e')),
+          );
+        }
+      } finally {
+        if (mounted) setState(() => loading = false);
+      }
+      return;
+    }
 
     Map<String, dynamic>? targetRepo;
     int maxLen = 0;

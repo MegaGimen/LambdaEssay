@@ -561,6 +561,7 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
   Widget _buildFileItem(File file) {
     final extension = path.extension(file.path).toLowerCase();
     final isDocx = extension == '.docx';
+    final isTracking = extension == '.tracking';
     final customIcon = widget.fileIconBuilder?.call(extension) ??
         widget.fileStyle?.fileIcon ??
         FileStyle().fileIcon;
@@ -571,7 +572,7 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
     final bool hasUpdate = widget.updatedPaths != null && 
         widget.updatedPaths!.contains(file.path);
 
-    final displayName = isDocx 
+    final displayName = isDocx || isTracking
         ? path.basename(file.path) 
         : '${path.basename(file.path)} (不支持的文件类型)';
 
@@ -588,20 +589,20 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
           }
         },
         child: MouseRegion(
-          cursor: isDocx ? SystemMouseCursors.click : SystemMouseCursors.forbidden,
+          cursor: (isDocx || isTracking) ? SystemMouseCursors.click : SystemMouseCursors.forbidden,
           child: Container(
              color: isSelected ? Colors.blue.withValues(alpha: 0.1) : Colors.transparent,
              padding: const EdgeInsets.symmetric(vertical: 2),
              child: Row(
               children: [
-                isDocx ? customIcon : const Icon(Icons.error_outline, size: 16, color: Colors.grey),
+                (isDocx || isTracking) ? customIcon : const Icon(Icons.error_outline, size: 16, color: Colors.grey),
                 const SizedBox(width: 8),
                 Text(
                   displayName,
                   style: (widget.fileStyle?.fileNameStyle ?? FileStyle().fileNameStyle)
                       ?.copyWith(
-                          color: isDocx ? null : Colors.grey,
-                          fontStyle: isDocx ? null : FontStyle.italic,
+                          color: (isDocx || isTracking) ? null : Colors.grey,
+                          fontStyle: (isDocx || isTracking) ? null : FontStyle.italic,
                       ),
                 ),
                 if (hasUpdate) ...[

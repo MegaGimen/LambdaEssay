@@ -1284,50 +1284,66 @@ Future<void> _extractTrackingPackage(String packagePath, String outDir) async {
       Directory(filename).createSync(recursive: true);
     }
   }
-  await _expandTrackingEntries(outDir);
+  // await _expandTrackingEntries(outDir); // Removed eager expansion for step-by-step
 }
 
-Future<void> _expandTrackingEntries(String rootDir) async {
-  final entries = Directory(rootDir).listSync(recursive: true);
-  for (final entity in entries) {
-    if (entity is File && entity.path.toLowerCase().endsWith(kTrackingExt)) {
-      final targetDir = entity.path;
-      final tmp = await Directory.systemTemp.createTemp('tracking_unzip_');
-      try {
-        final bytes = await entity.readAsBytes();
-        final archive = ZipDecoder().decodeBytes(bytes);
-        for (final file in archive) {
-          final filename = p.normalize(p.join(tmp.path, file.name));
-          if (file.isFile) {
-            final outFile = File(filename);
-            outFile.parent.createSync(recursive: true);
-            final bytes = _archiveContentBytes(file);
-            if (bytes.isEmpty) {
-              print('Tracking package entry has null content: ${file.name}');
-            }
-            outFile.writeAsBytesSync(bytes);
-          } else {
-            Directory(filename).createSync(recursive: true);
-          }
-        }
+Future<Map<String, dynamic>> expandLocalTrackingPackage(String filePath) async {
+  final file = File(filePath);
+  if (!file.existsSync()) {
+    throw Exception('File not found: $filePath');
+  }
+  if (!p.extension(filePath).toLowerCase().endsWith(kTrackingExt)) {
+    throw Exception('Not a tracking package: $filePath');
+  }
 
-        try {
-          entity.deleteSync();
-        } catch (e) {
-          print('Failed to delete tracking file for expand: $e');
-          continue;
-        }
-        final dir = Directory(targetDir);
-        dir.createSync(recursive: true);
-        await _copyDir(tmp.path, dir.path);
-      } finally {
-        try {
-          tmp.deleteSync(recursive: true);
-        } catch (_) {}
+  final targetDir = filePath; // Expand in-place (replace file with dir)
+  final tmp = await Directory.systemTemp.createTemp('tracking_expand_');
+  try {
+    final bytes = await file.readAsBytes();
+    final archive = ZipDecoder().decodeBytes(bytes);
+    for (final item in archive) {
+      final filename = p.normalize(p.join(tmp.path, item.name));
+      if (item.isFile) {
+        final outFile = File(filename);
+        outFile.parent.createSync(recursive: true);
+        final bytes = _archiveContentBytes(item);
+        outFile.writeAsBytesSync(bytes);
+      } else {
+        Directory(filename).createSync(recursive: true);
       }
     }
+
+    try {
+      file.deleteSync();
+    } catch (e) {
+      throw Exception('Failed to delete original file: $e');
+    }
+
+    final dir = Directory(targetDir);
+    if (dir.existsSync()) {
+       // Should not happen if we just deleted the file with same name? 
+       // Windows: File and Dir with same name? 
+       // If file deleted, path is free.
+    }
+    dir.createSync(recursive: true);
+    await _copyDir(tmp.path, dir.path);
+    
+    // Check type of expanded content
+    bool hasTracking = dir.listSync().any((e) => e.path.toLowerCase().endsWith(kTrackingExt));
+    bool hasGit = Directory(p.join(dir.path, '.git')).existsSync();
+    
+    return {
+      'path': targetDir,
+      'type': hasTracking ? 'folder' : (hasGit ? 'file' : 'folder'), // Default to folder if unknown?
+      'hasSubTracking': hasTracking,
+    };
+  } finally {
+    try {
+      tmp.deleteSync(recursive: true);
+    } catch (_) {}
   }
 }
+
 
 Future<void> _packTrackingDirectory(
     String srcDir, String outPackagePath) async {
