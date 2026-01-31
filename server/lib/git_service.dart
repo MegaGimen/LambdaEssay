@@ -1747,6 +1747,33 @@ Future<Map<String, dynamic>> _readTracking(String name) async {
   return <String, dynamic>{};
 }
 
+Future<Map<String, dynamic>> _readTrackingFromZip(String zipPath) async {
+  try {
+    final bytes = await File(zipPath).readAsBytes();
+    final archive = ZipDecoder().decodeBytes(bytes);
+
+    // Check root tracking.json
+    ArchiveFile? file = archive.findFile('tracking.json');
+
+    // Check nested
+    if (file == null) {
+      final subName = p.basenameWithoutExtension(zipPath);
+      if (subName.isNotEmpty && subName != '.') {
+        // Archive paths are usually forward slash
+        file = archive.findFile('$subName/tracking.json');
+      }
+    }
+
+    if (file != null) {
+      final content = utf8.decode(file.content as List<int>);
+      return jsonDecode(content) as Map<String, dynamic>;
+    }
+  } catch (e) {
+    print('Error reading tracking from zip: $e');
+  }
+  return {};
+}
+
 Future<void> _writeTracking(String name, Map<String, dynamic> data) async {
   final f = _trackingFile(name);
   final dir = Directory(p.dirname(f.path));
@@ -2225,7 +2252,21 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
   if (!dir.existsSync()) {
     throw Exception('project not found');
   }
-  final tracking = await _readTracking(packagePath);
+  var tracking = await _readTracking(packagePath);
+
+  // Fallback: If docxPath is missing and it is a .tracking file, try reading from zip
+  if ((tracking['docxPath'] == null || tracking['docxPath'] == '') &&
+      packagePath.toLowerCase().endsWith(kTrackingExt) &&
+      File(packagePath).existsSync()) {
+    final zipTracking = await _readTrackingFromZip(packagePath);
+    if (zipTracking['docxPath'] != null && zipTracking['docxPath'] != '') {
+      print('Recovered docxPath from zip: ${zipTracking['docxPath']}');
+      tracking['docxPath'] = zipTracking['docxPath'];
+      if (tracking['type'] == null) tracking['type'] = zipTracking['type'];
+      // Persist back to workspace
+      await _writeTracking(packagePath, tracking);
+    }
+  }
 
   if (tracking.isEmpty) {
     final detectedType =
