@@ -376,13 +376,19 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
                     // Check if this directory is a docx repo (Solo Project)
                     // Logic: Has .git AND (Has content.docx OR Has doc_content OR Has ONLY .git)
                     bool isDocxRepo = false;
-                    if (_isGitRepo(entry)) {
+                    bool isGit = _isGitRepo(entry);
+                    print("Checking directory: ${path.basename(entry.path)}, isGit: $isGit");
+
+                    if (isGit) {
                       final contentDocx =
                           File(path.join(entry.path, 'content.docx'));
                       final docContent =
                           Directory(path.join(entry.path, 'doc_content'));
+                      
+                      bool hasContent = contentDocx.existsSync() || docContent.existsSync();
+                      print("Has content: $hasContent (docx: ${contentDocx.existsSync()}, dir: ${docContent.existsSync()})");
 
-                      if (contentDocx.existsSync() || docContent.existsSync()) {
+                      if (hasContent) {
                         isDocxRepo = true;
                       } else {
                         // Check if only .git exists
@@ -390,6 +396,10 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
                           final children = entry.listSync();
                           bool hasOther = false;
                           for (final child in children) {
+                            print("Debug, child: ${path.basename(child.path)}");
+                            if(path.basename(child.path)==".gitignore" || path.basename(child.path)=="tracking.json"){
+                              continue;
+                            }
                             if (path.basename(child.path) != '.git') {
                               hasOther = true;
                               break;
@@ -398,7 +408,9 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
                           if (!hasOther) {
                             isDocxRepo = true;
                           }
-                        } catch (_) {}
+                        } catch (e) {
+                          print("Error listing children of ${entry.path}: $e");
+                        }
                       }
                     }
 
