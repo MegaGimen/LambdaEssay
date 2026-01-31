@@ -3761,6 +3761,15 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
+                                  if (!isFolderProject &&
+                                      docxPathCtrl.text.isNotEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(bottom: 4),
+                                      child: SelectableText(
+                                          '文件: ${docxPathCtrl.text}',
+                                          style: const TextStyle(
+                                              fontWeight: FontWeight.bold)),
+                                    ),
                                   if (isFolderProject &&
                                       docxPathCtrl.text.isNotEmpty)
                                     Padding(

@@ -1691,6 +1691,7 @@ Future<Map<String, dynamic>> _resolveTrackingInfo(String repoPath) async {
     if (File(trackingFile).existsSync()) {
       final tracking = await _readTrackingJson(trackingFile);
       final baseDocxPath = tracking['docxPath'] as String?;
+      final basePackagePath = tracking['packagePath'] as String?;
 
       if (baseDocxPath != null) {
         String fullDocxPath = baseDocxPath;
@@ -1706,6 +1707,8 @@ Future<Map<String, dynamic>> _resolveTrackingInfo(String repoPath) async {
           // Create tracking.json in sub-repo
           final subTracking = {
             'docxPath': fullDocxPath,
+            if (basePackagePath != null && basePackagePath.isNotEmpty)
+              'packagePath': basePackagePath,
             // 'internalPath': relPath, // Optional, but full path is enough
           };
           final f = File(p.join(repoPath, 'tracking.json'));
@@ -1723,7 +1726,8 @@ Future<Map<String, dynamic>> _resolveTrackingInfo(String repoPath) async {
           return {
             'docxPath': fullDocxPath,
             'trackingRoot': repoPath, // Now it has its own tracking
-            'rawTracking': subTracking
+            'rawTracking': subTracking,
+            'packagePath': basePackagePath
           };
         } else {
           // Single mode: tracking is in repo dir
@@ -1734,7 +1738,8 @@ Future<Map<String, dynamic>> _resolveTrackingInfo(String repoPath) async {
           return {
             'docxPath': fullDocxPath,
             'trackingRoot': current,
-            'rawTracking': tracking
+            'rawTracking': tracking,
+            'packagePath': basePackagePath
           };
         }
       }
@@ -2161,7 +2166,18 @@ Future<List<Map<String, dynamic>>> listProjectRepos(String name) async {
         final relPath = p.relative(repoPath, from: projDir);
 
         String? subDocxPath;
-        if (rootDocxPath != null) {
+        final repoTrackingPath = p.join(repoPath, 'tracking.json');
+        if (File(repoTrackingPath).existsSync()) {
+          final repoTracking = await _readTrackingJson(repoTrackingPath);
+          final repoDocxBase = repoTracking['docxPath'] as String?;
+          if (repoDocxBase != null && repoDocxBase.isNotEmpty) {
+            final internalPath = repoTracking['internalPath'] as String?;
+            subDocxPath = (internalPath != null && internalPath.isNotEmpty)
+                ? p.join(repoDocxBase, internalPath)
+                : repoDocxBase;
+          }
+        }
+        if (subDocxPath == null && rootDocxPath != null) {
           final mapped = p.setExtension(relPath, '.docx');
           subDocxPath = p.join(rootDocxPath, mapped);
         }
@@ -2343,13 +2359,21 @@ Future<Map<String, dynamic>?> getTrackingInfo(String repoPath) async {
   final root = await _findWorkspaceRoot(normalized);
   if (root == null) return null;
   final packagePath = await _readWorkspacePackagePath(root) ?? '';
-  final tracking =
-      await _readTracking(packagePath.isNotEmpty ? packagePath : root);
+  final info = await _resolveTrackingInfo(normalized);
+  final tracking = info.isNotEmpty
+      ? (info['rawTracking'] as Map<String, dynamic>? ?? <String, dynamic>{})
+      : await _readTracking(packagePath.isNotEmpty ? packagePath : root);
+  final docxPath = info['docxPath'] ?? tracking['docxPath'];
+  final trackingRoot = info['trackingRoot'] as String?;
+  final resolvedPackagePath =
+      tracking['packagePath'] as String? ?? packagePath;
   return {
-    'name': packagePath.isNotEmpty ? packagePath : root,
-    'docxPath': tracking['docxPath'],
+    'name': (trackingRoot != null && trackingRoot.isNotEmpty)
+        ? trackingRoot
+        : (packagePath.isNotEmpty ? packagePath : root),
+    'docxPath': docxPath,
     'repoDocxPath': tracking['repoDocxPath'],
-    'packagePath': packagePath,
+    'packagePath': resolvedPackagePath,
   };
 }
 
