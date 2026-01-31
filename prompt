@@ -7,7 +7,7 @@
 采用Windows环境开发
 
 查找文件时，如果搜索工具失败，可以使用ls命令
-代码修改完成后，只需用flutter analyze检查编译错误，不需要运行flutter run，除非我明确指示
+代码修改完成后，只需用flutter analyze检查编译错误，不需要运行flutter run，除非我明确指示。如果你只修改了前端，就对frontend文件夹执行analyze，如果只修改了后端，就对server进行analyze，不要每次都同时analyze两个
 
 只要编译成功，就不需要进一步的系统调试，因为图形界面调试需要我亲自操作
 
