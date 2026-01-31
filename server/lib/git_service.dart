@@ -1269,7 +1269,13 @@ Future<void> _extractTrackingPackage(String packagePath, String outDir) async {
     if (file.isFile) {
       final outFile = File(filename);
       outFile.parent.createSync(recursive: true);
-      outFile.writeAsBytesSync(file.content as List<int>);
+      final content = file.content;
+      if (content == null) {
+        print('Tracking package entry has null content: ${file.name}');
+        outFile.writeAsBytesSync(const <int>[]);
+      } else {
+        outFile.writeAsBytesSync(content as List<int>);
+      }
     } else {
       Directory(filename).createSync(recursive: true);
     }
@@ -1291,7 +1297,13 @@ Future<void> _expandTrackingEntries(String rootDir) async {
           if (file.isFile) {
             final outFile = File(filename);
             outFile.parent.createSync(recursive: true);
-            outFile.writeAsBytesSync(file.content as List<int>);
+            final content = file.content;
+            if (content == null) {
+              print('Tracking package entry has null content: ${file.name}');
+              outFile.writeAsBytesSync(const <int>[]);
+            } else {
+              outFile.writeAsBytesSync(content as List<int>);
+            }
           } else {
             Directory(filename).createSync(recursive: true);
           }

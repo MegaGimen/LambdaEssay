@@ -2345,120 +2345,25 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   }
 
   Future<void> _onCreateTrackProject() async {
-    final nameCtrl = TextEditingController();
-    final docxCtrl = TextEditingController();
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: const Text('新建追踪项目'),
-          content: SizedBox(
-            width: 500,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: nameCtrl,
-                        readOnly: true,
-                        decoration: const InputDecoration(
-                          labelText: '追踪包文件路径(.tracking)',
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.save_alt),
-                      tooltip: '选择保存位置',
-                      onPressed: () async {
-                        String? outputFile =
-                            await FilePicker.platform.saveFile(
-                          dialogTitle: '新建追踪包',
-                          fileName: 'new_project.tracking',
-                          type: FileType.custom,
-                          allowedExtensions: ['tracking'],
-                        );
-                        if (outputFile != null) {
-                          if (!outputFile
-                              .toLowerCase()
-                              .endsWith('.tracking')) {
-                            outputFile =
-                                p.setExtension(outputFile, '.tracking');
-                          }
-                          nameCtrl.text = outputFile;
-                        }
-                      },
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: docxCtrl,
-                        decoration: const InputDecoration(
-                          labelText: 'docx文件路径或文件夹(可选)',
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.insert_drive_file),
-                      tooltip: '选择docx文件',
-                      onPressed: () async {
-                        FilePickerResult? result =
-                            await FilePicker.platform.pickFiles(
-                          type: FileType.custom,
-                          allowedExtensions: ['docx'],
-                        );
-                        if (result != null &&
-                            result.files.single.path != null) {
-                          docxCtrl.text = result.files.single.path!;
-                        }
-                      },
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.folder_open),
-                      tooltip: '选择文件夹',
-                      onPressed: () async {
-                        String? selectedDirectory =
-                            await FilePicker.platform.getDirectoryPath();
-                        if (selectedDirectory != null) {
-                          docxCtrl.text = selectedDirectory;
-                        }
-                      },
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('创建'),
-            ),
-          ],
-        ),
-      ),
+    String? outputFile = await FilePicker.platform.saveFile(
+      dialogTitle: '新建追踪包',
+      fileName: 'new_project.tracking',
+      type: FileType.custom,
+      allowedExtensions: ['tracking'],
     );
-    if (ok != true) return;
-    if (!mounted) return;
-    final packagePath = nameCtrl.text.trim();
-    final docx = docxCtrl.text.trim();
+    if (outputFile == null) return;
+    if (!outputFile.toLowerCase().endsWith('.tracking')) {
+      outputFile = p.setExtension(outputFile, '.tracking');
+    }
+    final packagePath = outputFile.trim();
     if (packagePath.isEmpty) {
-      setState(() => error = '请输入追踪包文件路径');
+      setState(() => error = '请选择追踪包保存路径');
       return;
     }
     try {
       final resp = await _postJson('http://localhost:8080/track/create', {
         'packagePath': packagePath,
-        'docxPath': docx.isEmpty ? null : docx,
+        'docxPath': null,
       });
       if (!mounted) return;
       final repoPath = resp['repoPath'] as String;
@@ -2475,7 +2380,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           currentProjectName = packagePath;
           pathCtrl.text = repoPath;
           packageRootCtrl.text = repoPath;
-          docxPathCtrl.text = docx;
+          docxPathCtrl.clear();
           isFolderProject = true;
           subRepos = repos;
         });
@@ -2498,29 +2403,13 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           currentProjectName = packagePath;
           pathCtrl.text = repoPath;
           packageRootCtrl.text = repoPath;
-          docxPathCtrl.text = docx;
+          docxPathCtrl.clear();
           isFolderProject = false;
           subRepos = [];
         });
-        if (docx.isNotEmpty) {
-          final up = await _postJson('http://localhost:8080/track/update', {
-            'packagePath': packagePath,
-            'opIdentical': false,
-          });
-          if (!mounted) return;
-          if (up['needDocx'] != true) {
-            setState(() {
-              working = WorkingState(
-                changed: up['workingChanged'] == true,
-                baseId: up['head'] as String?,
-              );
-            });
-          }
-        } else {
-          setState(() {
-            working = WorkingState(changed: false, baseId: null);
-          });
-        }
+        setState(() {
+          working = WorkingState(changed: false, baseId: null);
+        });
         await _load();
       }
     } catch (e) {
