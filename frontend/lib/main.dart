@@ -2393,8 +2393,12 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           await _onUpdateRepoAction(
               opIdentical: true,
               specificRepoPath: firstRepo['repoPath'],
-              specificDocxPath: firstRepo['docxPath']);
-          await _load();
+              specificDocxPath: firstRepo['docxPath'],
+              reloadGraph: false);
+          setState(() {
+            data = null;
+            remoteData = null;
+          });
         } else {
           setState(() => loading = false);
         }
@@ -2409,8 +2413,9 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         });
         setState(() {
           working = WorkingState(changed: false, baseId: null);
+          data = null;
+          remoteData = null;
         });
-        await _load();
       }
     } catch (e) {
       print('Create tracking project failed: $e');
@@ -2537,7 +2542,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       {bool forcePull = false,
       bool opIdentical = true,
       String? specificRepoPath,
-      String? specificDocxPath}) async {
+      String? specificDocxPath,
+      bool reloadGraph = true}) async {
     final sw = Stopwatch()..start();
     if (_isUpdatingRepo) return;
     _isUpdatingRepo = true;
@@ -2734,9 +2740,11 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             '[Perf][Frontend][UpdateRepo][SetState] ${swUpdate.elapsedMilliseconds}ms');
         swUpdate.reset();
 
-        await _load();
-        print(
-            '[Perf][Frontend][UpdateRepo][LoadGraph] ${swUpdate.elapsedMilliseconds}ms');
+        if (reloadGraph) {
+          await _load();
+          print(
+              '[Perf][Frontend][UpdateRepo][LoadGraph] ${swUpdate.elapsedMilliseconds}ms');
+        }
         swUpdate.stop();
       } catch (e) {
         setState(() => error = e.toString());
