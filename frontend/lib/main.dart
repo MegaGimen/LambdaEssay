@@ -3300,22 +3300,38 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         });
         if (!mounted) return;
         expandedType = resp['type'] as String?;
-        
-        // Refresh project structure
-        if (currentProjectName != null) {
-          await _openProject(currentProjectName!,
-              isFolderProject: isFolderProject);
-        }
-        
-        if (resp['type'] == 'file') {
-          // If it is a repo, fall through to repo matching logic
-        } else {
+        print('DEBUG: Expanded tracking $filePath => $resp');
+
+        if (expandedType == 'folder') {
+          setState(() {});
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text('已展开文件夹: ${p.basename(filePath)}')),
             );
           }
+          return;
         }
+
+        final openResp = await _postJson('$baseUrl/track/open', {
+          'packagePath': filePath,
+        });
+        if (!mounted) return;
+        final repoPath = openResp['repoPath'] as String?;
+        final docxPath = openResp['docxPath'] as String?;
+        print('DEBUG: Open tracking for graph file=$filePath repo=$repoPath docx=$docxPath');
+
+        if (repoPath == null || repoPath.isEmpty) {
+          throw Exception('repoPath missing for $filePath');
+        }
+
+        setState(() {
+          pathCtrl.text = repoPath;
+          if (docxPath != null && docxPath.isNotEmpty) {
+            docxPathCtrl.text = docxPath;
+          }
+        });
+        await _load();
+        return;
       } catch (e) {
         print('Expand tracking failed: $e');
         if (mounted) {
@@ -3370,14 +3386,6 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       if (!mounted) return;
       await _load();
     } else {
-      if (ext == '.tracking') {
-        try {
-          await _openProject(filePath, isFolderProject: expandedType == 'folder');
-          return;
-        } catch (e) {
-          print('Open nested tracking failed: $e');
-        }
-      }
       print("DEBUG: No matching repo found for $filePath");
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

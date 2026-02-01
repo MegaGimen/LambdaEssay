@@ -267,7 +267,10 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
     Directory directory,
     DirectoryTreeStateNotifier stateNotifier,
   ) {
-    final entries = directory.listSync();
+    final entries = directory
+        .listSync()
+        .where((entry) => path.basename(entry.path) != '.git')
+        .toList();
     entries.sort((a, b) {
       if (a is Directory && b is File) return -1;
       if (a is File && b is Directory) return 1;
