@@ -2399,6 +2399,38 @@ Future<Map<String, dynamic>> updateTrackingProject(
       }
     }
   }
+  if (repoPath != null) {
+    final gitDir = Directory(p.join(projDir, '.git'));
+    if (!gitDir.existsSync()) {
+      print('[updateTrackingProject] No .git at $projDir, trying to resolve');
+      final baseName = p.basenameWithoutExtension(projDir);
+      if (baseName.isNotEmpty && baseName != '.') {
+        final subDir = p.join(projDir, baseName);
+        if (Directory(p.join(subDir, '.git')).existsSync() ||
+            File(p.join(subDir, 'tracking.json')).existsSync()) {
+          print('[updateTrackingProject] Resolved repoPath to $subDir');
+          projDir = subDir;
+        }
+      }
+      if (!Directory(p.join(projDir, '.git')).existsSync()) {
+        try {
+          final entries = Directory(projDir)
+              .listSync(recursive: false)
+              .whereType<Directory>();
+          for (final entry in entries) {
+            if (Directory(p.join(entry.path, '.git')).existsSync()) {
+              print(
+                  '[updateTrackingProject] Resolved repoPath by scan: ${entry.path}');
+              projDir = entry.path;
+              break;
+            }
+          }
+        } catch (e) {
+          print('[updateTrackingProject] Failed to scan for git repo: $e');
+        }
+      }
+    }
+  }
   return _withRepoLock(projDir, () async {
     _isUpdating[normalizedName] = true;
     final totalSw = Stopwatch()..start();
