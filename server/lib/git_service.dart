@@ -2368,12 +2368,13 @@ Future<Map<String, dynamic>?> getTrackingInfo(String repoPath) async {
   final resolvedPackagePath =
       tracking['packagePath'] as String? ?? packagePath;
   return {
-    'name': (trackingRoot != null && trackingRoot.isNotEmpty)
-        ? trackingRoot
+    'name': resolvedPackagePath.isNotEmpty
+        ? resolvedPackagePath
         : (packagePath.isNotEmpty ? packagePath : root),
     'docxPath': docxPath,
     'repoDocxPath': tracking['repoDocxPath'],
     'packagePath': resolvedPackagePath,
+    'trackingRoot': trackingRoot,
   };
 }
 

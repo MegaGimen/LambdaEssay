@@ -2246,7 +2246,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       if (!mounted) return;
       if (info.isNotEmpty) {
         setState(() {
-          currentProjectName = info['name'];
+          currentProjectName = info['packagePath'] ?? info['name'];
           if (info['docxPath'] != null && info['docxPath'].isNotEmpty) {
             docxPathCtrl.text = info['docxPath'];
           }
