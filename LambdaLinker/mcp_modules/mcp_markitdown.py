@@ -130,12 +130,34 @@ def _looks_like_uri(s: str) -> bool:
 
 
 def run_async(coro: Any) -> Any:
+    """运行异步协程，兼容已有事件循环"""
     try:
         loop = asyncio.get_running_loop()
+        # 如果已经在事件循环中，创建新的线程来运行
+        import concurrent.futures
+        import threading
+        
+        result = None
+        exception = None
+        
+        def run_in_thread():
+            nonlocal result, exception
+            try:
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
+                result = new_loop.run_until_complete(coro)
+                new_loop.close()
+            except Exception as e:
+                exception = e
+        
+        thread = threading.Thread(target=run_in_thread)
+        thread.start()
+        thread.join()
+        
+        if exception:
+            raise exception
+        return result
+        
     except RuntimeError:
+        # 没有运行中的事件循环，直接运行
         return asyncio.run(coro)
-
-    # 简单的防止重入检查
-    if loop.is_running():
-        raise RuntimeError("检测到正在运行的 Event Loop。请不要在异步环境(如 Jupyter)中调用此同步接口。")
-    return loop.run_until_complete(coro)

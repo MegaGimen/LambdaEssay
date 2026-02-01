@@ -376,7 +376,7 @@ Future<List<String>> _runGit(List<String> args, String repoPath) async {
   ];
   try {
     final res = await Process.run(
-      'mingw64/bin/git.exe',
+      'git',
       fullArgs,
       stdoutEncoding: utf8,
       stderrEncoding: utf8,
@@ -394,7 +394,7 @@ Future<List<String>> _runGit(List<String> args, String repoPath) async {
   } on FormatException {
     print("Git format error!!!");
     final res = await Process.run(
-      'mingw64/bin/git.exe',
+      'git',
       fullArgs,
       stdoutEncoding: systemEncoding,
       stderrEncoding: systemEncoding,
@@ -495,7 +495,7 @@ Future<List<List<String>>> _collectAllEdges(
   Future<void> fetch(CommitNode c) async {
     try {
       final res = await Process.run(
-        'mingw64/bin/git.exe',
+        'git',
         ['show', '${c.id}:edges'],
         workingDirectory: repoPath,
         stdoutEncoding: utf8,
@@ -1660,7 +1660,7 @@ Future<Map<String, dynamic>> compareCommitsWithAI(
         doc2Path,
         docType,
         useCache: true,
-        useMcp: true,
+        useMcp: false,  // ⚠️ 暂时禁用MCP，避免配置问题
       );
       
       print('[AI对比] 分析完成');
@@ -1692,23 +1692,12 @@ Future<void> _extractDocFromCommit(
   final tmpDir = await Directory.systemTemp.createTemp('extract_');
   
   try {
-    // 使用 git show 命令提取文件
-    final docPath = p.join(kContentDirName, kRepoDocxName);
-    
-    final result = await Process.run(
-      'mingw64/bin/git.exe',
-      ['show', '$commitId:$docPath'],
-      workingDirectory: repoPath,
-      stdoutEncoding: null,  // 二进制输出
-    );
-    
-    if (result.exitCode != 0) {
-      throw Exception('提取文档失败 (commit: $commitId): ${result.stderr}');
-    }
-    
-    // 写入文件
-    await File(outputPath).writeAsBytes(result.stdout as List<int>);
-    
+    // ✅ 改用 git archive 命令（和传统PDF对比一样）
+    // 这样可以正确处理 doc_content 目录结构
+    await _gitArchiveToDocx(repoPath, commitId, outputPath);
+    print('[AI对比] 文档提取成功: $outputPath');
+  } catch (e) {
+    throw Exception('提取文档失败 (commit: $commitId): $e');
   } finally {
     try {
       await tmpDir.delete(recursive: true);
