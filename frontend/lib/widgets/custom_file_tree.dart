@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:path/path.dart' as path;
 import 'package:flutter/material.dart';
 
+const String kTrackingExt = '.tracking.zip';
+
 // --- Style Classes (Merged from style.dart) ---
 
 /// Defines customizable styling options for folder elements in the directory tree.
@@ -377,14 +379,14 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
                 ...entries.map((entry) {
                   if (entry is Directory) {
                     bool isDocxRepo = false;
-                    bool isTrackingPkg = path.extension(entry.path).toLowerCase() == '.tracking';
+                    bool isTrackingPkg = entry.path.toLowerCase().endsWith(kTrackingExt);
 
                     if (isTrackingPkg) {
-                      // Rule: Determine if a .tracking is a folder or file by whether it contains .tracking files
+                      // Rule: Determine if a .tracking.zip is a folder or file by whether it contains .tracking.zip files
                       bool hasSubTracking = false;
                       try {
                         hasSubTracking = entry.listSync().any(
-                            (e) => path.extension(e.path).toLowerCase() == '.tracking');
+                            (e) => e.path.toLowerCase().endsWith(kTrackingExt));
                       } catch (_) {}
                       isDocxRepo = !hasSubTracking;
                     } else {
@@ -576,9 +578,11 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
   }
 
   Widget _buildFileItem(File file) {
-    final extension = path.extension(file.path).toLowerCase();
+    final isTracking = file.path.toLowerCase().endsWith(kTrackingExt);
+    final extension = isTracking
+        ? kTrackingExt
+        : path.extension(file.path).toLowerCase();
     final isDocx = extension == '.docx';
-    final isTracking = extension == '.tracking';
     final customIcon = widget.fileIconBuilder?.call(extension) ??
         widget.fileStyle?.fileIcon ??
         FileStyle().fileIcon;

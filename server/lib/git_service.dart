@@ -115,8 +115,17 @@ final Map<String, PullPreviewResult> _previewCache = {};
 
 const String kContentDirName = 'doc_content';
 const String kRepoDocxName = 'content.docx';
-const String kTrackingExt = '.tracking';
+const String kTrackingExt = '.tracking.zip';
 const String kWorkspaceMetaFile = '.tracking_workspace.json';
+
+String _trackingBaseName(String path) {
+  final base = p.basename(path);
+  final lower = base.toLowerCase();
+  if (lower.endsWith(kTrackingExt)) {
+    return base.substring(0, base.length - kTrackingExt.length);
+  }
+  return p.basenameWithoutExtension(base);
+}
 
 void clearCache() {
   _graphCache.clear();
@@ -1304,7 +1313,7 @@ Future<Map<String, dynamic>> expandLocalTrackingPackage(String filePath) async {
   if (!file.existsSync()) {
     throw Exception('File not found: $filePath');
   }
-  if (!p.extension(filePath).toLowerCase().endsWith(kTrackingExt)) {
+  if (!filePath.toLowerCase().endsWith(kTrackingExt)) {
     throw Exception('Not a tracking package: $filePath');
   }
 
@@ -1390,7 +1399,7 @@ Future<void> _packTrackingDirectory(
       if (name.toLowerCase().endsWith(kTrackingExt)) {
         print('[pack] 递归打包子跟踪目录：${entity.path}');
         final tmpFile = File(p.join(Directory.systemTemp.path,
-            '${DateTime.now().microsecondsSinceEpoch}.tracking'));
+            '${DateTime.now().microsecondsSinceEpoch}$kTrackingExt'));
         _packTrackingDirectory(entity.path, tmpFile.path);
         final data = tmpFile.readAsBytesSync();
         archive.addFile(ArchiveFile(rel, data.length, data));
@@ -1659,7 +1668,7 @@ File _trackingFile(String name) {
   final rootFile = File(p.join(dir, 'tracking.json'));
   if (rootFile.existsSync()) return rootFile;
 
-  final subName = p.basenameWithoutExtension(name);
+  final subName = _trackingBaseName(name);
   if (subName.isNotEmpty && subName != '.') {
     final subFile = File(p.join(dir, subName, 'tracking.json'));
     if (subFile.existsSync()) return subFile;
@@ -1790,7 +1799,7 @@ Future<Map<String, dynamic>> _readTrackingFromZip(String zipPath) async {
 
     // Check nested
     if (file == null) {
-      final subName = p.basenameWithoutExtension(zipPath);
+      final subName = _trackingBaseName(zipPath);
       if (subName.isNotEmpty && subName != '.') {
         // Archive paths are usually forward slash
         file = archive.findFile('$subName/tracking.json');
@@ -2047,7 +2056,7 @@ Future<Map<String, dynamic>> createTrackingProject(
   print('[createTrackingProject] 项目目录已创建: $projDir');
 
   // 创建一个子文件夹，以满足用户要求“文件夹里只有预留的meta文件”
-  final projectName = p.basenameWithoutExtension(packagePath);
+  final projectName = _trackingBaseName(packagePath);
   final repoPath = p.join(projDir, projectName);
   Directory(repoPath).createSync(recursive: true);
 
@@ -2055,7 +2064,7 @@ Future<Map<String, dynamic>> createTrackingProject(
   await _writeWorkspaceMeta(projDir, packagePath);
 
   if (packagePath.toLowerCase().endsWith(kTrackingExt)) {
-    print('[createTrackingProject] 以 .tracking 结尾，打包...');
+    print('[createTrackingProject] 以 .tracking.zip 结尾，打包...');
     await _exportFolderToTrackingPackage(projDir, packagePath);
   }
 
@@ -2288,7 +2297,7 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
       : _projectDir(name);
 
   var repoPath = projDir;
-  final subName = p.basenameWithoutExtension(packagePath);
+  final subName = _trackingBaseName(packagePath);
   if (subName.isNotEmpty && subName != '.') {
     final subDir = p.join(projDir, subName);
     if (Directory(p.join(subDir, '.git')).existsSync() ||
@@ -2303,7 +2312,7 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
   }
   var tracking = await _readTracking(packagePath);
 
-  // Fallback: If docxPath is missing and it is a .tracking file, try reading from zip
+  // Fallback: If docxPath is missing and it is a .tracking.zip file, try reading from zip
   if ((tracking['docxPath'] == null || tracking['docxPath'] == '') &&
       packagePath.toLowerCase().endsWith(kTrackingExt) &&
       File(packagePath).existsSync()) {
@@ -2390,7 +2399,7 @@ Future<Map<String, dynamic>> updateTrackingProject(
       projDir = await _ensureWorkspace(normalizedName);
     }
     // Resolve repoPath if in subfolder
-    final subName = p.basenameWithoutExtension(normalizedName);
+    final subName = _trackingBaseName(normalizedName);
     if (subName.isNotEmpty && subName != '.') {
       final subDir = p.join(projDir, subName);
       if (Directory(p.join(subDir, '.git')).existsSync() ||

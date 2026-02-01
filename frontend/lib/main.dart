@@ -27,6 +27,8 @@ import 'movable_panel.dart';
 import 'version.dart';
 import 'backend_manager.dart';
 
+const String kTrackingExt = '.tracking.zip';
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   if (Platform.isWindows) {
@@ -2339,13 +2341,13 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   Future<void> _onCreateTrackProject() async {
     String? outputFile = await FilePicker.platform.saveFile(
       dialogTitle: '新建追踪包',
-      fileName: 'new_project.tracking',
+      fileName: 'new_project.tracking.zip',
       type: FileType.custom,
-      allowedExtensions: ['tracking'],
+      allowedExtensions: ['zip'],
     );
     if (outputFile == null) return;
-    if (!outputFile.toLowerCase().endsWith('.tracking')) {
-      outputFile = p.setExtension(outputFile, '.tracking');
+    if (!outputFile.toLowerCase().endsWith(kTrackingExt)) {
+      outputFile = p.setExtension(outputFile, kTrackingExt);
     }
     final packagePath = outputFile.trim();
     if (packagePath.isEmpty) {
@@ -2431,7 +2433,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   Future<void> _onOpenTrackProject() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['tracking'],
+      allowedExtensions: ['zip'],
     );
     if (result == null || result.files.single.path == null) return;
     final packagePath = result.files.single.path!;
@@ -3290,9 +3292,9 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
     print("DEBUG: Double clicked file: $filePath");
 
-    final ext = p.extension(filePath).toLowerCase();
+    final lowerPath = filePath.toLowerCase();
     String? expandedType;
-    if (ext == '.tracking') {
+    if (lowerPath.endsWith(kTrackingExt)) {
       try {
         setState(() => loading = true);
         final resp = await _postJson('$baseUrl/track/expand', {
