@@ -2102,11 +2102,17 @@ Future<Map<String, dynamic>> importTrackingSource(
     }
     await _initTrackingRepo(trackingDir, source, pkg);
   } else if (Directory(source).existsSync()) {
+    final folderName = p.basename(p.normalize(source));
+    final targetFolder = p.join(target, folderName);
+    if (!Directory(targetFolder).existsSync()) {
+      Directory(targetFolder).createSync(recursive: true);
+    }
+
     final files = _findDocxFiles(source);
     for (final file in files) {
       final relPath = p.relative(file.path, from: source);
       final relTrackingPath = p.setExtension(relPath, kTrackingExt);
-      final targetRepoPath = p.join(target, relTrackingPath);
+      final targetRepoPath = p.join(targetFolder, relTrackingPath);
       if (Directory(targetRepoPath).existsSync()) continue;
       await _initTrackingRepo(targetRepoPath, file.path, pkg);
     }
