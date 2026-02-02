@@ -77,6 +77,125 @@ Future<void> _killPort(int port) async {
   }
 }
 final ProcessManager _processManager = const LocalProcessManager();
+Process? _pythonApiProcess;
+
+/// 检查端口是否被占用
+Future<bool> _isPortInUse(int port) async {
+  try {
+    final result = await Process.run('netstat', ['-ano']);
+    if (result.exitCode != 0) return false;
+    final lines = (result.stdout as String).split(RegExp(r'\r?\n'));
+    for (final line in lines) {
+      if (line.contains(':$port') && line.contains('LISTENING')) {
+        return true;
+      }
+    }
+    return false;
+  } catch (e) {
+    return false;
+  }
+}
+
+/// 启动 Python API 服务
+Future<void> _startPythonApiService() async {
+  const int pythonApiPort = 8765;
+
+  // 检查端口是否已被占用
+  if (await _isPortInUse(pythonApiPort)) {
+    print('✓ Python AI 服务已在运行中 (端口 $pythonApiPort)');
+    return;
+  }
+
+  try {
+    // 获取项目根目录和 LambdaLinker 路径
+    final scriptDir = p.dirname(Platform.script.toFilePath());
+    final serverDir = p.dirname(scriptDir);
+    final projectRoot = p.dirname(p.dirname(serverDir)); // D:\helloagent
+    final lambdaLinkerDir = p.join(p.dirname(serverDir), 'LambdaLinker');
+    final apiScript = p.join(lambdaLinkerDir, 'api_server.py');
+
+    // 共享虚拟环境路径
+    final pythonExe = p.join(projectRoot, '.venv', 'Scripts', 'python.exe');
+
+    // 检查 Python 可执行文件是否存在
+    if (!File(pythonExe).existsSync()) {
+      print('! 警告: Python 未找到: $pythonExe');
+      print('  请在项目根目录创建虚拟环境: python -m venv .venv');
+      return;
+    }
+
+    // 检查 Python 脚本是否存在
+    if (!File(apiScript).existsSync()) {
+      print('! 警告: Python API 脚本未找到: $apiScript');
+      print('  请确保 LambdaLinker 目录存在且包含 api_server.py');
+      return;
+    }
+
+    print('正在启动 Python AI 服务...');
+    print('  Python: $pythonExe');
+    print('  脚本: $apiScript');
+
+    // 直接启动 Python 进程（不使用 PowerShell）
+    _pythonApiProcess = await Process.start(
+      pythonExe,
+      [apiScript],
+      workingDirectory: lambdaLinkerDir,
+      mode: ProcessStartMode.normal,
+      runInShell: false,
+    );
+
+    // 监听 Python 进程输出以便调试
+    _pythonApiProcess!.stdout.transform(utf8.decoder).listen((output) {
+      // 可选：记录 Python 输出
+    });
+    _pythonApiProcess!.stderr.transform(utf8.decoder).listen((output) {
+      // 可选：记录 Python 错误
+    });
+
+    // 等待服务启动并验证
+    print('  等待服务启动...');
+    for (int i = 0; i < 10; i++) {
+      await Future.delayed(const Duration(seconds: 1));
+      if (await _isPortInUse(pythonApiPort)) {
+        print('✓ Python AI 服务已启动 (端口 $pythonApiPort)');
+        return;
+      }
+    }
+
+    // 如果超时仍未启动
+    print('! 警告: Python AI 服务未能在预期时间内启动');
+    print('  进程 ID: ${_pythonApiProcess!.pid}');
+    _pythonApiProcess = null;
+  } catch (e) {
+    print('✗ 启动 Python AI 服务失败: $e');
+    print('  请手动运行 LambdaLinker/start_api.bat 启动 Python AI 服务');
+    _pythonApiProcess = null;
+  }
+}
+
+/// 停止 Python API 服务
+Future<void> _stopPythonApiService() async {
+  if (_pythonApiProcess != null) {
+    try {
+      print('正在停止 Python AI 服务...');
+      _pythonApiProcess!.kill(ProcessSignal.sigterm);
+      // 等待进程结束
+      await _pythonApiProcess!.exitCode.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () {
+          _pythonApiProcess!.kill(ProcessSignal.sigkill);
+          return -1;
+        },
+      );
+      print('✓ Python AI 服务已停止');
+    } catch (e) {
+      print('! 停止 Python AI 服务时出错: $e');
+    } finally {
+      _pythonApiProcess = null;
+    }
+  }
+}
+
 Future<void> main(List<String> args) async {
   if (args.contains('--debugMode')) {
     setDebugMode(true);
@@ -90,6 +209,16 @@ Future<void> main(List<String> args) async {
   } else {
     print('✗ 设置失败: ${setGlobal.stderr}');
   }
+
+  // 启动 Python AI 服务
+  await _startPythonApiService();
+
+  // 注册退出处理（仅 SIGINT，Windows 不支持 SIGTERM）
+  ProcessSignal.sigint.watch().listen((_) async {
+    print('\n收到退出信号，正在清理...');
+    await _stopPythonApiService();
+    exit(0);
+  });
   // Start Heidegger service in background
   try {
     final scriptDir = p.dirname(Platform.script.toFilePath());
@@ -2066,6 +2195,12 @@ Future<void> main(List<String> args) async {
       InternetAddress.loopbackIPv4, 8080);
   stdout.writeln(
       'Server listening on http://${server.address.host}:${server.port}');
+
+  // 优雅退出处理
+  server.autoCompress = false;
+
+  // 监听服务器关闭
+  print('服务器启动完成，按 Ctrl+C 退出');
 }
 
 class _MultipartPart {
