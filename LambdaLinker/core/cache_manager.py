@@ -86,20 +86,28 @@ def compute_file_hash(file_path: str, algorithm: str = "sha256") -> str:
     return hasher.hexdigest()
 
 
-def compute_pair_key(file_a_path: str, file_b_path: str, doc_type: str = "word") -> str:
+def compute_pair_key(file_a_path: str, file_b_path: str, doc_type: str = "word",
+                      commit_a: Optional[str] = None, commit_b: Optional[str] = None) -> str:
     """计算文件对的缓存键
-    
+
     Args:
         file_a_path: 文件A路径
         file_b_path: 文件B路径
         doc_type: 文档类型 (word, ppt, excel)
-        
+        commit_a: 文件A的commit ID（可选，如果提供则使用commit ID而不是文件hash）
+        commit_b: 文件B的commit ID（可选，如果提供则使用commit ID而不是文件hash）
+
     Returns:
         缓存键字符串
     """
+    # 优先使用commit ID（更稳定，不受文件元数据影响）
+    if commit_a and commit_b:
+        return f"{doc_type}_{commit_a}_vs_{commit_b}"
+
+    # 如果没有提供commit ID，使用文件内容hash
     hash_a = compute_file_hash(file_a_path)
     hash_b = compute_file_hash(file_b_path)
-    
+
     # 格式：doctype_hashA_vs_hashB
     return f"{doc_type}_{hash_a}_vs_{hash_b}"
 
@@ -293,19 +301,23 @@ def get_cache_manager() -> CacheManager:
 def get_cached_result(
     file_a_path: str,
     file_b_path: str,
-    doc_type: str = "word"
+    doc_type: str = "word",
+    commit_a: Optional[str] = None,
+    commit_b: Optional[str] = None
 ) -> Optional[dict[str, Any]]:
     """获取缓存的对比结果（便捷函数）
-    
+
     Args:
         file_a_path: 文件A路径
         file_b_path: 文件B路径
         doc_type: 文档类型
-        
+        commit_a: 文件A的commit ID（可选）
+        commit_b: 文件B的commit ID（可选）
+
     Returns:
         缓存的结果，如果不存在则返回 None
     """
-    cache_key = compute_pair_key(file_a_path, file_b_path, doc_type)
+    cache_key = compute_pair_key(file_a_path, file_b_path, doc_type, commit_a, commit_b)
     return get_cache_manager().get(cache_key)
 
 
@@ -313,18 +325,22 @@ def save_cached_result(
     file_a_path: str,
     file_b_path: str,
     result: dict[str, Any],
-    doc_type: str = "word"
+    doc_type: str = "word",
+    commit_a: Optional[str] = None,
+    commit_b: Optional[str] = None
 ) -> bool:
     """保存对比结果到缓存（便捷函数）
-    
+
     Args:
         file_a_path: 文件A路径
         file_b_path: 文件B路径
         result: 对比结果
         doc_type: 文档类型
-        
+        commit_a: 文件A的commit ID（可选）
+        commit_b: 文件B的commit ID（可选）
+
     Returns:
         是否保存成功
     """
-    cache_key = compute_pair_key(file_a_path, file_b_path, doc_type)
+    cache_key = compute_pair_key(file_a_path, file_b_path, doc_type, commit_a, commit_b)
     return get_cache_manager().set(cache_key, result)

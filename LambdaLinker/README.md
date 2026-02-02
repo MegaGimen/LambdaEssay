@@ -2,6 +2,16 @@
 
 基于 LLM 的 Office 文档（Word/PPT/Excel）语义级别差异对比工具。
 
+## 项目简介
+
+LambdaLinker 是一个智能文档对比工具，能够深度理解 Office 文档的内容差异。不同于传统的文本对比工具，LambdaLinker 利用大语言模型（LLM）进行语义分析，可以识别：
+
+- **内容变化** - 检测文本增删改，理解语义变化
+- **评论追踪** - 识别 Word 文档中的评论、作者和回复
+- **图片分析** - 使用视觉 LLM 生成图片内容描述
+- **格式变化** - 检测样式、布局的变化
+- **数据变化** - 识别 Excel 表格中的数据差异
+
 ## 功能特性
 
 - ✅ **Word 文档对比** - 支持文本、评论、图片的语义分析
@@ -233,6 +243,87 @@ result = compare_excel_docs(
    - 缓存位置：Windows `AppData/LambdaLinker_cache`，Linux/Mac `~/.cache/LambdaLinker`
    - 相同文件对比将直接返回缓存结果（速度提升 100x+）
    - 可通过 `cache_cli.py` 管理缓存
+
+## 故障排查
+
+### 图片描述生成失败
+
+**问题：** 文档对比时图片描述生成失败，错误信息：`McpError: Connection closed`
+
+**解决方案：**
+
+1. **检查 MCP 配置文件路径：**
+   ```bash
+   # 确保 mcp-config.json 中的路径正确
+   cat mcp-config.json
+   ```
+
+   正确配置示例：
+   ```json
+   {
+     "mcpServers": {
+       "markitdown": {
+         "command": "D:/helloagent/.venv/Scripts/python.exe",
+         "args": [
+           "D:/helloagent/LambdaEssay/LambdaLinker/mcp_modules/markitdown_mcp_server.py"
+         ]
+       }
+     }
+   }
+   ```
+
+
+2. **检查环境变量配置：**
+   ```bash
+   # 确保 .env 中配置了视觉 LLM
+   grep MARKITDOWN_LLM .env
+   ```
+
+3. **重启 API 服务：**
+   ```bash
+   # 停止当前服务（Ctrl+C）
+   # 重新启动
+   cd LambdaLinker
+   python api_server.py
+   ```
+
+4. **清除缓存：**
+   ```bash
+   # 清除旧缓存，强制重新生成
+   rm -rf .cache
+   # 或使用缓存管理工具
+   python cache_cli.py clear
+   ```
+
+### 从 Git 仓库提取文档时图片损坏
+
+**问题：** 从 Git 仓库提取的文档图片无法显示或损坏
+
+**原因：** `git archive --format=zip` 在 Windows 上会损坏二进制数据
+
+**解决方案：** 已在代码中修复（改用 tar 格式）。如需验证修复：
+
+查看服务器日志，应该看到类似输出：
+```
+[DEBUG] Tar file size: xxx bytes
+[DEBUG] Listing tar contents:
+word/media/image1.png
+```
+
+如果看到图片文件（`word/media/image1.png`），说明提取成功。
+
+### 启用调试日志
+
+在 `.env` 中设置：
+```bash
+PRINT_PROMPTS=1
+```
+
+这会打印详细的调试信息，包括：
+- Git 命令执行状态
+- Tar 文件大小和内容列表
+- 提取的文件列表
+- MCP 调用详情
 
 ## 许可证
 

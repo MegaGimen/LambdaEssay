@@ -56,24 +56,7 @@ def read_docx_paragraphs(
             include_images=include_images,
         )
 
-        # 如果启用了图片处理且配置了 LLM，后处理图片描述
-        if include_images and 'data:image/' in text:
-            llm_api_key = os.getenv("MARKITDOWN_LLM_API_KEY") or os.getenv("LLM_API_KEY")
-            llm_base_url = os.getenv("MARKITDOWN_LLM_BASE_URL") or os.getenv("LLM_BASE_URL")
-            llm_model = os.getenv("MARKITDOWN_LLM_MODEL")
-
-            if llm_api_key and llm_model:
-                try:
-                    client_kwargs = {"api_key": llm_api_key}
-                    if llm_base_url:
-                        client_kwargs["base_url"] = llm_base_url
-                    llm_client = OpenAI(**client_kwargs)
-                    # 直接处理图片描述，绕过 MCP 缓存
-                    text = _replace_images_with_descriptions(text, path, llm_client, llm_model, "请描述这张图片的内容，简洁明了")
-                except Exception as e:
-                    # 如果处理失败，使用原始文本
-                    pass
-
+        # MCP 服务器已经处理了图片描述，不需要重复处理
         return split_text_to_paragraphs(text)
 
     if not path.lower().endswith(".docx"):

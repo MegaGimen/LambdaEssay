@@ -47,29 +47,69 @@ def build_markitdown() -> MarkItDown:
 def _generate_image_description(image_path: str, llm_client: OpenAI, llm_model: str, llm_prompt: str) -> str:
     """为图片文件生成描述"""
     import base64
+    from io import BytesIO
 
     try:
-        # 读取图片并转换为 base64
+        # 读取图片
         with open(image_path, "rb") as f:
             image_bytes = f.read()
 
-        # 检查图片大小
-        if len(image_bytes) > 5 * 1024 * 1024:  # 5MB
-            return "[图片过大，已省略详细描述]"
+        print(f"[MarkItDown] 原始图片大小: {len(image_bytes)} bytes")
 
-        # 转换为 base64 data URL
+        # 检查图片大小，如果太大则压缩
+        if len(image_bytes) > 512 * 1024:  # 大于512KB才压缩
+            try:
+                from PIL import Image
+                img = Image.open(BytesIO(image_bytes))
+
+                print(f"[MarkItDown] 图片格式: {img.mode}, 尺寸: {img.size}")
+
+                # 转换为RGB（如果是RGBA）
+                if img.mode in ('RGBA', 'LA', 'P'):
+                    img = img.convert('RGB')
+
+                # 压缩图片
+                output = BytesIO()
+                img.save(output, format='JPEG', quality=75, optimize=True)
+                compressed_bytes = output.getvalue()
+
+                print(f"[MarkItDown] 压缩后大小: {len(compressed_bytes)} bytes")
+
+                # 只有在压缩成功且有数据时才使用压缩后的数据
+                if len(compressed_bytes) > 0 and len(compressed_bytes) < len(image_bytes):
+                    image_bytes = compressed_bytes
+                else:
+                    print(f"[MarkItDown] 压缩失败或无效果，使用原图")
+
+            except ImportError:
+                print("[MarkItDown] PIL 库未安装，使用原始图片")
+            except Exception as e:
+                print(f"[MarkItDown] 图片压缩异常: {e}, 使用原始图片")
+
+        # 最终检查
+        if len(image_bytes) == 0:
+            return "[图片数据为空]"
+
+        if len(image_bytes) > 5 * 1024 * 1024:  # 大于5MB
+            return "[图片过大，无法生成描述]"
+
+        # 转换为 base64
         ext = Path(image_path).suffix.lower()
         if ext == ".png":
             mime_type = "image/png"
         elif ext in (".jpg", ".jpeg"):
             mime_type = "image/jpeg"
-        elif ext == ".gif":
-            mime_type = "image/gif"
         else:
-            mime_type = "image/png"
+            mime_type = "image/jpeg"  # 默认使用 JPEG
 
         b64_data = base64.b64encode(image_bytes).decode("utf-8")
+
+        if len(b64_data) == 0:
+            return "[base64编码失败]"
+
         data_url = f"data:{mime_type};base64,{b64_data}"
+
+        print(f"[MarkItDown] 准备调用 API，base64 长度: {len(b64_data)}")
 
         # 调用 LLM 生成描述
         response = llm_client.chat.completions.create(
@@ -82,13 +122,16 @@ def _generate_image_description(image_path: str, llm_client: OpenAI, llm_model: 
                 ]
             }],
             max_tokens=300,
-            temperature=0
+            temperature=0,
+            stream=False
         )
         description = response.choices[0].message.content or "无法生成图片描述"
         return f"[图片: {description}]"
 
     except Exception as e:
-        return f"[图片描述生成失败: {str(e)[:50]}]"
+        error_msg = str(e)[:200]
+        print(f"[MarkItDown] 图片描述生成失败: {error_msg}")
+        return f"[图片描述生成失败]"
 
 
 def _extract_images_from_docx(docx_path: str) -> list[dict]:
@@ -132,12 +175,17 @@ def _replace_images_with_descriptions(markdown: str, docx_path: str, llm_client:
     # 为每个图片生成描述
     image_descriptions = []
     for img_info in docx_images:
-        if img_info['size'] > 5 * 1024 * 1024:  # 5MB
+        if img_info['size'] == 0:
+            # 空图片，直接跳过
+            desc = "[图片数据为空]"
+        elif img_info['size'] > 5 * 1024 * 1024:  # 5MB
             desc = f"[图片: {img_info['filename']}, 图片过大，已省略详细描述]"
         else:
             # 保存为临时文件
             with tempfile.NamedTemporaryFile(delete=False, suffix=img_info['ext']) as tmp:
                 tmp.write(img_info['bytes'])
+                tmp.flush()
+                tmp.close()
                 tmp_path = tmp.name
 
             try:
@@ -198,6 +246,8 @@ def _replace_base64_images_with_descriptions(markdown: str, docx_path: str, llm_
             # 保存为临时文件
             with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
                 tmp.write(image_bytes)
+                tmp.flush()
+                tmp.close()
                 tmp_path = tmp.name
 
             # 生成描述

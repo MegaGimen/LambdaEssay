@@ -22,13 +22,15 @@ class AIDiffService {
   }
   
   /// 对比两个文档（自动使用缓存）
-  /// 
+  ///
   /// [fileAPath] 文件A的绝对路径
   /// [fileBPath] 文件B的绝对路径
   /// [docType] 文档类型: word, ppt, excel
   /// [useCache] 是否使用缓存（默认: true）
   /// [useMcp] 是否使用MCP服务（默认: true）
-  /// 
+  /// [commitA] 文件A的commit ID（可选，用于缓存键）
+  /// [commitB] 文件B的commit ID（可选，用于缓存键）
+  ///
   /// 返回: AI 分析结果
   static Future<Map<String, dynamic>> compareDocuments(
     String fileAPath,
@@ -36,18 +38,22 @@ class AIDiffService {
     String docType, {
     bool useCache = true,
     bool useMcp = true,
+    String? commitA,
+    String? commitB,
   }) async {
     final url = Uri.parse('$_pythonApiUrl/compare');
-    
+
     try {
-      print('[AIDiff] 开始对比: $docType (cache=$useCache)');
-      
+      print('[AIDiff] 开始对比: $docType (cache=$useCache, commits=$commitA vs $commitB)');
+
       final requestBody = {
         'file_a': fileAPath,
         'file_b': fileBPath,
         'doc_type': docType,
         'use_cache': useCache,
         'use_mcp': useMcp,
+        if (commitA != null) 'commit_a': commitA,
+        if (commitB != null) 'commit_b': commitB,
       };
       
       final response = await http.post(
