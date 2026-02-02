@@ -113,6 +113,48 @@ Future<void> main(List<String> args) async {
   } catch (e) {
     print('Failed to start Heidegger: $e');
   }
+
+  // Start Python AI Service (LambdaLinker) in background
+  try {
+    final scriptDir = p.dirname(Platform.script.toFilePath());
+    // scriptDir is .../server/bin
+    // projectRoot is .../LambdaEssay/
+    final projectRoot = p.dirname(p.dirname(scriptDir)); 
+    final lambdaLinkerDir = p.join(projectRoot, 'LambdaLinker');
+    final apiServerPath = p.join(lambdaLinkerDir, 'api_server.py');
+    final venvPython = p.join(lambdaLinkerDir, 'venv', 'Scripts', 'python.exe');
+
+    if (File(apiServerPath).existsSync()) {
+      await _killPort(8765);
+      print('Starting Python AI Service from $apiServerPath...');
+      
+      String pythonExe = 'python';
+      if (File(venvPython).existsSync()) {
+        pythonExe = venvPython;
+      } else {
+        print('Warning: venv python not found at $venvPython, using system python');
+      }
+
+      // Use PowerShell to start python script hidden
+      final psCommand = 'Start-Process -FilePath "$pythonExe" -ArgumentList "$apiServerPath" -WorkingDirectory "$lambdaLinkerDir" -WindowStyle Hidden';
+      
+      await _processManager.start(
+        [
+          'powershell',
+          '-WindowStyle', 'Hidden',
+          '-Command', psCommand
+        ],
+        mode: ProcessStartMode.normal,
+        runInShell: false
+      );
+      print('Python AI Service start command executed.');
+    } else {
+      print('Python AI Service script not found at $apiServerPath');
+    }
+  } catch (e) {
+    print('Failed to start Python AI Service: $e');
+  }
+
   await initTrackingService();
   final router = Router();
 
