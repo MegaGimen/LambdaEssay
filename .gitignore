@@ -44,7 +44,7 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
-/frontend/build
+# /frontend/build
 
 *.dill
 frontend/build/b6862f53c5db0dffd80a6274ce6c73bd.cache.dill.track.dill

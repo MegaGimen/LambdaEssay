@@ -73,6 +73,8 @@ class CompareRequest(BaseModel):
     doc_type: str = Field(..., description="文档类型: word, ppt, excel")
     use_cache: bool = Field(True, description="是否使用缓存")
     use_mcp: bool = Field(True, description="是否使用MCP服务")
+    commit_a: Optional[str] = Field(None, description="文件A的commit ID（用于缓存键）")
+    commit_b: Optional[str] = Field(None, description="文件B的commit ID（用于缓存键）")
 
 
 class CompareResponse(BaseModel):
@@ -126,68 +128,81 @@ async def health_check():
 @app.post("/compare", response_model=CompareResponse)
 async def compare_documents(req: CompareRequest):
     """对比两个文档
-    
+
     Args:
         req: 对比请求
-        
+
     Returns:
         对比结果
     """
-    logger.info(f"收到对比请求: {req.doc_type}, A={Path(req.file_a).name}, B={Path(req.file_b).name}, cache={req.use_cache}")
-    
+    logger.info(f"收到对比请求: {req.doc_type}, A={Path(req.file_a).name}, B={Path(req.file_b).name}, cache={req.use_cache}, commits={req.commit_a} vs {req.commit_b}")
+
     # 验证文件存在
     file_a = Path(req.file_a)
     file_b = Path(req.file_b)
-    
+
     if not file_a.exists():
         logger.error(f"文件不存在: {req.file_a}")
         raise HTTPException(status_code=404, detail=f"文件不存在: {req.file_a}")
-    
+
     if not file_b.exists():
         logger.error(f"文件不存在: {req.file_b}")
         raise HTTPException(status_code=404, detail=f"文件不存在: {req.file_b}")
-    
+
     try:
         # 获取 LLM Agent
         llm_agent = default_agent_from_env()
-        
+
         # 记录是否使用了缓存
-        from core.cache_manager import get_cached_result
+        from core.cache_manager import get_cache_manager, compute_pair_key
         cached = False
+        result = None
+
+        # 如果启用缓存，先尝试获取缓存结果（使用commit ID如果可用）
         if req.use_cache:
-            cached_result = get_cached_result(req.file_a, req.file_b, req.doc_type)
+            cache_key = compute_pair_key(req.file_a, req.file_b, req.doc_type, req.commit_a, req.commit_b)
+            cached_result = get_cache_manager().get(cache_key)
             if cached_result is not None:
                 cached = True
-        
-        # 执行对比
-        if req.doc_type == "word":
-            result = compare_word_docs(
-                str(file_a),
-                str(file_b),
-                llm_agent,
-                use_mcp=req.use_mcp,
-                use_cache=req.use_cache,
-            )
-        elif req.doc_type == "ppt":
-            result = compare_ppt_decks(
-                str(file_a),
-                str(file_b),
-                llm_agent,
-                use_mcp=req.use_mcp,
-                use_cache=req.use_cache,
-            )
-        elif req.doc_type == "excel":
-            result = compare_excel_docs(
-                str(file_a),
-                str(file_b),
-                llm_agent,
-                use_mcp=req.use_mcp,
-                use_cache=req.use_cache,
-            )
-        else:
-            logger.error(f"不支持的文档类型: {req.doc_type}")
-            raise HTTPException(status_code=400, detail=f"不支持的文档类型: {req.doc_type}")
-        
+                result = cached_result
+                logger.info(f"✅ 缓存命中: {cache_key}")
+
+        # 如果没有缓存，执行LLM对比（禁用内部缓存，由api_server统一管理）
+        if result is None:
+            if req.doc_type == "word":
+                result = compare_word_docs(
+                    str(file_a),
+                    str(file_b),
+                    llm_agent,
+                    use_mcp=req.use_mcp,
+                    use_cache=False,  # 禁用内部缓存
+                )
+            elif req.doc_type == "ppt":
+                result = compare_ppt_decks(
+                    str(file_a),
+                    str(file_b),
+                    llm_agent,
+                    use_mcp=req.use_mcp,
+                    use_cache=False,  # 禁用内部缓存
+                )
+            elif req.doc_type == "excel":
+                result = compare_excel_docs(
+                    str(file_a),
+                    str(file_b),
+                    llm_agent,
+                    use_mcp=req.use_mcp,
+                    use_cache=False,  # 禁用内部缓存
+                )
+            else:
+                logger.error(f"不支持的文档类型: {req.doc_type}")
+                raise HTTPException(status_code=400, detail=f"不支持的文档类型: {req.doc_type}")
+
+            # 保存结果到缓存（使用commit ID）
+            if req.use_cache and (req.commit_a or req.commit_b):
+                cache_key = compute_pair_key(req.file_a, req.file_b, req.doc_type, req.commit_a, req.commit_b)
+                get_cache_manager().set(cache_key, result)
+                logger.info(f"✅ 缓存已保存: {cache_key}")
+
         logger.info(f"对比完成: {'使用缓存' if cached else '调用LLM'}")
         
         return CompareResponse(
