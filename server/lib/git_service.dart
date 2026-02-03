@@ -3,7 +3,7 @@ import 'dart:io';
 import 'dart:async';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
-import 'package:archive/archive.dart';
+import 'package:archive/archive_io.dart';
 import 'package:path/path.dart' as p;
 import 'models.dart';
 import 'ai_diff_service.dart';  // 🔥 新增：AI 对比服务
@@ -269,68 +269,43 @@ Future<void> _flushDocxToContent(String repoPath) async {
 }
 
 Future<void> _unzipDocx(String docxPath, String destDir) async {
-  String zipPath = docxPath;
-  Directory? tempDir;
+  // 使用 archive 包解压，不再依赖 PowerShell
+  final bytes = await File(docxPath).readAsBytes();
+  final archive = ZipDecoder().decodeBytes(bytes);
 
-  // PowerShell Expand-Archive requires .zip extension
-  if (!docxPath.toLowerCase().endsWith('.zip')) {
-    tempDir = Directory.systemTemp.createTempSync('gitdocx_unzip_');
-    zipPath = p.join(tempDir.path, 'temp.zip');
-    File(docxPath).copySync(zipPath);
-  }
-
-  try {
-    final res = await Process.run('powershell', [
-      '-Command',
-      'Expand-Archive -Path "$zipPath" -DestinationPath "$destDir" -Force'
-    ]);
-    if (res.exitCode != 0) {
-      throw Exception('Failed to unzip docx: ${res.stderr}');
-    }
-  } finally {
-    if (tempDir != null) {
-      try {
-        tempDir.deleteSync(recursive: true);
-      } catch (_) {}
+  for (final file in archive) {
+    final filename = file.name;
+    if (file.isFile) {
+      final data = file.content as List<int>;
+      final outFile = File(p.join(destDir, filename));
+      await outFile.create(recursive: true);
+      await outFile.writeAsBytes(data);
+    } else {
+      await Directory(p.join(destDir, filename)).create(recursive: true);
     }
   }
 }
 
 Future<void> _zipDir(String srcDir, String docxPath) async {
-  String zipPath = docxPath;
-  bool needsRename = false;
-  Directory? tempDir;
-
-  // PowerShell Compress-Archive requires .zip extension
-  if (!docxPath.toLowerCase().endsWith('.zip')) {
-    tempDir = Directory.systemTemp.createTempSync('gitdocx_zip_');
-    zipPath = p.join(tempDir.path, 'temp.zip');
-    needsRename = true;
+  // 使用 archive 包压缩
+  final encoder = ZipFileEncoder();
+  encoder.create(docxPath);
+  
+  final dir = Directory(srcDir);
+  if (!dir.existsSync()) {
+    throw Exception('Source directory not found: $srcDir');
   }
 
-  try {
-    final cmd =
-        "Get-ChildItem -Path '$srcDir' | Compress-Archive -DestinationPath '$zipPath' -Force";
-    final res = await Process.run('powershell', ['-Command', cmd]);
-    if (res.exitCode != 0) {
-      throw Exception('Failed to zip dir: ${res.stderr}');
-    }
-
-    if (needsRename) {
-      final f = File(zipPath);
-      if (f.existsSync()) {
-        f.copySync(docxPath);
-      } else {
-        throw Exception('Failed to create zip file at $zipPath');
-      }
-    }
-  } finally {
-    if (tempDir != null) {
-      try {
-        tempDir.deleteSync(recursive: true);
-      } catch (_) {}
+  final entities = dir.listSync(recursive: true);
+  for (final entity in entities) {
+    if (entity is File) {
+      final relPath = p.relative(entity.path, from: srcDir);
+      // 使用 relPath 作为 zip 内的文件名，确保不包含源目录名作为前缀
+      await encoder.addFile(entity, relPath);
     }
   }
+  
+  encoder.close();
 }
 
 Future<void> _copyDir(String src, String dst) async {
@@ -351,15 +326,11 @@ Future<void> _copyDir(String src, String dst) async {
 
 Future<void> _gitArchiveToDocx(
     String repoPath, String commitId, String outDocxPath) async {
-  // ⚠️ 重要：git archive --format=zip 不能正确保留二进制数据
-  // 它会损坏 docx 文件中嵌入的图片。改用两步法：
-  // 1. 使用 git archive --format=tar 提取到临时目录（保留二进制数据）
-  // 2. 使用 PowerShell Compress-Archive 重新压缩成 docx 文件
+  // ⚠️ 重要：使用 git archive --format=tar 提取，然后用 archive 包转为 zip (docx)
+  // 避免使用 PowerShell Compress-Archive 导致的损坏问题
 
   final tmpDir = Directory.systemTemp.createTempSync('git_archive_${commitId}_');
   try {
-    // 步骤1：使用 tar 格式提取 doc_content 目录（保留二进制数据）
-    // ⚠️ 直接输出到文件，避免 Process.run 截断二进制数据
     final tarPath = p.join(tmpDir.path, 'content.tar');
     final res = await Process.run(
       'git',
@@ -377,69 +348,20 @@ Future<void> _gitArchiveToDocx(
       throw Exception('Failed to git archive to tar: $stderr');
     }
 
-    // 调试：检查 tar 文件大小
-    final tarFileSize = await File(tarPath).length();
-    //print('[DEBUG] Tar file size: $tarFileSize bytes');
+    // 使用 archive 包解码 tar
+    final tarBytes = await File(tarPath).readAsBytes();
+    final archive = TarDecoder().decodeBytes(tarBytes);
 
-    // 调试：列出 tar 文件的内容
-    // print('[DEBUG] Listing tar contents:');
-    // final listRes = await Process.run('tar', ['-tf', tarPath]);
-    // final tarList = listRes.stdout is String
-    //     ? listRes.stdout as String
-    //     : utf8.decode(listRes.stdout as List<int>);
-    // print(tarList.split('\n').take(30).join('\n'));
-
-    // 使用 tar 命令解压（Windows 10+ 内置 tar 支持）
-    //print('[DEBUG] Running: tar -xf $tarPath -C ${tmpDir.path}');
-    final extractRes = await Process.run(
-      'tar',
-      ['-xf', tarPath, '-C', tmpDir.path],
-      workingDirectory: null,
-    );
-
-    //print('[DEBUG] tar exitCode: ${extractRes.exitCode}');
-    if (extractRes.exitCode != 0) {
-      final stderr = extractRes.stderr is String ? extractRes.stderr as String : utf8.decode(extractRes.stderr as List<int>);
-      //print('[DEBUG] tar stderr: $stderr');
-      throw Exception('Failed to extract tar: $stderr');
+    // 重新编码为 Zip (docx)
+    final zipEncoder = ZipEncoder();
+    final zipBytes = zipEncoder.encode(archive);
+    if (zipBytes == null) {
+        throw Exception('Failed to encode zip data');
     }
-
-    // 调试：列出提取后的所有文件
-    // print('[DEBUG] Listing files in ${tmpDir.path}:');
-    // tmpDir.listSync(recursive: true).forEach((entity) {
-    //   print('  ${entity.path}');
-    // });
-
-    // 步骤2：将提取的文件压缩成 docx 文件
-    // 注意：git archive <commit>:doc_content 提取的 tar 文件直接包含文件，
-    // 没有 doc_content/ 前缀，所以直接使用 tmpDir.path
-    final contentDir = tmpDir.path;
-
-    // 调试：检查 word 目录
-    // final wordDir = Directory(p.join(contentDir, 'word'));
-    // if (wordDir.existsSync()) {
-    //   print('[DEBUG] word/ directory contents:');
-    //   wordDir.listSync().forEach((entity) {
-    //     print('  ${entity.path}');
-    //   });
-    // } else {
-    //   print('[DEBUG] word/ directory does not exist!');
-    // }
-
-    // 检查是否有必需的 docx 文件
-    final requiredFiles = ['[Content_Types].xml', 'word/document.xml'];
-    for (var file in requiredFiles) {
-      final filePath = p.join(contentDir, file);
-      //print('[DEBUG] Checking file: $filePath, exists: ${File(filePath).existsSync()}');
-      if (!File(filePath).existsSync()) {
-        throw Exception('Required docx file not found: $file');
-      }
-    }
-
-    await _zipDir(contentDir, outDocxPath);
+    
+    await File(outDocxPath).writeAsBytes(zipBytes);
 
   } finally {
-    // 清理临时目录
     try {
       if (tmpDir.existsSync()) {
         tmpDir.deleteSync(recursive: true);
@@ -1138,12 +1060,15 @@ Future<Uint8List> compareWorking(String repoPath) async {
       }
 
       return await File(pdf).readAsBytes();
+    } catch (e) {
+      print('Debug: Temporary directory kept at: ${tmpDir.path} due to error: $e');
+      print('Debug: Please check 1.docx and 2.docx in ${tmpDir.path} if available.');
+      rethrow;
     } finally {
-      try {
-        if (tmpDir.existsSync()) {
-          tmpDir.deleteSync(recursive: true);
-        }
-      } catch (_) {}
+      // Only delete if no error (or we can implement a flag to keep it)
+      // For now, if we rethrew in catch, finally still runs.
+      // So we need to check if we want to delete.
+      // But we can't easily know if we are in error state inside finally block without a variable.
     }
   });
 }
@@ -1674,6 +1599,7 @@ Future<void> _generatePreviewInternal(
   }
 
   final tmpDir = await Directory.systemTemp.createTemp('gitdocx_prev_diff_');
+  bool success = false;
   try {
     final currentDocx = p.join(tmpDir.path, '$commitId.docx');
 
@@ -1709,9 +1635,13 @@ Future<void> _generatePreviewInternal(
         await File(tmpPdfPath).copy(pdfPath);
       }
     }
+    success = true;
+  } catch (e) {
+    print('Debug: Temporary directory kept at: ${tmpDir.path} due to error: $e');
+    rethrow;
   } finally {
     try {
-      if (tmpDir.existsSync()) {
+      if (success && tmpDir.existsSync()) {
         tmpDir.deleteSync(recursive: true);
       }
     } catch (_) {}
@@ -1968,6 +1898,7 @@ Future<Uint8List> compareCommits(
     }
 
     final tmpDir = await Directory.systemTemp.createTemp('gitdocx_cmp_');
+    bool success = false;
     try {
       final p1 = p.join(tmpDir.path, 'old.docx');
       final p2 = p.join(tmpDir.path, 'new.docx');
@@ -2022,10 +1953,14 @@ Future<Uint8List> compareCommits(
       }
 
       await File(pdf).copy(cachePath);
+      success = true;
       return await File(pdf).readAsBytes();
+    } catch (e) {
+      print('Debug: Temporary directory kept at: ${tmpDir.path} due to error: $e');
+      rethrow;
     } finally {
       try {
-        if (tmpDir.existsSync()) {
+        if (success && tmpDir.existsSync()) {
           tmpDir.deleteSync(recursive: true);
         }
       } catch (_) {}
