@@ -379,7 +379,7 @@ Future<void> _gitArchiveToDocx(
 
     // 调试：检查 tar 文件大小
     final tarFileSize = await File(tarPath).length();
-    print('[DEBUG] Tar file size: $tarFileSize bytes');
+    //print('[DEBUG] Tar file size: $tarFileSize bytes');
 
     // 调试：列出 tar 文件的内容
     // print('[DEBUG] Listing tar contents:');
@@ -390,17 +390,17 @@ Future<void> _gitArchiveToDocx(
     // print(tarList.split('\n').take(30).join('\n'));
 
     // 使用 tar 命令解压（Windows 10+ 内置 tar 支持）
-    print('[DEBUG] Running: tar -xf $tarPath -C ${tmpDir.path}');
+    //print('[DEBUG] Running: tar -xf $tarPath -C ${tmpDir.path}');
     final extractRes = await Process.run(
       'tar',
       ['-xf', tarPath, '-C', tmpDir.path],
       workingDirectory: null,
     );
 
-    print('[DEBUG] tar exitCode: ${extractRes.exitCode}');
+    //print('[DEBUG] tar exitCode: ${extractRes.exitCode}');
     if (extractRes.exitCode != 0) {
       final stderr = extractRes.stderr is String ? extractRes.stderr as String : utf8.decode(extractRes.stderr as List<int>);
-      print('[DEBUG] tar stderr: $stderr');
+      //print('[DEBUG] tar stderr: $stderr');
       throw Exception('Failed to extract tar: $stderr');
     }
 
@@ -430,7 +430,7 @@ Future<void> _gitArchiveToDocx(
     final requiredFiles = ['[Content_Types].xml', 'word/document.xml'];
     for (var file in requiredFiles) {
       final filePath = p.join(contentDir, file);
-      print('[DEBUG] Checking file: $filePath, exists: ${File(filePath).existsSync()}');
+      //print('[DEBUG] Checking file: $filePath, exists: ${File(filePath).existsSync()}');
       if (!File(filePath).existsSync()) {
         throw Exception('Required docx file not found: $file');
       }
