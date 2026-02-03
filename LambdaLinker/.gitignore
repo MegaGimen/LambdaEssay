@@ -53,3 +53,4 @@ nul
 # Temporary files
 *.tmp
 *.log
+.cache
