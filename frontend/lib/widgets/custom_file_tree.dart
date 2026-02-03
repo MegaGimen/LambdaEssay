@@ -269,28 +269,10 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
     Directory directory,
     DirectoryTreeStateNotifier stateNotifier,
   ) {
-    var entries = directory
+    final entries = directory
         .listSync()
-        .where((entry) {
-          final name = path.basename(entry.path);
-          return name != '.git' && name != '.tracking_workspace.json';
-        })
+        .where((entry) => path.basename(entry.path) != '.git')
         .toList();
-
-    if (directory.path == widget.rootPath) {
-      // 特判：忽略最外面的一层文件夹
-      final subDirs = entries.whereType<Directory>().toList();
-      if (subDirs.length == 1) {
-        final outermostFolder = subDirs.first;
-        final otherEntries = entries.where((e) => e.path != outermostFolder.path).toList();
-        final folderContents = outermostFolder.listSync().where((entry) {
-          final name = path.basename(entry.path);
-          return name != '.git' && name != '.tracking_workspace.json';
-        }).toList();
-        entries = [...folderContents, ...otherEntries];
-      }
-    }
-
     entries.sort((a, b) {
       if (a is Directory && b is File) return -1;
       if (a is File && b is Directory) return 1;
