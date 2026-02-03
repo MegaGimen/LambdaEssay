@@ -382,12 +382,12 @@ Future<void> _gitArchiveToDocx(
     print('[DEBUG] Tar file size: $tarFileSize bytes');
 
     // 调试：列出 tar 文件的内容
-    print('[DEBUG] Listing tar contents:');
-    final listRes = await Process.run('tar', ['-tf', tarPath]);
-    final tarList = listRes.stdout is String
-        ? listRes.stdout as String
-        : utf8.decode(listRes.stdout as List<int>);
-    print(tarList.split('\n').take(30).join('\n'));
+    // print('[DEBUG] Listing tar contents:');
+    // final listRes = await Process.run('tar', ['-tf', tarPath]);
+    // final tarList = listRes.stdout is String
+    //     ? listRes.stdout as String
+    //     : utf8.decode(listRes.stdout as List<int>);
+    // print(tarList.split('\n').take(30).join('\n'));
 
     // 使用 tar 命令解压（Windows 10+ 内置 tar 支持）
     print('[DEBUG] Running: tar -xf $tarPath -C ${tmpDir.path}');
@@ -405,10 +405,10 @@ Future<void> _gitArchiveToDocx(
     }
 
     // 调试：列出提取后的所有文件
-    print('[DEBUG] Listing files in ${tmpDir.path}:');
-    tmpDir.listSync(recursive: true).forEach((entity) {
-      print('  ${entity.path}');
-    });
+    // print('[DEBUG] Listing files in ${tmpDir.path}:');
+    // tmpDir.listSync(recursive: true).forEach((entity) {
+    //   print('  ${entity.path}');
+    // });
 
     // 步骤2：将提取的文件压缩成 docx 文件
     // 注意：git archive <commit>:doc_content 提取的 tar 文件直接包含文件，
@@ -416,15 +416,15 @@ Future<void> _gitArchiveToDocx(
     final contentDir = tmpDir.path;
 
     // 调试：检查 word 目录
-    final wordDir = Directory(p.join(contentDir, 'word'));
-    if (wordDir.existsSync()) {
-      print('[DEBUG] word/ directory contents:');
-      wordDir.listSync().forEach((entity) {
-        print('  ${entity.path}');
-      });
-    } else {
-      print('[DEBUG] word/ directory does not exist!');
-    }
+    // final wordDir = Directory(p.join(contentDir, 'word'));
+    // if (wordDir.existsSync()) {
+    //   print('[DEBUG] word/ directory contents:');
+    //   wordDir.listSync().forEach((entity) {
+    //     print('  ${entity.path}');
+    //   });
+    // } else {
+    //   print('[DEBUG] word/ directory does not exist!');
+    // }
 
     // 检查是否有必需的 docx 文件
     final requiredFiles = ['[Content_Types].xml', 'word/document.xml'];
