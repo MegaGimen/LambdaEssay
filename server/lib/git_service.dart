@@ -750,6 +750,28 @@ Future<bool> _isFolderProject(String repoPath) async {
     }
   } catch (_) {}
 
+  // 增强判断：检查 docxPath 类型
+  try {
+    final trackingFile = File(p.join(repoPath, 'tracking.json'));
+    if (trackingFile.existsSync()) {
+      final content = await trackingFile.readAsString();
+      if (content.trim().isNotEmpty) {
+        final tracking = jsonDecode(content);
+        final docxPath = tracking['docxPath'] as String?;
+        if (docxPath != null) {
+          // 如果指向文件，明确为单文件项目
+          if (FileSystemEntity.isFileSync(docxPath)) {
+            return false;
+          }
+          // 如果指向文件夹，明确为文件夹项目
+          if (FileSystemEntity.isDirectorySync(docxPath)) {
+            return true;
+          }
+        }
+      }
+    }
+  } catch (_) {}
+
   return true;
 }
 
