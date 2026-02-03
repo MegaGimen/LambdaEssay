@@ -76,8 +76,11 @@ def run_async(coro: Any) -> Any:
     """运行异步协程，兼容已有事件循环"""
     try:
         loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
         # 如果已经在事件循环中，创建新的线程来运行
-        import concurrent.futures
         import threading
         
         result = None
@@ -100,7 +103,6 @@ def run_async(coro: Any) -> Any:
         if exception:
             raise exception
         return result
-        
-    except RuntimeError:
+    else:
         # 没有运行中的事件循环，直接运行
         return asyncio.run(coro)

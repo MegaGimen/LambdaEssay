@@ -1,9 +1,9 @@
 {
   "mcpServers": {
     "markitdown": {
-      "command": "D:/helloagent/.venv/Scripts/python.exe",
+      "command": "C:/Users/m1369/anaconda3/python.exe",
       "args": [
-        "D:/helloagent/LambdaEssay/LambdaLinker/mcp_modules/markitdown_mcp_server.py"
+        "c:/Users/m1369/Documents/gitbin/LambdaLinker/mcp_modules/markitdown_mcp_server.py"
       ],
       "env": {
         "MARKITDOWN_LLM_API_KEY": "",
