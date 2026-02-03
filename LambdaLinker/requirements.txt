@@ -1,0 +1,23 @@
+# LLM API
+openai
+
+# MCP (Model Context Protocol)
+mcp
+fastmcp
+
+# Office document processing
+python-docx
+python-pptx
+markitdown
+
+# Document conversion tools
+msoffcrypto-tool
+docx2pdf
+
+# Environment variables
+python-dotenv
+
+# Web API server (for Dart integration)
+fastapi
+uvicorn[standard]
+pydantic

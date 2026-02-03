@@ -4169,6 +4169,7 @@ class _GraphViewState extends State<_GraphView>
   static const Duration _rightPanDelay = Duration(milliseconds: 200);
   final Set<String> _selectedNodes = {};
   bool _comparing = false;
+  bool _comparingAI = false;
   bool _isCtrlPressed = false;
 
   Offset _branchPanelOffset = const Offset(16, 16);
@@ -4478,6 +4479,334 @@ class _GraphViewState extends State<_GraphView>
       widget.onLoading?.call(false);
     }
   }
+
+  Future<void> _onCompareAI() async {
+    if (_selectedNodes.length != 2) return;
+    if (_comparingAI) return;
+
+    widget.onLoading?.call(true);
+    setState(() => _comparingAI = true);
+
+    try {
+      final nodes = _selectedNodes.toList();
+      final commits = widget.data.commits;
+      int idx1 = commits.indexWhere((c) => c.id == nodes[0]);
+      int idx2 = commits.indexWhere((c) => c.id == nodes[1]);
+
+      String oldC = nodes[0];
+      String newC = nodes[1];
+
+      if (idx1 != -1 && idx2 != -1) {
+        if (idx1 < idx2) {
+          newC = nodes[0];
+          oldC = nodes[1];
+        } else {
+          newC = nodes[1];
+          oldC = nodes[0];
+        }
+      }
+
+      // 检测文档类型（从文件扩展名推断）
+      String docType = 'word'; // 默认为 word
+      // 这里可以根据实际文件扩展名判断，暂时使用默认值
+
+      final resp = await http.post(
+        Uri.parse('http://localhost:8080/compare_ai'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'repoPath': widget.repoPath,
+          'commit1': oldC,
+          'commit2': newC,
+          'docType': docType,
+        }),
+      );
+
+      if (resp.statusCode != 200) {
+        throw Exception('AI对比失败: ${resp.body}');
+      }
+
+      final response = jsonDecode(resp.body) as Map<String, dynamic>;
+      if (!mounted) return;
+
+      widget.onLoading?.call(false);
+
+      // ✅ 提取嵌套的 result 字段
+      final result = response['result'] as Map<String, dynamic>? ?? {};
+
+      await _showAICompareDialog(
+        result,
+        oldCommit: oldC.substring(0, 7),
+        newCommit: newC.substring(0, 7),
+      );
+    } catch (e) {
+      widget.onLoading?.call(false);
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('AI对比失败: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _comparingAI = false);
+      widget.onLoading?.call(false);
+    }
+  }
+
+  Future<void> _showAICompareDialog(
+    Map<String, dynamic> result, {
+    required String oldCommit,
+    required String newCommit,
+  }) async {
+    await showDialog(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: Row(
+            children: [
+              const Icon(Icons.psychology, color: Colors.blue),
+              const SizedBox(width: 8),
+              Text('AI智能对比: $oldCommit → $newCommit'),
+            ],
+          ),
+          content: SizedBox(
+            width: 800,
+            height: 600,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 文档类型
+                  if (result['doc_type'] != null) ...[
+                    _buildAISection(
+                      '📄 文档类型',
+                      result['doc_type'].toString().toUpperCase(),
+                    ),
+                    const Divider(height: 24),
+                  ],
+
+                  // 摘要
+                  if (result['summary'] != null) ...[
+                    _buildAISection(
+                      '📊 变更摘要',
+                      result['summary'].toString(),
+                    ),
+                    const Divider(height: 24),
+                  ],
+
+                  // 主要变化
+                  if (result['major_changes'] != null) ...[
+                    const Text(
+                      '✏️ 主要变化',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    ...((result['major_changes'] as List?)?.map((change) {
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text('• ', style: TextStyle(fontSize: 16)),
+                                Expanded(
+                                  child: Text(
+                                    change.toString(),
+                                    style: const TextStyle(fontSize: 14),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        }).toList() ??
+                        []),
+                    const Divider(height: 24),
+                  ],
+
+                  // 详细差异
+                  if (result['detailed_changes'] != null) ...[
+                    _buildAISection(
+                      '🔍 详细差异',
+                      result['detailed_changes'].toString(),
+                    ),
+                    const Divider(height: 24),
+                  ],
+
+                  // 统计信息
+                  if (result['statistics'] != null) ...[
+                    const Text(
+                      '📈 统计信息',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[100],
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        result['statistics'].toString(),
+                        style: const TextStyle(fontSize: 14),
+                      ),
+                    ),
+                  ],
+
+                  // 是否使用缓存
+                  if (result['cached'] == true) ...[
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.green[50],
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: Colors.green[200]!),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.check_circle, color: Colors.green, size: 16),
+                          SizedBox(width: 4),
+                          Text(
+                            '此结果来自缓存',
+                            style: TextStyle(color: Colors.green, fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('关闭'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildAISection(String title, String content) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.grey[50],
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.grey[300]!),
+          ),
+          child: Text(
+            content,
+            style: const TextStyle(fontSize: 14, height: 1.6),
+          ),
+        ),
+      ],
+    );
+  }
+
+  List<Widget> _buildAIContent(Map<String, dynamic> result) {
+    return [
+      // 变更摘要
+      if (result['summary'] != null) ...[
+        _buildAISection('📊 变更摘要', result['summary'].toString()),
+        const SizedBox(height: 16),
+      ],
+      // 主要变化
+      if (result['major_changes'] != null) ...[
+        Text(
+          '✏️ 主要变化',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: Colors.grey[800],
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.grey[50],
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(color: Colors.grey[300]!),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: (result['major_changes'] as List)
+                .map((change) => Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('• ', style: TextStyle(fontSize: 18)),
+                          Expanded(
+                            child: Text(
+                              change.toString(),
+                              style: const TextStyle(fontSize: 14, height: 1.6),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ))
+                .toList(),
+          ),
+        ),
+        const SizedBox(height: 16),
+      ],
+      // 详细分析
+      if (result['detailed_changes'] != null) ...[
+        _buildAISection('📝 详细分析', result['detailed_changes'].toString()),
+        const SizedBox(height: 16),
+      ],
+      // 文档类型和缓存状态
+      Row(
+        children: [
+          if (result['doc_type'] != null) ...[
+            Icon(Icons.description, size: 16, color: Colors.grey[600]),
+            const SizedBox(width: 4),
+            Text(
+              '文档类型: ${result['doc_type'].toString().toUpperCase()}',
+              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+            ),
+            const SizedBox(width: 16),
+          ],
+          if (result['cached'] != null) ...[
+            Icon(
+              result['cached'] == true ? Icons.flash_on : Icons.flash_off,
+              size: 16,
+              color: result['cached'] == true ? Colors.green : Colors.grey[600],
+            ),
+            const SizedBox(width: 4),
+            Text(
+              result['cached'] == true ? '已缓存' : '未缓存',
+              style: TextStyle(
+                fontSize: 12,
+                color: result['cached'] == true ? Colors.green : Colors.grey[600],
+              ),
+            ),
+          ],
+        ],
+      ),
+    ];
+  }
+
 
   Future<void> _onCommit() async {
     final authorCtrl = TextEditingController();
@@ -4809,12 +5138,16 @@ class _GraphViewState extends State<_GraphView>
         bool started = false;
         bool pdfLoading = true;
         String? pdfPath;
+        bool aiLoading = true;
+        Map<String, dynamic>? aiResult;
+        String? aiError;
 
         return StatefulBuilder(
           builder: (ctx, setState) {
             if (!started) {
               started = true;
               WidgetsBinding.instance.addPostFrameCallback((_) async {
+                // ========== 加载 PDF 预览 ==========
                 try {
                   await ensureAppDataCacheDir();
                   final path = cachePdfPathForSha(node.id);
@@ -4824,112 +5157,264 @@ class _GraphViewState extends State<_GraphView>
                       pdfPath = path;
                       pdfLoading = false;
                     });
-                    return;
+                  } else {
+                    await _requestPreviewCache(node.id);
+
+                    var tries = 0;
+                    poll?.cancel();
+                    poll = Timer.periodic(const Duration(milliseconds: 300), (t) {
+                      tries++;
+                      if (!ctx.mounted) {
+                        t.cancel();
+                        return;
+                      }
+                      if (File(path).existsSync()) {
+                        setState(() {
+                          pdfPath = path;
+                          pdfLoading = false;
+                        });
+                        t.cancel();
+                        return;
+                      }
+                      if (tries >= 80) {
+                        setState(() {
+                          pdfLoading = false;
+                        });
+                        t.cancel();
+                      }
+                    });
                   }
-
-                  await _requestPreviewCache(node.id);
-
-                  var tries = 0;
-                  poll?.cancel();
-                  poll = Timer.periodic(const Duration(milliseconds: 300), (t) {
-                    tries++;
-                    if (!ctx.mounted) {
-                      t.cancel();
-                      return;
-                    }
-                    if (File(path).existsSync()) {
-                      setState(() {
-                        pdfPath = path;
-                        pdfLoading = false;
-                      });
-                      t.cancel();
-                      return;
-                    }
-                    if (tries >= 80) {
-                      setState(() {
-                        pdfLoading = false;
-                      });
-                      t.cancel();
-                    }
-                  });
                 } catch (_) {
                   if (!ctx.mounted) return;
                   setState(() {
                     pdfLoading = false;
                   });
                 }
+
+                // ========== 加载 AI 分析 ==========
+                try {
+                  final commits = widget.data.commits;
+                  final currentIndex = commits.indexWhere((c) => c.id == node.id);
+                  if (currentIndex >= 0 && currentIndex < commits.length - 1) {
+                    final parentNode = commits[currentIndex + 1];
+                    final resp = await http.post(
+                      Uri.parse('http://localhost:8080/compare_ai'),
+                      headers: {'Content-Type': 'application/json'},
+                      body: jsonEncode({
+                        'repoPath': widget.repoPath,
+                        'commit1': parentNode.id,
+                        'commit2': node.id,
+                        'docType': 'word',
+                      }),
+                    );
+                    if (resp.statusCode == 200) {
+                      final response = jsonDecode(resp.body) as Map<String, dynamic>;
+                      if (response['success'] == true && response['result'] != null) {
+                        if (!ctx.mounted) return;
+                        setState(() {
+                          aiResult = response['result'] as Map<String, dynamic>;
+                          aiLoading = false;
+                          aiError = null;
+                        });
+                      } else {
+                        throw Exception('后端返回失败');
+                      }
+                    } else {
+                      throw Exception('HTTP ${resp.statusCode}: ${resp.body}');
+                    }
+                  } else {
+                    if (!ctx.mounted) return;
+                    setState(() {
+                      aiLoading = false;
+                      aiError = '这是初始提交，无父节点对比';
+                    });
+                  }
+                } catch (e) {
+                  print('[AI对比] 错误: $e');
+                  if (!ctx.mounted) return;
+                  setState(() {
+                    aiLoading = false;
+                    aiError = 'AI服务不可用';
+                  });
+                }
               });
             }
 
             return AlertDialog(
-              title: Text('操作: ${node.id.substring(0, 7)}'),
+              title: Text('提交对比: ${node.id.substring(0, 7)}'),
               content: SizedBox(
-                width: 980,
+                width: 1200,
+                height: 700,
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // ========== 左侧：AI 智能分析 ==========
                     Expanded(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('提交信息: ${node.subject}'),
-                          const SizedBox(height: 6),
-                          Text('作者: ${node.author}'),
-                          Text('时间: ${node.date}'),
-                          const SizedBox(height: 8),
-                          if (targets.isNotEmpty) ...[
-                            const Text(
-                              '以此提交为头的分支:',
-                              style: TextStyle(fontWeight: FontWeight.bold),
-                            ),
-                            const SizedBox(height: 6),
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 6,
-                              children: targets
-                                  .map((b) => ActionChip(
-                                        label: Text(b),
-                                        onPressed: () {
-                                          Navigator.pop(ctx);
-                                          _doSwitchBranch(b);
-                                        },
-                                        avatar: const Icon(Icons.swap_horiz,
-                                            size: 16),
-                                      ))
-                                  .toList(),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    SizedBox(
-                      width: 480,
-                      height: 640,
-                      child: DecoratedBox(
+                      flex: 4,
+                      child: Container(
+                        padding: const EdgeInsets.all(16),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFFDFDFD),
+                          color: Colors.blue[50],
                           borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: const Color(0xFFE6E6E6)),
+                          border: Border.all(color: Colors.blue[200]!),
                         ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(6),
-                          child: pdfLoading
-                              ? const Center(
-                                  child: SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                        strokeWidth: 2),
+                        child: SingleChildScrollView(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(Icons.psychology, color: Colors.blue[700]),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'AI 智能分析',
+                                    style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.blue[700],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const Divider(height: 24),
+                              if (aiLoading)
+                                const Center(
+                                  child: Padding(
+                                    padding: EdgeInsets.all(32.0),
+                                    child: Column(
+                                      children: [
+                                        CircularProgressIndicator(),
+                                        SizedBox(height: 16),
+                                        Text('AI 分析中...'),
+                                      ],
+                                    ),
                                   ),
                                 )
-                              : (pdfPath != null
-                                  ? PdfPreviewPane(
-                                      filePath: pdfPath,
-                                      initialZoom: 0.75,
-                                    )
-                                  : const Center(child: Text('暂无 PDF 预览'))),
+                              else if (aiError != null)
+                                Container(
+                                  padding: const EdgeInsets.all(16),
+                                  decoration: BoxDecoration(
+                                    color: Colors.orange[50],
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(color: Colors.orange[300]!),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.warning, color: Colors.orange[700]),
+                                      const SizedBox(width: 8),
+                                      Expanded(child: Text(aiError!)),
+                                    ],
+                                  ),
+                                )
+                              else if (aiResult != null)
+                                ..._buildAIContent(aiResult!),
+                              const SizedBox(height: 24),
+                              const Divider(),
+                              const SizedBox(height: 8),
+                              Text(
+                                '提交信息',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.grey[700],
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text('Hash: ${node.id.substring(0, 12)}...'),
+                              Text('信息: ${node.subject}'),
+                              Text('作者: ${node.author}'),
+                              Text('时间: ${node.date}'),
+                              if (targets.isNotEmpty) ...[
+                                const SizedBox(height: 16),
+                                Text(
+                                  '关联分支',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.grey[700],
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 6,
+                                  children: targets
+                                      .map((b) => ActionChip(
+                                            label: Text(b),
+                                            onPressed: () {
+                                              Navigator.pop(ctx);
+                                              _doSwitchBranch(b);
+                                            },
+                                            avatar: const Icon(Icons.swap_horiz, size: 16),
+                                          ))
+                                      .toList(),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    // ========== 右侧：PDF 详细对比 ==========
+                    Expanded(
+                      flex: 6,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.grey[300]!),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Colors.grey[100],
+                                borderRadius: const BorderRadius.only(
+                                  topLeft: Radius.circular(8),
+                                  topRight: Radius.circular(8),
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.picture_as_pdf, color: Colors.red[700]),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'PDF 详细对比',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.grey[800],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Expanded(
+                              child: Padding(
+                                padding: const EdgeInsets.all(8),
+                                child: pdfLoading
+                                    ? const Center(
+                                        child: Column(
+                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          children: [
+                                            CircularProgressIndicator(),
+                                            SizedBox(height: 16),
+                                            Text('PDF 生成中...'),
+                                          ],
+                                        ),
+                                      )
+                                    : (pdfPath != null
+                                        ? PdfPreviewPane(
+                                            filePath: pdfPath,
+                                            initialZoom: 0.75,
+                                          )
+                                        : const Center(child: Text('暂无 PDF 预览'))),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -5843,23 +6328,49 @@ class _GraphViewState extends State<_GraphView>
                 left: 0,
                 right: 0,
                 child: Center(
-                  child: ElevatedButton.icon(
-                    onPressed: _comparing ? null : _onCompare,
-                    icon: _comparing
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.compare_arrows),
-                    label: Text(_comparing ? '对比中...' : '一键比较差异'),
-                    style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 24,
-                        vertical: 16,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ElevatedButton.icon(
+                        onPressed: _comparing ? null : _onCompare,
+                        icon: _comparing
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.compare_arrows),
+                        label: Text(_comparing ? '对比中...' : '传统对比'),
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 24,
+                            vertical: 16,
+                          ),
+                          textStyle: const TextStyle(fontSize: 16),
+                        ),
                       ),
-                      textStyle: const TextStyle(fontSize: 16),
-                    ),
+                      const SizedBox(width: 16),
+                      ElevatedButton.icon(
+                        onPressed: _comparingAI ? null : _onCompareAI,
+                        icon: _comparingAI
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.psychology),
+                        label: Text(_comparingAI ? 'AI分析中...' : 'AI智能对比'),
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 24,
+                            vertical: 16,
+                          ),
+                          textStyle: const TextStyle(fontSize: 16),
+                          backgroundColor: Colors.blue[600],
+                          foregroundColor: Colors.white,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),

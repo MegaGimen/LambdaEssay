@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:archive/archive.dart';
 import 'package:path/path.dart' as p;
 import 'models.dart';
+import 'ai_diff_service.dart';  // 🔥 新增：AI 对比服务
 
 import 'package:crypto/crypto.dart';
 
@@ -350,20 +351,100 @@ Future<void> _copyDir(String src, String dst) async {
 
 Future<void> _gitArchiveToDocx(
     String repoPath, String commitId, String outDocxPath) async {
-  // Use git archive to create a zip (docx) from the doc_content tree
-  // git archive --format=zip --output=out.docx <commit>:<kContentDirName>
-  final res = await Process.run(
-    'git',
-    [
-      'archive',
-      '--format=zip',
-      '--output=$outDocxPath',
-      '$commitId:$kContentDirName'
-    ],
-    workingDirectory: repoPath,
-  );
-  if (res.exitCode != 0) {
-    throw Exception('Failed to git archive to docx: ${res.stderr}');
+  // ⚠️ 重要：git archive --format=zip 不能正确保留二进制数据
+  // 它会损坏 docx 文件中嵌入的图片。改用两步法：
+  // 1. 使用 git archive --format=tar 提取到临时目录（保留二进制数据）
+  // 2. 使用 PowerShell Compress-Archive 重新压缩成 docx 文件
+
+  final tmpDir = Directory.systemTemp.createTempSync('git_archive_${commitId}_');
+  try {
+    // 步骤1：使用 tar 格式提取 doc_content 目录（保留二进制数据）
+    // ⚠️ 直接输出到文件，避免 Process.run 截断二进制数据
+    final tarPath = p.join(tmpDir.path, 'content.tar');
+    final res = await Process.run(
+      'git',
+      [
+        'archive',
+        '--format=tar',
+        '--output=$tarPath',
+        '$commitId:$kContentDirName'
+      ],
+      workingDirectory: repoPath,
+    );
+
+    if (res.exitCode != 0) {
+      final stderr = res.stderr is String ? res.stderr as String : utf8.decode(res.stderr as List<int>);
+      throw Exception('Failed to git archive to tar: $stderr');
+    }
+
+    // 调试：检查 tar 文件大小
+    final tarFileSize = await File(tarPath).length();
+    print('[DEBUG] Tar file size: $tarFileSize bytes');
+
+    // 调试：列出 tar 文件的内容
+    print('[DEBUG] Listing tar contents:');
+    final listRes = await Process.run('tar', ['-tf', tarPath]);
+    final tarList = listRes.stdout is String
+        ? listRes.stdout as String
+        : utf8.decode(listRes.stdout as List<int>);
+    print(tarList.split('\n').take(30).join('\n'));
+
+    // 使用 tar 命令解压（Windows 10+ 内置 tar 支持）
+    print('[DEBUG] Running: tar -xf $tarPath -C ${tmpDir.path}');
+    final extractRes = await Process.run(
+      'tar',
+      ['-xf', tarPath, '-C', tmpDir.path],
+      workingDirectory: null,
+    );
+
+    print('[DEBUG] tar exitCode: ${extractRes.exitCode}');
+    if (extractRes.exitCode != 0) {
+      final stderr = extractRes.stderr is String ? extractRes.stderr as String : utf8.decode(extractRes.stderr as List<int>);
+      print('[DEBUG] tar stderr: $stderr');
+      throw Exception('Failed to extract tar: $stderr');
+    }
+
+    // 调试：列出提取后的所有文件
+    print('[DEBUG] Listing files in ${tmpDir.path}:');
+    tmpDir.listSync(recursive: true).forEach((entity) {
+      print('  ${entity.path}');
+    });
+
+    // 步骤2：将提取的文件压缩成 docx 文件
+    // 注意：git archive <commit>:doc_content 提取的 tar 文件直接包含文件，
+    // 没有 doc_content/ 前缀，所以直接使用 tmpDir.path
+    final contentDir = tmpDir.path;
+
+    // 调试：检查 word 目录
+    final wordDir = Directory(p.join(contentDir, 'word'));
+    if (wordDir.existsSync()) {
+      print('[DEBUG] word/ directory contents:');
+      wordDir.listSync().forEach((entity) {
+        print('  ${entity.path}');
+      });
+    } else {
+      print('[DEBUG] word/ directory does not exist!');
+    }
+
+    // 检查是否有必需的 docx 文件
+    final requiredFiles = ['[Content_Types].xml', 'word/document.xml'];
+    for (var file in requiredFiles) {
+      final filePath = p.join(contentDir, file);
+      print('[DEBUG] Checking file: $filePath, exists: ${File(filePath).existsSync()}');
+      if (!File(filePath).existsSync()) {
+        throw Exception('Required docx file not found: $file');
+      }
+    }
+
+    await _zipDir(contentDir, outDocxPath);
+
+  } finally {
+    // 清理临时目录
+    try {
+      if (tmpDir.existsSync()) {
+        tmpDir.deleteSync(recursive: true);
+      }
+    } catch (_) {}
   }
 }
 
@@ -1928,6 +2009,110 @@ Future<Uint8List> compareCommits(
       } catch (_) {}
     }
   });
+}
+
+// 🔥 新增：AI 语义对比（带缓存）
+/// 使用 AI 对比两个 commit 的文档差异
+/// 
+/// [repoPath] 仓库路径
+/// [commit1] 第一个 commit ID
+/// [commit2] 第二个 commit ID
+/// [docType] 文档类型: word, ppt, excel (默认: word)
+/// 
+/// 返回: AI 分析结果 (JSON)
+Future<Map<String, dynamic>> compareCommitsWithAI(
+  String repoPath,
+  String commit1,
+  String commit2, {
+  String docType = 'word',
+}) async {
+  // 检查 AI 服务是否可用
+  final available = await AIDiffService.isAvailable();
+  if (!available) {
+    throw Exception('AI 服务不可用，请确保 Python API 服务已启动 (端口 8765)');
+  }
+  
+  // 使用锁保护
+  return _withRepoLock(repoPath, () async {
+    final tmpDir = await Directory.systemTemp.createTemp('ai_cmp_');
+    
+    try {
+      // 确定文件扩展名
+      final ext = docType == 'word' ? '.docx' 
+                : docType == 'ppt' ? '.pptx' 
+                : docType == 'excel' ? '.xlsx'
+                : '.docx';
+      
+      final doc1Path = p.join(tmpDir.path, 'doc1$ext');
+      final doc2Path = p.join(tmpDir.path, 'doc2$ext');
+      
+      print('[AI对比] 提取文档: $commit1 vs $commit2 ($docType)');
+      
+      // 提取两个 commit 的文档
+      await _extractDocFromCommit(repoPath, commit1, doc1Path);
+      await _extractDocFromCommit(repoPath, commit2, doc2Path);
+      
+      // 验证文件存在
+      if (!await File(doc1Path).exists()) {
+        throw Exception('无法提取文档 (commit: $commit1)');
+      }
+      if (!await File(doc2Path).exists()) {
+        throw Exception('无法提取文档 (commit: $commit2)');
+      }
+      
+      print('[AI对比] 调用 AI 服务...');
+
+      // 调用 AI 服务（自动使用缓存，传递commit ID）
+      final result = await AIDiffService.compareDocuments(
+        doc1Path,
+        doc2Path,
+        docType,
+        useCache: true,
+        useMcp: true,  // ✓ 启用MCP服务
+        commitA: commit1,
+        commitB: commit2,
+      );
+      
+      print('[AI对比] 分析完成');
+      
+      return result;
+    } catch (e) {
+      print('[AI对比] 错误: $e');
+      rethrow;
+    } finally {
+      // 清理临时文件
+      try {
+        await tmpDir.delete(recursive: true);
+      } catch (_) {}
+    }
+  });
+}
+
+/// 从 commit 提取文档文件
+/// 
+/// [repoPath] 仓库路径
+/// [commitId] commit ID
+/// [outputPath] 输出文件路径
+Future<void> _extractDocFromCommit(
+  String repoPath,
+  String commitId,
+  String outputPath,
+) async {
+  // 创建临时目录
+  final tmpDir = await Directory.systemTemp.createTemp('extract_');
+  
+  try {
+    // ✅ 改用 git archive 命令（和传统PDF对比一样）
+    // 这样可以正确处理 doc_content 目录结构
+    await _gitArchiveToDocx(repoPath, commitId, outputPath);
+    print('[AI对比] 文档提取成功: $outputPath');
+  } catch (e) {
+    throw Exception('提取文档失败 (commit: $commitId): $e');
+  } finally {
+    try {
+      await tmpDir.delete(recursive: true);
+    } catch (_) {}
+  }
 }
 
 Future<void> _ensureFolderProjectStructure(String projDir, String docxPath,
