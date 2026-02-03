@@ -29,11 +29,27 @@ try {
     $PdfPath = [System.IO.Path]::GetFullPath($PdfPath)
 
     Write-Host "Opening original document: $OriginalPath"
+    if (!(Test-Path $OriginalPath)) { throw "Original file not found: $OriginalPath" }
+    
+    # Try to unblock the file (in case of Mark of the Web)
+    Unblock-File -Path $OriginalPath -ErrorAction SilentlyContinue
+    
+    $origSize = (Get-Item $OriginalPath).Length
+    Write-Host "Original file size: $origSize bytes"
+    if ($origSize -eq 0) { throw "Original file is empty" }
+
     # Open(FileName, ConfirmConversions, ReadOnly, AddToRecentFiles, ...)
     # Open as ReadOnly ($true) to prevent "File in Use" dialogs or locking issues
     $doc = $word.Documents.Open($OriginalPath, $false, $true)
 
     Write-Host "Comparing with revised document: $RevisedPath"
+    if (!(Test-Path $RevisedPath)) { throw "Revised file not found: $RevisedPath" }
+    
+    Unblock-File -Path $RevisedPath -ErrorAction SilentlyContinue
+    
+    $revSize = (Get-Item $RevisedPath).Length
+    Write-Host "Revised file size: $revSize bytes"
+    if ($revSize -eq 0) { throw "Revised file is empty" }
     # Compare(Name, AuthorName, CompareTarget, DetectFormatChanges, IgnoreAllComparisonWarnings, AddToRecentFiles, RemovePersonalInformation, RemoveDateAndTime)
     $doc.Compare($RevisedPath, "System", $wdCompareDestinationNew, $true, $true, $false, $false, $false)
 
