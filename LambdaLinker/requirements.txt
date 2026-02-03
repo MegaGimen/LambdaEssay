@@ -21,3 +21,4 @@ python-dotenv
 fastapi
 uvicorn[standard]
 pydantic
+markitdown[docx]
