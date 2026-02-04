@@ -672,6 +672,11 @@ Future<GraphResponse> _getGraphUnlocked(String repoPath,
 }
 
 Future<bool> _isFolderProject(String repoPath) async {
+  // Explicitly check for folder_meta.json
+  if (File(p.join(repoPath, 'folder_meta.json')).existsSync()) {
+    return true;
+  }
+
   // New logic: Check for nested .tracking.zip directories
   final dir = Directory(repoPath);
   if (!dir.existsSync()) return false;
@@ -2096,6 +2101,14 @@ Future<void> _ensureFolderProjectStructure(String projDir, String docxPath,
 !folder_meta.json
 !.gitignore
 ''');
+
+    // Init folder_meta.json and commit
+    final metaFile = File(p.join(projDir, 'folder_meta.json'));
+    if (!metaFile.existsSync()) {
+      await metaFile.writeAsString('{}');
+      await _runGit(['add', 'folder_meta.json'], projDir);
+      await _runGit(['commit', '-m', 'init folder_meta'], projDir);
+    }
   }
 
   // 2. Scan Source and Init Sub Repos
