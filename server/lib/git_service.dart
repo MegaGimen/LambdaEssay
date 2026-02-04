@@ -155,7 +155,9 @@ Future<void> _forceRegenerateRepoDocx(String repoPath) async {
   if (f.existsSync()) {
     try {
       f.deleteSync();
-    } catch (_) {}
+    } catch (e, s) {
+      print('Error deleting docx in _forceRegenerateRepoDocx: $e\n$s');
+    }
   }
   await _ensureRepoDocx(repoPath);
   int timestamp2 = DateTime.now().millisecondsSinceEpoch ~/ 1000;
@@ -366,7 +368,9 @@ Future<void> _gitArchiveToDocx(
       if (tmpDir.existsSync()) {
         tmpDir.deleteSync(recursive: true);
       }
-    } catch (_) {}
+    } catch (e, s) {
+      print('Error cleaning up tmpDir in _gitArchiveToDocx: $e\n$s');
+    }
   }
 }
 
@@ -479,7 +483,8 @@ Future<String?> getCurrentBranch(String repoPath) async {
     final lines = await _runGit(['branch', '--show-current'], repoPath);
     if (lines.isEmpty) return null;
     return lines.first.trim();
-  } catch (_) {
+  } catch (e, s) {
+    print('Error in getCurrentBranch: $e\n$s');
     return null;
   }
 }
@@ -510,7 +515,9 @@ Future<List<List<String>>> _collectAllEdges(
       final content = await localFile.readAsString();
       parseContent(content);
     }
-  } catch (_) {}
+  } catch (e, s) {
+    print('Error reading local edges file: $e\n$s');
+  }
 
   // 2. Try to read from each commit
   Future<void> fetch(CommitNode c) async {
@@ -524,7 +531,9 @@ Future<List<List<String>>> _collectAllEdges(
       if (res.exitCode == 0) {
         parseContent(res.stdout.toString());
       }
-    } catch (_) {}
+    } catch (e, s) {
+      print('Error fetching edges from commit ${c.id}: $e\n$s');
+    }
   }
 
   final int batchSize = 20;
@@ -677,7 +686,9 @@ Future<bool> _isFolderProject(String repoPath) async {
         return true;
       }
     }
-  } catch (_) {}
+  } catch (e, s) {
+    print('Error listing directory in _isFolderProject: $e\n$s');
+  }
 
   // 增强判断：检查 docxPath 类型
   try {
@@ -699,7 +710,9 @@ Future<bool> _isFolderProject(String repoPath) async {
         }
       }
     }
-  } catch (_) {}
+  } catch (e, s) {
+    print('Error reading tracking.json in _isFolderProject: $e\n$s');
+  }
 
   return true;
 }
@@ -712,7 +725,9 @@ Future<void> _updateFolderMeta(String parentRepoPath, String childRelPath,
     if (metaFile.existsSync()) {
       try {
         meta = jsonDecode(await metaFile.readAsString());
-      } catch (_) {}
+      } catch (e, s) {
+        print('Error reading folder_meta.json: $e\n$s');
+      }
     }
 
     if (meta['items'] == null) meta['items'] = {};
@@ -730,7 +745,7 @@ Future<void> _updateFolderMeta(String parentRepoPath, String childRelPath,
       await _runGit(
           ['commit', '-m', 'Update metadata for $childName'], parentRepoPath);
     } catch (e) {
-      // Ignore if nothing to commit
+      print('Commit failed in _updateFolderMeta (expected if no changes): $e');
     }
   });
 }
@@ -742,7 +757,8 @@ String _stripCredentials(String url) {
       return uri.replace(userInfo: '').toString();
     }
     return url;
-  } catch (_) {
+  } catch (e, s) {
+    print('Error stripping credentials: $e\n$s');
     return url;
   }
 }
@@ -781,7 +797,9 @@ Future<void> _notifyParentFolderProject(String repoPath) async {
               remoteUrl = _stripCredentials(urls.first.trim());
             }
           }
-        } catch (_) {}
+        } catch (e, s) {
+          print('Error getting remote info in _notifyParentFolderProject: $e\n$s');
+        }
 
         await _updateFolderMeta(path, relPath, childName, remoteUrl);
 
@@ -843,7 +861,8 @@ Future<bool> _repoHasCommit(String repoPath, String commitId) async {
     // Check if commit exists in this repo
     await _runGit(['rev-parse', '--verify', '$commitId^{commit}'], repoPath);
     return true;
-  } catch (_) {
+  } catch (e, s) {
+    print('Error checking commit existence: $e\n$s');
     return false;
   }
 }
@@ -1274,7 +1293,8 @@ Future<String?> _readWorkspacePackagePath(String workspaceDir) async {
   try {
     final j = jsonDecode(await f.readAsString()) as Map<String, dynamic>;
     return j['packagePath'] as String?;
-  } catch (_) {
+  } catch (e, s) {
+    print('Error reading workspace package path: $e\n$s');
     return null;
   }
 }
@@ -1396,7 +1416,9 @@ Future<Map<String, dynamic>> expandLocalTrackingPackage(String filePath) async {
   } finally {
     try {
       tmp.deleteSync(recursive: true);
-    } catch (_) {}
+    } catch (e, s) {
+      print('Error cleaning up tmp dir in expandLocalTrackingPackage: $e\n$s');
+    }
   }
 }
 
@@ -1429,19 +1451,19 @@ Future<void> _packTrackingDirectory(
       return;
     }
     if (entity is Directory) {
-      final name = p.basename(entity.path);
+      // final name = p.basename(entity.path);
       // final entityDir = Directory(entity.path);
-      if (name.toLowerCase().endsWith(kTrackingExt)) {
-        print('[pack] 递归打包子跟踪目录：${entity.path}');
-        final tmpFile = File(p.join(Directory.systemTemp.path,
-            '${DateTime.now().microsecondsSinceEpoch}$kTrackingExt'));
-        await _packTrackingDirectory(entity.path, tmpFile.path);
-        await encoder.addFile(tmpFile, rel);
-        try {
-          tmpFile.deleteSync();
-        } catch (_) {}
-        return;
-      }
+      // if (name.toLowerCase().endsWith(kTrackingExt)) {
+      //   print('[pack] 递归打包子跟踪目录：${entity.path}');
+      //   final tmpFile = File(p.join(Directory.systemTemp.path,
+      //       '${DateTime.now().microsecondsSinceEpoch}$kTrackingExt'));
+      //   await _packTrackingDirectory(entity.path, tmpFile.path);
+      //   await encoder.addFile(tmpFile, rel);
+      //   try {
+      //     tmpFile.deleteSync();
+      //   } catch (_) {}
+      //   return;
+      // }
 
       final children = entity.listSync();
       dirCount++;
@@ -1588,8 +1610,8 @@ Future<void> _generatePreviewInternal(
         parentId = parents.first.trim();
       }
     });
-  } catch (_) {
-    // Has no parent (initial commit) or error
+  } catch (e, s) {
+    print('Error finding parent commit in _generatePreviewInternal: $e\n$s');
   }
 
   final tmpDir = await Directory.systemTemp.createTemp('gitdocx_prev_diff_');
@@ -1638,7 +1660,9 @@ Future<void> _generatePreviewInternal(
       if (success && tmpDir.existsSync()) {
         tmpDir.deleteSync(recursive: true);
       }
-    } catch (_) {}
+    } catch (e, s) {
+      print('Error cleaning up tmpDir in _generatePreviewInternal: $e\n$s');
+    }
   }
 }
 
@@ -1710,7 +1734,8 @@ Future<Map<String, dynamic>> _readTrackingJson(String jsonPath) async {
     try {
       final s = await f.readAsString();
       return jsonDecode(s) as Map<String, dynamic>;
-    } catch (_) {
+    } catch (e, s) {
+      print('Error reading tracking json $jsonPath: $e\n$s');
       return <String, dynamic>{};
     }
   }
@@ -1809,7 +1834,8 @@ Future<Map<String, dynamic>> _readTracking(String name) async {
     try {
       final s = await f.readAsString();
       return jsonDecode(s) as Map<String, dynamic>;
-    } catch (_) {
+    } catch (e, s) {
+      print('Error reading tracking file for $name: $e\n$s');
       return <String, dynamic>{};
     }
   }
@@ -1957,7 +1983,9 @@ Future<Uint8List> compareCommits(
         if (success && tmpDir.existsSync()) {
           tmpDir.deleteSync(recursive: true);
         }
-      } catch (_) {}
+      } catch (e, s) {
+        print('Error cleaning up tmpDir in compareCommits: $e\n$s');
+      }
     }
   });
 }
@@ -2034,7 +2062,9 @@ Future<Map<String, dynamic>> compareCommitsWithAI(
       // 清理临时文件
       try {
         await tmpDir.delete(recursive: true);
-      } catch (_) {}
+      } catch (e) {
+        print('Error cleaning up tmpDir in compareCommitsWithAI: $e');
+      }
     }
   });
 }
@@ -2062,7 +2092,9 @@ Future<void> _extractDocFromCommit(
   } finally {
     try {
       await tmpDir.delete(recursive: true);
-    } catch (_) {}
+    } catch (e, s) {
+      print('Error cleaning up tmpDir in _extractDocFromCommit: $e\n$s');
+    }
   }
 }
 
@@ -2127,7 +2159,9 @@ Future<void> _scanAndUpdateFolderMeta(String projDir, String docxPath,
   if (metaFile.existsSync()) {
     try {
       meta = jsonDecode(await metaFile.readAsString());
-    } catch (_) {}
+    } catch (e) {
+      print('Error reading folder_meta.json: $e');
+    }
   }
   if (meta['items'] == null) meta['items'] = {};
 
@@ -2166,8 +2200,8 @@ Future<void> _scanAndUpdateFolderMeta(String projDir, String docxPath,
     try {
       await _runGit(['add', 'folder_meta.json'], projDir);
       await _runGit(['commit', '-m', 'Update folder metadata'], projDir);
-    } catch (_) {
-      // Ignore commit errors (e.g. nothing to commit)
+    } catch (e, s) {
+      print('Error committing folder meta: $e\n$s');
     }
   }
 }
@@ -2681,7 +2715,9 @@ Future<Map<String, dynamic>> updateTrackingProject(
           try {
             await _gitArchiveToDocx(projDir, 'HEAD', headDocx);
             hasHead = true;
-          } catch (_) {}
+          } catch (e) {
+            print('Git archive HEAD failed (maybe no HEAD?): $e');
+          }
 
           print('[Perf] Git Archive HEAD: ${sectionSw.elapsedMilliseconds}ms');
           sectionSw.reset();
@@ -2706,7 +2742,9 @@ Future<Map<String, dynamic>> updateTrackingProject(
       } finally {
         try {
           tmpDir.deleteSync(recursive: true);
-        } catch (_) {}
+        } catch (e) {
+          print('Error cleaning up tmpDir in updateTrackingProject: $e');
+        }
       }
 
       // Check status
@@ -2738,7 +2776,9 @@ Future<Map<String, dynamic>> updateTrackingProject(
       try {
         final lines = await _runGit(['rev-parse', 'HEAD'], projDir);
         if (lines.isNotEmpty) head = lines.first.trim();
-      } catch (_) {}
+      } catch (e) {
+        print('Error getting HEAD in updateTrackingProject: $e');
+      }
       print('[Perf] Get HEAD: ${sectionSw.elapsedMilliseconds}ms');
       sectionSw.reset();
 
@@ -2790,7 +2830,9 @@ Future<void> _syncToExternal(String repoPath) async {
     if (File(repoDocx).existsSync()) {
       try {
         File(repoDocx).deleteSync();
-      } catch (_) {}
+      } catch (e) {
+        print('Error deleting repoDocx: $e');
+      }
     }
     await _zipDir(contentDir, repoDocx);
     print(
@@ -2898,7 +2940,9 @@ Future<bool> _checkDocxIdentical(
   } finally {
     try {
       tmpDir.deleteSync(recursive: true);
-    } catch (_) {}
+    } catch (e) {
+      print('Error cleaning up tmpDir in _checkDocxIdentical: $e');
+    }
   }
 }
 
@@ -2977,7 +3021,8 @@ Future<String?> getHead(String repoPath) async {
     if (lines.isEmpty) return null;
     final id = lines.first.trim();
     return id.isEmpty ? null : id;
-  } catch (_) {
+  } catch (e) {
+    print('Error getting HEAD: $e');
     return null;
   }
 }
@@ -2992,7 +3037,9 @@ String _sanitizeFsPath(String raw) {
     try {
       final uri = Uri.parse(t);
       t = uri.toFilePath(windows: true);
-    } catch (_) {}
+    } catch (e) {
+      print('Error parsing file URI: $e');
+    }
   }
   return p.normalize(t);
 }
@@ -3383,7 +3430,9 @@ Future<Map<String, dynamic>> pullFromRemote(
     if (!isFresh && force) {
       try {
         // savedTracking = await _readTracking(repoName);
-      } catch (_) {}
+      } catch (e) {
+        print('Error reading tracking (commented out code): $e');
+      }
       try {
         if (dir.existsSync()) {
           dir.deleteSync(recursive: true);
@@ -3411,13 +3460,16 @@ Future<Map<String, dynamic>> pullFromRemote(
             final out = await _runGit(
                 ['show', '$remoteName/master:folder_meta.json'], projDir);
             if (out.isNotEmpty) remoteMetaContent = out.join('\n');
-          } catch (_) {
+          } catch (e) {
+            print('Failed to show master:folder_meta.json: $e');
             // Try HEAD if master fails
             try {
               final out = await _runGit(
                   ['show', 'FETCH_HEAD:folder_meta.json'], projDir);
               if (out.isNotEmpty) remoteMetaContent = out.join('\n');
-            } catch (__) {}
+            } catch (e2) {
+              print('Failed to show FETCH_HEAD:folder_meta.json: $e2');
+            }
           }
 
           if (remoteMetaContent != null) {
@@ -3460,9 +3512,13 @@ Future<Map<String, dynamic>> pullFromRemote(
             if (trackingFile.existsSync()) {
               try {
                 await _runGit(['checkout', 'HEAD', '--', '.'], projDir);
-              } catch (e) {}
+              } catch (e) {
+                print('Checkout HEAD failed: $e');
+              }
             }
-          } catch (e) {}
+          } catch (e) {
+            print('Check tracking file failed: $e');
+          }
 
           try {
             final current = await getCurrentBranch(projDir);
@@ -3485,7 +3541,9 @@ Future<Map<String, dynamic>> pullFromRemote(
                 'message': 'Local branch is ahead of remote or diverged.'
               };
             }
-          } catch (e) {}
+          } catch (e) {
+            print('Fetch or merge-base check failed: $e');
+          }
         }
         // savedTracking = await _readTracking(repoName);
 
@@ -3538,16 +3596,22 @@ Future<Map<String, dynamic>> pullFromRemote(
         if (!localBranchNames.contains(branchName)) {
           try {
             await _runGit(['branch', '--track', branchName, trimmed], projDir);
-          } catch (e) {}
+          } catch (e) {
+            print('Track branch failed: $e');
+          }
         } else if (force) {
           if (branchName != currentBranch) {
             try {
               await _runGit(['branch', '-f', branchName, trimmed], projDir);
-            } catch (e) {}
+            } catch (e) {
+              print('Force update branch failed: $e');
+            }
           }
         }
       }
-    } catch (e) {}
+    } catch (e) {
+      print('Sync branches failed: $e');
+    }
 
     // Check if it is a folder project (has folder_meta.json)
     if (File(p.join(projDir, 'folder_meta.json')).existsSync()) {
@@ -3617,7 +3681,8 @@ Future<Map<String, dynamic>> checkPullStatus(
       // Check if remote branch exists
       try {
         await _runGit(['rev-parse', '--verify', remoteBranch], projDir);
-      } catch (_) {
+      } catch (e) {
+        print('Remote branch check failed (might not exist): $e');
         // Remote branch doesn't exist?
         return {'status': 'no_remote_branch'};
       }
@@ -3670,7 +3735,9 @@ Future<String?> findProjectByDocxPath(String docxPath) async {
           return name;
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      print('Error checking project $name: $e');
+    }
   }
   print('DEBUG: No project matched for $docxPath');
   return null;
@@ -3708,7 +3775,9 @@ Future<void> rebasePull(String repoName, String username, String token) async {
   } catch (e) {
     try {
       await _runGit(['rebase', '--abort'], projDir);
-    } catch (_) {}
+    } catch (e) {
+      print('Rebase abort failed: $e');
+    }
     throw Exception('Rebase failed (likely conflicts): $e');
   }
   try {
@@ -3878,7 +3947,9 @@ Future<void> deleteProject(String packagePath,
       try {
         final d = Directory(workspace);
         if (d.existsSync()) d.deleteSync(recursive: true);
-      } catch (_) {}
+      } catch (e) {
+        print('Error cleaning up workspace: $e');
+      }
       return;
     }
 
@@ -3945,7 +4016,9 @@ Future<void> forkLocal(String repoName, String newBranchName) async {
     // 1. Cleanup any stale PreviewFork branch
     try {
       await _runGit(['branch', '-D', 'PreviewFork'], repoPath);
-    } catch (_) {}
+    } catch (e) {
+      print('Error deleting PreviewFork branch (might not exist): $e');
+    }
 
     // 2. Create and checkout new branch from remote
     // This creates 'newBranchName' pointing to 'remote/currentBranch' and switches to it.
@@ -4035,7 +4108,9 @@ Future<void> prepareMerge(String repoName, String targetBranch) async {
     } finally {
       try {
         tmpDir.deleteSync(recursive: true);
-      } catch (_) {}
+      } catch (e) {
+        print('Error cleaning up tmpDir in _checkDocxIdentical: $e');
+      }
     }
   });
 }
@@ -4086,7 +4161,9 @@ Future<void> completeMerge(String repoName, String targetBranch) async {
     try {
       final out = await _runGit(['show', '$targetBranch:edges'], projDir);
       targetEdges = out;
-    } catch (_) {}
+    } catch (e) {
+      print('Error reading edges from target branch: $e');
+    }
 
     if (edgesFile.existsSync() &&
         targetEdges != null &&
@@ -4144,12 +4221,16 @@ Future<List<String>> findIdenticalCommit(String name) async {
         await _gitArchiveToDocx(projDir, cid, tmpDocx);
         final isId = await _checkDocxIdentical(docxPath, tmpDocx);
         if (isId) identicals.add(cid);
-      } catch (_) {}
+      } catch (e) {
+        print('Error checking commit $cid: $e');
+      }
     }
   } finally {
     try {
       tmpDir.deleteSync(recursive: true);
-    } catch (_) {}
+    } catch (e) {
+      print('Error cleaning up tmpDir in findIdenticalCommit: $e');
+    }
   }
   return identicals;
 }
