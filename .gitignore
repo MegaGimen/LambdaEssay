@@ -87,3 +87,7 @@ frontend/wordplugin/Word_frontend/node_modules
 # Large files
 **/*.pdb
 **/flutter/ephemeral/
+
+windows/
+linux/
+macos/
