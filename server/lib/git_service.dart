@@ -2094,7 +2094,6 @@ Future<void> _ensureFolderProjectStructure(String projDir, String docxPath,
     await gitignore.writeAsString('''
 *
 !folder_meta.json
-!edges
 !.gitignore
 ''');
   }
@@ -2709,6 +2708,21 @@ Future<Map<String, dynamic>> updateTrackingProject(
 
       // Ensure repo is initialized if it doesn't exist (e.g. empty project populated for the first time)
       if (!Directory(p.join(projDir, '.git')).existsSync()) {
+        // New: Check if we should initialize in a subfolder (e.g. example.tracking.zip -> example/.git)
+        final subName = _trackingBaseName(normalizedName);
+        if (subName.isNotEmpty && subName != '.') {
+          final subDir = p.join(projDir, subName);
+          // If we are a folder project (sourcePath is dir), we likely want the repo in the subfolder
+          if (FileSystemEntity.isDirectorySync(sourcePath!) &&
+              sourcePath.endsWith(subName)) {
+            print('[updateTrackingProject] Switching initialization to subfolder: $subDir');
+            if (!Directory(subDir).existsSync()) {
+              Directory(subDir).createSync(recursive: true);
+            }
+            projDir = subDir;
+          }
+        }
+
         print('[updateTrackingProject] Initializing git repo at $projDir');
         if (FileSystemEntity.isDirectorySync(sourcePath!)) {
           await _ensureFolderProjectStructure(projDir, sourcePath,
