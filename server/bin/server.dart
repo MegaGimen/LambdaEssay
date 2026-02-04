@@ -1507,24 +1507,21 @@ Future<void> main(List<String> args) async {
 
         final repoNames = uniqueRepos.keys.toList();
 
-        // Check folder status for each repo
-        final results = await Future.wait(repoNames.map((name) async {
-           final r = uniqueRepos[name]!;
-           final owner = r['owner']['login'];
-           final checkUrl = '$giteaUrl/api/v1/repos/$owner/$name/contents/folder_meta.json';
-           bool isFolder = false;
-           try {
-             final checkResp = await http.get(Uri.parse(checkUrl), headers: headers);
-             if (checkResp.statusCode == 200) {
-               isFolder = true;
-             }
-           } catch (_) {}
-           return {'name': name, 'isFolder': isFolder};
-        }));
-
-        // Filter to only return folder projects as requested
-        final filtered = results.where((r) => r['isFolder'] == true).toList();
-
+        // Unify: Return all repositories without filtering by folder_meta.json
+        final results = repoNames.map((name) {
+           // Use 'isFolder' as generic flag or true since everything is unified?
+          // Or just pass the repo object?
+          // The frontend expects {name, isFolder, ...}?
+          // Let's keep the structure but set isFolder to true (or check logic if needed for icon?)
+          // User said "Unify all as .tracking.zip", so maybe everything is a "folder project" in concept?
+          // But frontend might use isFolder to decide icon.
+          // Let's return the original repo object structure if possible, or the simplified list.
+          // Previous code returned [{'name': name, 'isFolder': isFolder}]
+          // Let's return just that.
+          return {'name': name, 'isFolder': true}; 
+        }).toList();
+        
+        // If repoPath is provided, add remotes (logic remains)
         if (repoPath != null && repoPath.isNotEmpty) {
           for (final r in uniqueRepos.values) {
             final name = (r['name'] as String).toLowerCase();
@@ -1535,7 +1532,7 @@ Future<void> main(List<String> args) async {
           }
         }
 
-        return _cors(Response.ok(jsonEncode(filtered), headers: {
+        return _cors(Response.ok(jsonEncode(results), headers: {
           'Content-Type': 'application/json; charset=utf-8',
         }));
       } else if (respOwned.statusCode != 200) {

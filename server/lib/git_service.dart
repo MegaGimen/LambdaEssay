@@ -561,9 +561,6 @@ Future<List<List<String>>> _collectAllEdges(
 Future<GraphResponse> getGraph(String repoPath,
     {int? limit, bool includeLocal = true, List<String>? remoteNames}) async {
   return _withRepoLock(repoPath, () async {
-    if (await _isFolderProject(repoPath)) {
-      return GraphResponse(commits: [], branches: [], chains: {});
-    }
     return _getGraphUnlocked(repoPath,
         limit: limit, includeLocal: includeLocal, remoteNames: remoteNames);
   });
@@ -675,16 +672,11 @@ Future<GraphResponse> _getGraphUnlocked(String repoPath,
 }
 
 Future<bool> _isFolderProject(String repoPath) async {
-  // 1. Explicit check for folder_meta.json (Root Marker)
-  if (File(p.join(repoPath, 'folder_meta.json')).existsSync()) {
-    return true;
-  }
-
-  final gitDir = Directory(p.join(repoPath, '.git'));
-  if (gitDir.existsSync()) return false;
-
+  // New logic: Check for nested .tracking.zip directories
+  final dir = Directory(repoPath);
+  if (!dir.existsSync()) return false;
   try {
-    final entities = Directory(repoPath).listSync();
+    final entities = dir.listSync();
     for (final entity in entities) {
       if (entity is Directory &&
           p.basename(entity.path).toLowerCase().endsWith(kTrackingExt)) {
@@ -694,32 +686,7 @@ Future<bool> _isFolderProject(String repoPath) async {
   } catch (e, s) {
     print('Error listing directory in _isFolderProject: $e\n$s');
   }
-
-  // 增强判断：检查 docxPath 类型
-  try {
-    final trackingFile = File(p.join(repoPath, 'tracking.json'));
-    if (trackingFile.existsSync()) {
-      final content = await trackingFile.readAsString();
-      if (content.trim().isNotEmpty) {
-        final tracking = jsonDecode(content);
-        final docxPath = tracking['docxPath'] as String?;
-        if (docxPath != null) {
-          // 如果指向文件，明确为单文件项目
-          if (FileSystemEntity.isFileSync(docxPath)) {
-            return false;
-          }
-          // 如果指向文件夹，明确为文件夹项目
-          if (FileSystemEntity.isDirectorySync(docxPath)) {
-            return true;
-          }
-        }
-      }
-    }
-  } catch (e, s) {
-    print('Error reading tracking.json in _isFolderProject: $e\n$s');
-  }
-
-  return true;
+  return false;
 }
 
 Future<void> _updateFolderMeta(String parentRepoPath, String childRelPath,
@@ -783,7 +750,8 @@ Future<void> _notifyParentFolderProject(String repoPath) async {
       // Stop if we reach baseDir or go above it
       if (path == baseDir || !p.isWithin(baseDir, path)) break;
 
-      if (await _isFolderProject(path)) {
+      // Check for folder_meta.json to identify folder project
+      if (File(p.join(path, 'folder_meta.json')).existsSync()) {
         final relPath = p.relative(repoPath, from: path);
         final childName = p.basename(repoPath);
         String remoteUrl = '';
@@ -886,11 +854,6 @@ Future<void> commitChanges(
     String repoPath, String author, String message) async {
   return _withRepoLock(repoPath, () async {
     print("repoPath=$repoPath");
-
-    if (await _isFolderProject(repoPath)) {
-      throw Exception(
-          'Cannot commit on a Folder Project Root. Please commit in specific sub-repositories.');
-    }
 
     final info = await _resolveTrackingInfo(repoPath);
     final targetPath = info['docxPath'] as String?;
@@ -2592,8 +2555,15 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
   }
 
   // Check and auto-init structure for folder projects if needed
-  final isFolder = await _isFolderProject(repoPath);
-  if (isFolder && tracking['docxPath'] != null) {
+  bool shouldInitStructure = false;
+  if (File(p.join(repoPath, 'folder_meta.json')).existsSync()) {
+    shouldInitStructure = true;
+  } else if (tracking['docxPath'] != null &&
+      FileSystemEntity.isDirectorySync(tracking['docxPath'])) {
+    shouldInitStructure = true;
+  }
+
+  if (shouldInitStructure) {
     final pkgPath = (tracking['packagePath'] as String?) ?? packagePath;
     await _ensureFolderProjectStructure(repoPath, tracking['docxPath'],
         trackingExt: kTrackingExt, packagePath: pkgPath);
@@ -2602,6 +2572,9 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
   // Always try to notify parent folder project (if any) to keep metadata fresh
   // This covers the case where we open a sub-project directly
   await _notifyParentFolderProject(repoPath);
+
+  // Re-check folder status after potential structure init
+  final isFolder = await _isFolderProject(repoPath);
 
   return {
     'name': packagePath,
@@ -3263,19 +3236,15 @@ Future<void> pushToRemote(String repoPath, String username, String token,
     final repoName = p.basename(repoPath);
     String effectiveRemoteRepoName;
 
-    if (await _isFolderProject(repoPath)) {
+    final parentFolder = await _findParentFolderProject(repoPath);
+    if (parentFolder == null || p.equals(parentFolder, repoPath)) {
       effectiveRemoteRepoName = repoName;
     } else {
-      final parentFolder = await _findParentFolderProject(repoPath);
-      if (parentFolder != null) {
-        final relativePath = p.relative(repoPath, from: parentFolder);
-        final normalizedRelPath = relativePath.replaceAll(r'\', '/');
-        effectiveRemoteRepoName = _calculateHash(normalizedRelPath);
-        print(
-            'Pushing sub-repo "$repoName" as hashed remote: $effectiveRemoteRepoName (rel: $normalizedRelPath)');
-      } else {
-        effectiveRemoteRepoName = repoName;
-      }
+      final relativePath = p.relative(repoPath, from: parentFolder);
+      final normalizedRelPath = relativePath.replaceAll(r'\', '/');
+      effectiveRemoteRepoName = _calculateHash(normalizedRelPath);
+      print(
+          'Pushing sub-repo "$repoName" as hashed remote: $effectiveRemoteRepoName (rel: $normalizedRelPath)');
     }
 
     String owner;
@@ -3360,7 +3329,7 @@ Future<void> pushToRemote(String repoPath, String username, String token,
           final path = current.path;
           if (path == baseDir || !p.isWithin(baseDir, path)) break;
 
-          if (await _isFolderProject(path)) {
+          if (File(p.join(path, 'folder_meta.json')).existsSync()) {
             print('Found parent folder project: $path');
             // Recursively push parent
             try {
@@ -3469,21 +3438,15 @@ Future<Map<String, dynamic>> pullFromRemote(
     if (targetRepoName != null && targetRepoName.isNotEmpty) {
       effectiveRemoteRepoName = targetRepoName;
     } else {
-      if (await _isFolderProject(repoPath)) {
+      final parentFolder = await _findParentFolderProject(repoPath);
+      if (parentFolder == null || p.equals(parentFolder, repoPath)) {
         effectiveRemoteRepoName = p.basename(repoPath);
       } else {
-        final parentFolder = await _findParentFolderProject(repoPath);
-        if (parentFolder != null) {
-          final relativePath = p.relative(repoPath, from: parentFolder);
-          final normalizedRelPath = relativePath.replaceAll(r'\', '/');
-          effectiveRemoteRepoName = _calculateHash(normalizedRelPath);
-          print(
-              'Pulling sub-repo as hashed remote: $effectiveRemoteRepoName (rel: $normalizedRelPath)');
-        } else {
-          effectiveRemoteRepoName = p.basename(repoPath);
-          print(
-              "DEBUG: Parent folder not found for $repoPath. Using basename as remote name.");
-        }
+        final relativePath = p.relative(repoPath, from: parentFolder);
+        final normalizedRelPath = relativePath.replaceAll(r'\', '/');
+        effectiveRemoteRepoName = _calculateHash(normalizedRelPath);
+        print(
+            'Pulling sub-repo as hashed remote: $effectiveRemoteRepoName (rel: $normalizedRelPath)');
       }
     }
 
@@ -3842,9 +3805,7 @@ Future<String?> findProjectByDocxPath(String docxPath) async {
 
 Future<void> rebasePull(String repoName, String username, String token) async {
   final projDir = _projectDir(repoName);
-  if (await _isFolderProject(projDir)) {
-    throw Exception('Cannot rebase on Folder Project Root.');
-  }
+  // Removed explicit folder check to allow rebasing root container if needed (unify logic)
 
   String effectiveRemoteRepoName;
   final parentRoot = await _findParentFolderProject(projDir);
@@ -4101,10 +4062,7 @@ Future<void> copyTrackingProject(
 Future<void> forkLocal(String repoName, String newBranchName) async {
   final repoPath = _projectDir(repoName);
   return _withRepoLock(repoPath, () async {
-    if (await _isFolderProject(repoPath)) {
-      throw Exception(
-          'Forking local branch on Folder Root is not supported yet.');
-    }
+    // Removed folder check to allow forking root branch
 
     final currentBranch = await getCurrentBranch(repoPath);
     final remoteName = repoName.toLowerCase();
