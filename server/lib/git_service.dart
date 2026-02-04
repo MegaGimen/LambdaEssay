@@ -2093,7 +2093,6 @@ Future<void> _ensureFolderProjectStructure(String projDir, String docxPath,
     final gitignore = File(p.join(projDir, '.gitignore'));
     await gitignore.writeAsString('''
 *
-!tracking.json
 !folder_meta.json
 !edges
 !.gitignore
@@ -2706,6 +2705,17 @@ Future<Map<String, dynamic>> updateTrackingProject(
 
       if (!sourceExists) {
         return {'needDocx': true, 'repoPath': projDir};
+      }
+
+      // Ensure repo is initialized if it doesn't exist (e.g. empty project populated for the first time)
+      if (!Directory(p.join(projDir, '.git')).existsSync()) {
+        print('[updateTrackingProject] Initializing git repo at $projDir');
+        if (FileSystemEntity.isDirectorySync(sourcePath!)) {
+          await _ensureFolderProjectStructure(projDir, sourcePath,
+              trackingExt: kTrackingExt, packagePath: tracking['packagePath']);
+        } else {
+          await _initSingleRepo(projDir, sourcePath);
+        }
       }
 
       // Ensure content dir exists in repo
