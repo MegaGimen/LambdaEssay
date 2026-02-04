@@ -2264,6 +2264,8 @@ Future<Map<String, dynamic>> importTrackingSource(
   }
 
   final source = _sanitizeFsPath(sourcePath);
+  final createdRepos = <String>[];
+
   if (FileSystemEntity.isFileSync(source)) {
     final baseName = p.basenameWithoutExtension(source);
     final trackingDir = p.join(target, '$baseName$kTrackingExt');
@@ -2271,6 +2273,7 @@ Future<Map<String, dynamic>> importTrackingSource(
       throw Exception('Target already exists: $trackingDir');
     }
     await _initTrackingRepo(trackingDir, source, pkg);
+    createdRepos.add(trackingDir);
   } else if (Directory(source).existsSync()) {
     final folderName = p.basename(p.normalize(source));
     final targetFolder = p.join(target, folderName);
@@ -2285,12 +2288,19 @@ Future<Map<String, dynamic>> importTrackingSource(
       final targetRepoPath = p.join(targetFolder, relTrackingPath);
       if (Directory(targetRepoPath).existsSync()) continue;
       await _initTrackingRepo(targetRepoPath, file.path, pkg);
+      createdRepos.add(targetRepoPath);
     }
   } else {
     throw Exception('Source not found: $source');
   }
 
   await _persistTrackingPackageForRepo(target);
+
+  // Notify parent for all created repos to update metadata
+  for (final repo in createdRepos) {
+    await _notifyParentFolderProject(repo);
+  }
+
   return {'workspacePath': workspace};
 }
 
@@ -2339,9 +2349,57 @@ Future<List<Map<String, dynamic>>> listProjectRepos(String name) async {
   }
 
   final results = <Map<String, dynamic>>[];
-  final dir = Directory(projDir);
   final rootDocxPath = tracking['docxPath'] as String?;
 
+  // 1. Try reading from folder_meta.json
+  final metaFile = File(p.join(projDir, 'folder_meta.json'));
+  if (metaFile.existsSync()) {
+    try {
+      final meta = jsonDecode(await metaFile.readAsString());
+      final items = meta['items'] as Map<String, dynamic>?;
+      if (items != null) {
+        for (final relPath in items.keys) {
+          final info = items[relPath];
+          final repoPath = p.join(projDir, relPath);
+
+          String? subDocxPath;
+          // Try to read local tracking.json if exists
+          final repoTrackingPath = p.join(repoPath, 'tracking.json');
+          if (File(repoTrackingPath).existsSync()) {
+            final repoTracking = await _readTrackingJson(repoTrackingPath);
+            final repoDocxBase = repoTracking['docxPath'] as String?;
+            if (repoDocxBase != null && repoDocxBase.isNotEmpty) {
+              final internalPath = repoTracking['internalPath'] as String?;
+              subDocxPath = (internalPath != null && internalPath.isNotEmpty)
+                  ? p.join(repoDocxBase, internalPath)
+                  : repoDocxBase;
+            }
+          }
+          // Infer from root
+          if (subDocxPath == null && rootDocxPath != null) {
+            // Remove .tracking.zip extension from relPath if present to map to .docx
+            // Actually relPath usually ends with .tracking.zip
+            final mapped = p.setExtension(relPath, '.docx');
+            subDocxPath = p.join(rootDocxPath, mapped);
+          }
+
+          results.add({
+            'relPath': relPath,
+            'repoPath': repoPath,
+            'docxPath': subDocxPath,
+            'name': info['name'],
+            'remoteUrl': info['remoteUrl'],
+          });
+        }
+        return results;
+      }
+    } catch (e) {
+      print('Error reading folder_meta.json in listProjectRepos: $e');
+    }
+  }
+
+  // 2. Fallback: Scan directory
+  final dir = Directory(projDir);
   if (dir.existsSync()) {
     // Scan for .git directories
     final entities = dir.listSync(recursive: true);
@@ -3714,7 +3772,31 @@ Future<Map<String, dynamic>> checkPullStatus(
 }
 
 Future<List<String>> listProjects() async {
-  return [];
+  final base = Directory(_baseDir());
+  if (!base.existsSync()) {
+    base.createSync(recursive: true);
+    return [];
+  }
+
+  final results = <String>[];
+  try {
+    final entities = base.listSync();
+    for (final entity in entities) {
+      if (entity is Directory) {
+        final name = p.basename(entity.path);
+        if (name.startsWith('.')) continue;
+        if (name == 'cache') continue;
+        if (name == 'preview') continue;
+        results.add(name);
+      } else if (entity is File &&
+          entity.path.toLowerCase().endsWith(kTrackingExt)) {
+        results.add(p.basename(entity.path));
+      }
+    }
+  } catch (e) {
+    print('Error listing projects: $e');
+  }
+  return results;
 }
 
 Future<String?> findProjectByDocxPath(String docxPath) async {
