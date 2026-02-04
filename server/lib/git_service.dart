@@ -378,7 +378,8 @@ Future<void> fetchAll(String repoPath) async {
   });
 }
 
-Future<List<String>> _runGit(List<String> args, String repoPath) async {
+Future<List<String>> _runGit(List<String> args, String repoPath,
+    {bool throwOnError = true, bool printError = true}) async {
   final fullArgs = [
     '-c',
     'i18n.logOutputEncoding=UTF-8',
@@ -397,10 +398,14 @@ Future<List<String>> _runGit(List<String> args, String repoPath) async {
       environment: {'GIT_TERMINAL_PROMPT': '0'}, // Prevent interactive prompts
     );
     if (res.exitCode != 0) {
-      print("git error (exitCode=${res.exitCode}) args=$args");
-      print(res.stderr);
-      print(res.stdout);
-      throw Exception(res.stderr is String ? res.stderr : 'git error');
+      if (printError) {
+        print("git error (exitCode=${res.exitCode}) args=$args");
+        print(res.stderr);
+        print(res.stdout);
+      }
+      if (throwOnError) {
+        throw Exception(res.stderr is String ? res.stderr : 'git error');
+      }
     }
     final out =
         res.stdout is String ? res.stdout as String : utf8.decode(res.stdout);
@@ -415,8 +420,10 @@ Future<List<String>> _runGit(List<String> args, String repoPath) async {
       environment: {'GIT_TERMINAL_PROMPT': '0'},
     );
     if (res.exitCode != 0) {
-      print("git error fallback");
-      throw Exception(res.stderr is String ? res.stderr : 'git error');
+      if (printError) print("git error fallback");
+      if (throwOnError) {
+        throw Exception(res.stderr is String ? res.stderr : 'git error');
+      }
     }
     final out = res.stdout as String;
     return LineSplitter.split(out).toList();
@@ -1397,7 +1404,9 @@ Future<Map<String, dynamic>> expandLocalTrackingPackage(String filePath) async {
 Future<void> _packTrackingDirectory(
     String srcDir, String outPackagePath) async {
   print('[pack] 开始打包，srcDir=$srcDir, outPackagePath=$outPackagePath');
-  final archive = Archive();
+  final encoder = ZipFileEncoder();
+  encoder.create(outPackagePath);
+
   final root = Directory(srcDir);
   if (!root.existsSync()) {
     throw Exception('Tracking workspace not found: $srcDir');
@@ -1406,15 +1415,13 @@ Future<void> _packTrackingDirectory(
   int fileCount = 0;
   int dirCount = 0;
 
-  void addEntry(String base, FileSystemEntity entity) {
-    print(entity.path);
-    print(kWorkspaceMetaFile);
+  Future<void> addEntry(String base, FileSystemEntity entity) async {
+    // print(entity.path);
     // if (entity.path.endsWith(kWorkspaceMetaFile)) return;
     final rel = p.relative(entity.path, from: base);
     if (entity is File) {
-      print("Add file $entity");
-      final data = entity.readAsBytesSync();
-      archive.addFile(ArchiveFile(rel, data.length, data));
+      // print("Add file $entity");
+      await encoder.addFile(entity, rel);
       fileCount++;
       if (fileCount % 50 == 0) {
         print('[pack] 已添加 $fileCount 个文件，当前：${entity.path}');
@@ -1428,9 +1435,8 @@ Future<void> _packTrackingDirectory(
         print('[pack] 递归打包子跟踪目录：${entity.path}');
         final tmpFile = File(p.join(Directory.systemTemp.path,
             '${DateTime.now().microsecondsSinceEpoch}$kTrackingExt'));
-        _packTrackingDirectory(entity.path, tmpFile.path);
-        final data = tmpFile.readAsBytesSync();
-        archive.addFile(ArchiveFile(rel, data.length, data));
+        await _packTrackingDirectory(entity.path, tmpFile.path);
+        await encoder.addFile(tmpFile, rel);
         try {
           tmpFile.deleteSync();
         } catch (_) {}
@@ -1440,32 +1446,19 @@ Future<void> _packTrackingDirectory(
       final children = entity.listSync();
       dirCount++;
       for (final child in children) {
-        addEntry(base, child);
+        await addEntry(base, child);
       }
     }
   }
 
   print('[pack] 遍历根目录：$srcDir');
   for (final entity in root.listSync()) {
-    print("[遍历根目录] $entity,$srcDir");
-    addEntry(srcDir, entity);
+    // print("[遍历根目录] $entity,$srcDir");
+    await addEntry(srcDir, entity);
   }
 
-  print('[pack] 打包完成，文件数：$fileCount，目录数：$dirCount，开始编码…');
-  try {
-    final bytes = ZipEncoder().encode(archive);
-    if (bytes == null) {
-      throw Exception('Failed to encode tracking package');
-    }
-    print('[pack] 编码成功，字节数：${bytes.length}，写出到：$outPackagePath');
-    final outFile = File(outPackagePath);
-    outFile.writeAsBytesSync(bytes, flush: true);
-    print('[pack] 写出完成');
-  } catch (e, s) {
-    print('[pack] 编码失败: $e');
-    print(s);
-    rethrow;
-  }
+  encoder.close();
+  print('[pack] 打包完成，文件数：$fileCount，目录数：$dirCount，写出到：$outPackagePath');
 }
 
 Future<String> _ensureWorkspace(String packagePath) async {
@@ -1589,7 +1582,8 @@ Future<void> _generatePreviewInternal(
   try {
     // Only lock for git command
     await _withRepoLock(repoPath, () async {
-      final parents = await _runGit(['rev-parse', '$commitId^'], repoPath);
+      final parents = await _runGit(['rev-parse', '$commitId^'], repoPath,
+          printError: false);
       if (parents.isNotEmpty && parents.first.trim().isNotEmpty) {
         parentId = parents.first.trim();
       }
@@ -2716,9 +2710,14 @@ Future<Map<String, dynamic>> updateTrackingProject(
       }
 
       // Check status
-      final status = await _runGit(['status', '--porcelain'], projDir);
-      if (status.isNotEmpty) {
-        print("Git Status dirty: $status");
+      List<String> status = [];
+      try {
+        status = await _runGit(['status', '--porcelain'], projDir);
+        if (status.isNotEmpty) {
+          print("Git Status dirty: $status");
+        }
+      } catch (e) {
+        print("Git status check failed (ignored): $e");
       }
 
       bool changed = status.isNotEmpty;
