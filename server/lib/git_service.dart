@@ -2206,6 +2206,10 @@ Future<Map<String, dynamic>> createTrackingProject(
   final repoPath = p.join(projDir, projectName);
   Directory(repoPath).createSync(recursive: true);
 
+  // 初始化 Git 仓库结构
+  print('[createTrackingProject] 初始化Git仓库: $repoPath');
+  await _ensureFolderProjectStructure(repoPath, docxPath ?? '', packagePath: packagePath);
+
   // 只创建预留的meta文件
   await _writeWorkspaceMeta(projDir, packagePath);
 
