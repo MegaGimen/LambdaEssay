@@ -675,6 +675,11 @@ Future<GraphResponse> _getGraphUnlocked(String repoPath,
 }
 
 Future<bool> _isFolderProject(String repoPath) async {
+  // 1. Explicit check for folder_meta.json (Root Marker)
+  if (File(p.join(repoPath, 'folder_meta.json')).existsSync()) {
+    return true;
+  }
+
   final gitDir = Directory(p.join(repoPath, '.git'));
   if (gitDir.existsSync()) return false;
 
@@ -817,7 +822,8 @@ Future<void> _notifyParentFolderProject(String repoPath) async {
   }
 }
 
-Future<void> _expandFolderProject(String repoPath) async {
+Future<void> _expandFolderProject(String repoPath,
+    {bool structureOnly = false}) async {
   final metaFile = File(p.join(repoPath, 'folder_meta.json'));
   if (!metaFile.existsSync()) return;
 
@@ -849,6 +855,15 @@ Future<void> _expandFolderProject(String repoPath) async {
 
         // Create tracking.json for child?
         // Maybe not needed until user opens it.
+      } else if (!structureOnly) {
+        // If git dir exists and NOT structureOnly, we might want to ensure remote or pull?
+        // But logic below doesn't pull.
+        // And pullFromRemote for root calls this.
+        // If we want to support "Pull New Project" which means CLONE root + expand structure (init + remote),
+        // then checking !gitDir.existsSync() is enough because it will create them.
+        // The user says: "Do not pull".
+        // The current code (and this update) DOES NOT pull content for sub-repos here.
+        // So "structureOnly" is implicit for new repos.
       }
     }
   } catch (e) {
@@ -3679,7 +3694,7 @@ Future<Map<String, dynamic>> pullFromRemote(
         tracking['docxPath'] = projDir;
         await File(trackingJsonPath).writeAsString(jsonEncode(tracking));
       }
-      await _expandFolderProject(projDir);
+      await _expandFolderProject(projDir, structureOnly: isFresh);
     }
 
     // Sync external docx with pulled content

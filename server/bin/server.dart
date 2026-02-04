@@ -1522,6 +1522,9 @@ Future<void> main(List<String> args) async {
            return {'name': name, 'isFolder': isFolder};
         }));
 
+        // Filter to only return folder projects as requested
+        final filtered = results.where((r) => r['isFolder'] == true).toList();
+
         if (repoPath != null && repoPath.isNotEmpty) {
           for (final r in uniqueRepos.values) {
             final name = (r['name'] as String).toLowerCase();
@@ -1532,7 +1535,7 @@ Future<void> main(List<String> args) async {
           }
         }
 
-        return _cors(Response.ok(jsonEncode(results), headers: {
+        return _cors(Response.ok(jsonEncode(filtered), headers: {
           'Content-Type': 'application/json; charset=utf-8',
         }));
       } else if (respOwned.statusCode != 200) {
