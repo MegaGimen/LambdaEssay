@@ -2485,12 +2485,48 @@ Future<List<Map<String, dynamic>>> listProjectRepos(String name) async {
 }
 
 Future<void> syncFolderProject(String name) async {
+  print('==================================================');
+  print('[Debug][syncFolderProject] Start for name: $name');
+
   final projDir = _projectDir(name);
+  print('[Debug][syncFolderProject] projDir: $projDir');
+
+  // Detect Workspace Root
+  bool isWorkspaceRoot = false;
+  if (File(p.join(projDir, '.tracking_workspace.json')).existsSync()) {
+    isWorkspaceRoot = true;
+    print('[Debug][syncFolderProject] Detected Workspace Root at $projDir');
+  }
+
   final tracking = await _readTracking(name);
+  print('[Debug][syncFolderProject] tracking: $tracking');
+
+  // Attempt to recover packagePath if missing
+  if ((tracking['packagePath'] as String? ?? '').isEmpty) {
+    if (isWorkspaceRoot) {
+      final wsPackagePath = await _readWorkspacePackagePath(projDir);
+      if (wsPackagePath != null && wsPackagePath.isNotEmpty) {
+        tracking['packagePath'] = wsPackagePath;
+        print('[Debug][syncFolderProject] Recovered packagePath from workspace: $wsPackagePath');
+      }
+    }
+  }
+
   final sourceRoot = tracking['docxPath'] as String?;
+  print('[Debug][syncFolderProject] sourceRoot: $sourceRoot');
 
   if (sourceRoot == null) {
     throw Exception('docxPath is missing');
+  }
+
+  var targetBaseDir = projDir;
+  if (isWorkspaceRoot) {
+    final projectName = p.basename(sourceRoot);
+    targetBaseDir = p.join(projDir, projectName);
+    if (!Directory(targetBaseDir).existsSync()) {
+      Directory(targetBaseDir).createSync(recursive: true);
+    }
+    print('[Debug][syncFolderProject] Redirecting sync to subdirectory: $targetBaseDir');
   }
 
   // 1. Scan source folder for .docx files
@@ -2527,7 +2563,7 @@ Future<void> syncFolderProject(String name) async {
     final relTrackingPath = p.setExtension(relPath, kTrackingExt);
     sourceRelPaths.add(relTrackingPath);
 
-    final targetRepoPath = p.join(projDir, relTrackingPath);
+    final targetRepoPath = p.join(targetBaseDir, relTrackingPath);
     // This will create if not exists, or update content.docx if exists
     if (!Directory(targetRepoPath).existsSync()) {
       final packagePath = tracking['packagePath'] as String? ?? '';
@@ -2542,21 +2578,21 @@ Future<void> syncFolderProject(String name) async {
   }
 
   // 3. Update folder_meta.json
-  await _scanAndUpdateFolderMeta(projDir, sourceRoot,
+  await _scanAndUpdateFolderMeta(targetBaseDir, sourceRoot,
       trackingExt: kTrackingExt);
 
   // 4. Scan target folder for repos (directories with .git)
   // We need to be careful not to delete the root projDir itself if it happens to be a repo (unlikely in folder mode)
-  final targetDir = Directory(projDir);
+  final targetDir = Directory(targetBaseDir);
   if (targetDir.existsSync()) {
     final entities = targetDir.listSync(recursive: true);
     for (final entity in entities) {
       if (entity is Directory && p.basename(entity.path) == '.git') {
         final repoPath = entity.parent.path;
         // If repoPath is the project root, skip? Folder mode structure: projDir/sub/a.docx/.git
-        if (p.equals(p.normalize(repoPath), p.normalize(projDir))) continue;
+        if (p.equals(p.normalize(repoPath), p.normalize(targetBaseDir))) continue;
 
-        final relPath = p.relative(repoPath, from: projDir);
+        final relPath = p.relative(repoPath, from: targetBaseDir);
 
         // Check if this relPath exists in source
         if (!sourceRelPaths.contains(relPath)) {
@@ -2580,6 +2616,9 @@ Future<void> syncFolderProject(String name) async {
       print('Failed to export tracking package: $e');
     }
   }
+  
+  print('[Debug][syncFolderProject] End for $name');
+  print('==================================================');
 }
 
 Future<Map<String, dynamic>> openTrackingProject(String name) async {
