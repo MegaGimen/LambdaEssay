@@ -1587,10 +1587,14 @@ Future<void> _generatePreviewInternal(
   try {
     // Only lock for git command
     await _withRepoLock(repoPath, () async {
-      final parents = await _runGit(['rev-parse', '$commitId^'], repoPath,
-          printError: false);
-      if (parents.isNotEmpty && parents.first.trim().isNotEmpty) {
-        parentId = parents.first.trim();
+      try {
+        final parents = await _runGit(['rev-parse', '$commitId^'], repoPath,
+            printError: false);
+        if (parents.isNotEmpty && parents.first.trim().isNotEmpty) {
+          parentId = parents.first.trim();
+        }
+      } catch (e) {
+        // Ignored: Likely no parent (initial commit)
       }
     });
   } catch (e, s) {
@@ -2112,15 +2116,31 @@ Future<void> _ensureFolderProjectStructure(String projDir, String docxPath,
   }
 
   // 2. Scan Source and Init Sub Repos
-  final sourceDir = Directory(docxPath);
-  if (!sourceDir.existsSync()) return;
+  List<File> sourceFiles = [];
+  bool isSourceFile = false;
 
-  final files = sourceDir.listSync(recursive: true).whereType<File>();
-  for (final file in files) {
-    if (p.extension(file.path).toLowerCase() != '.docx') continue;
-    if (p.basename(file.path).startsWith('~\$')) continue;
+  if (FileSystemEntity.isFileSync(docxPath)) {
+    isSourceFile = true;
+    sourceFiles.add(File(docxPath));
+  } else if (FileSystemEntity.isDirectorySync(docxPath)) {
+    sourceFiles = Directory(docxPath)
+        .listSync(recursive: true)
+        .whereType<File>()
+        .where((f) => p.extension(f.path).toLowerCase() == '.docx')
+        .where((f) => !p.basename(f.path).startsWith('~\$'))
+        .toList();
+  } else {
+    return;
+  }
 
-    final relPath = p.relative(file.path, from: docxPath);
+  for (final file in sourceFiles) {
+    String relPath;
+    if (isSourceFile) {
+      relPath = p.basename(file.path);
+    } else {
+      relPath = p.relative(file.path, from: docxPath);
+    }
+
     final relTrackingPath =
         trackingExt.isNotEmpty ? p.setExtension(relPath, trackingExt) : relPath;
     final targetRepoPath = p.join(projDir, relTrackingPath);
@@ -2154,15 +2174,31 @@ Future<void> _scanAndUpdateFolderMeta(String projDir, String docxPath,
   }
   if (meta['items'] == null) meta['items'] = {};
 
-  final sourceDir = Directory(docxPath);
-  if (!sourceDir.existsSync()) return;
-  final files = sourceDir.listSync(recursive: true).whereType<File>();
+  List<File> sourceFiles = [];
+  bool isSourceFile = false;
 
-  for (final file in files) {
-    if (p.extension(file.path).toLowerCase() != '.docx') continue;
-    if (p.basename(file.path).startsWith('~\$')) continue;
+  if (FileSystemEntity.isFileSync(docxPath)) {
+    isSourceFile = true;
+    sourceFiles.add(File(docxPath));
+  } else if (FileSystemEntity.isDirectorySync(docxPath)) {
+    sourceFiles = Directory(docxPath)
+        .listSync(recursive: true)
+        .whereType<File>()
+        .where((f) => p.extension(f.path).toLowerCase() == '.docx')
+        .where((f) => !p.basename(f.path).startsWith('~\$'))
+        .toList();
+  } else {
+    return;
+  }
 
-    final relPath = p.relative(file.path, from: docxPath);
+  for (final file in sourceFiles) {
+    String relPath;
+    if (isSourceFile) {
+      relPath = p.basename(file.path);
+    } else {
+      relPath = p.relative(file.path, from: docxPath);
+    }
+    
     final relTrackingPath =
         trackingExt.isNotEmpty ? p.setExtension(relPath, trackingExt) : relPath;
     final childName = p.basenameWithoutExtension(file.path);
@@ -2438,25 +2474,37 @@ Future<void> syncFolderProject(String name) async {
     throw Exception('docxPath is missing');
   }
 
-  if (!Directory(sourceRoot).existsSync()) {
+  // 1. Scan source folder for .docx files
+  List<File> sourceFiles = [];
+  bool isSourceFile = false;
+
+  if (FileSystemEntity.isFileSync(sourceRoot)) {
+    isSourceFile = true;
+    sourceFiles.add(File(sourceRoot));
+  } else if (FileSystemEntity.isDirectorySync(sourceRoot)) {
+    sourceFiles = Directory(sourceRoot)
+        .listSync(recursive: true)
+        .whereType<File>()
+        .where((f) => p.extension(f.path).toLowerCase() == '.docx')
+        .where((f) => !p.basename(f.path).startsWith('~\$'))
+        .toList();
+  } else {
     // Source folder deleted? We might want to warn or do nothing, but user said sync.
     // If source is gone, maybe we should delete everything? Safer to throw for now.
-    throw Exception('Source folder not found: $sourceRoot');
+    throw Exception('Source not found: $sourceRoot');
   }
-
-  // 1. Scan source folder for .docx files
-  final sourceFiles = Directory(sourceRoot)
-      .listSync(recursive: true)
-      .whereType<File>()
-      .where((f) => p.extension(f.path).toLowerCase() == '.docx')
-      .where((f) => !p.basename(f.path).startsWith('~\$'))
-      .toList();
 
   final sourceRelPaths = <String>{};
 
   // 2. Update or Create repos
   for (final file in sourceFiles) {
-    final relPath = p.relative(file.path, from: sourceRoot);
+    String relPath;
+    if (isSourceFile) {
+      relPath = p.basename(file.path);
+    } else {
+      relPath = p.relative(file.path, from: sourceRoot);
+    }
+    
     final relTrackingPath = p.setExtension(relPath, kTrackingExt);
     sourceRelPaths.add(relTrackingPath);
 
