@@ -1505,10 +1505,42 @@ Future<void> main(List<String> args) async {
           uniqueRepos[name] = r;
         }
 
-        final repoNames = uniqueRepos.keys.toList();
+        final filteredRepoNames = <String>[];
+        
+        // Filter by last commit message
+        await Future.wait(uniqueRepos.values.map((repo) async {
+          try {
+            final ownerObj = repo['owner'];
+            if (ownerObj == null) return;
+            
+            final ownerName = ownerObj['login'];
+            final repoName = repo['name'];
+            // Prefer full_name if available, otherwise construct it
+            final fullName = repo['full_name'] ?? '$ownerName/$repoName';
+
+            final commitResp = await http.get(
+              Uri.parse('$giteaUrl/api/v1/repos/$fullName/commits?limit=1'),
+              headers: headers,
+            );
+
+            if (commitResp.statusCode == 200) {
+              final commits = jsonDecode(commitResp.body) as List;
+              if (commits.isNotEmpty) {
+                final msg = (commits[0]['commit']['message'] as String).trim();
+                if (msg == 'init folder_meta' || msg == 'Update folder metadata') {
+                  filteredRepoNames.add((repoName as String).toLowerCase());
+                }
+              }
+            } else {
+               print('Failed to fetch commits for $fullName: ${commitResp.statusCode}');
+            }
+          } catch (e) {
+            print('Error filtering repo ${repo['name']}: $e');
+          }
+        }));
 
         // Unify: Return all repositories without filtering by folder_meta.json
-        final results = repoNames.map((name) {
+        final results = filteredRepoNames.map((name) {
            // Use 'isFolder' as generic flag or true since everything is unified?
           // Or just pass the repo object?
           // The frontend expects {name, isFolder, ...}?
