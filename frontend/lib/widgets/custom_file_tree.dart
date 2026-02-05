@@ -406,7 +406,12 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
                         // print("Has content: $hasContent (docx: ${contentDocx.existsSync()}, dir: ${docContent.existsSync()})");
 
                         if (hasContent) {
-                          isDocxRepo = true;
+                          // If folder_meta.json exists, treat as folder, not file repo
+                          if (File(path.join(entry.path, 'folder_meta.json')).existsSync()) {
+                            isDocxRepo = false;
+                          } else {
+                            isDocxRepo = true;
+                          }
                         } else {
                           // Check if only .git exists
                           try {
