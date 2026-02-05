@@ -3485,11 +3485,14 @@ Future<void> pushToRemote(String repoPath, String username, String token,
     // Check for parent folder project and update/push if needed
     try {
       final baseDir = _baseDir();
+      final workspaceBase = _workspaceBaseDir();
       Directory current = Directory(p.dirname(repoPath));
-      if (p.isWithin(baseDir, repoPath)) {
+
+      if (p.isWithin(baseDir, repoPath) || p.isWithin(workspaceBase, repoPath)) {
         while (true) {
           final path = current.path;
-          if (path == baseDir || !p.isWithin(baseDir, path)) break;
+          if (p.equals(path, baseDir) || p.equals(path, workspaceBase)) break;
+          if (!p.isWithin(baseDir, path) && !p.isWithin(workspaceBase, path)) break;
 
           if (File(p.join(path, 'folder_meta.json')).existsSync()) {
             print('Found parent folder project: $path');
