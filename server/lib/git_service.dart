@@ -879,26 +879,33 @@ Future<void> commitChanges(
   return _withRepoLock(repoPath, () async {
     print("repoPath=$repoPath");
 
-    final info = await _resolveTrackingInfo(repoPath);
-    final targetPath = info['docxPath'] as String?;
+    final isFolder = await _isFolderProject(repoPath);
 
-    if (targetPath == null) {
-      throw Exception(
-          'Missing "docxPath" in tracking.json (or tracking.json not found). Please re-configure the project.');
+    if (!isFolder) {
+      final info = await _resolveTrackingInfo(repoPath);
+      final targetPath = info['docxPath'] as String?;
+
+      if (targetPath == null) {
+        throw Exception(
+            'Missing "docxPath" in tracking.json (or tracking.json not found). Please re-configure the project.');
+      }
+
+      if (!FileSystemEntity.isDirectorySync(targetPath) &&
+          !FileSystemEntity.isFileSync(targetPath)) {
+        throw Exception(
+            'File not found: $targetPath. Has the file in the folder been deleted?');
+      }
+
+      await _updateContentDocx(repoPath, targetPath);
+      // 1. Unzip content.docx -> doc_content
+      await _flushDocxToContent(repoPath);
+
+      // Add doc_content directory
+      await _runGit(['add', kContentDirName], repoPath);
+    } else {
+      // Folder project: only track metadata
+      await _runGit(['add', 'folder_meta.json'], repoPath);
     }
-
-    if (!FileSystemEntity.isDirectorySync(targetPath) &&
-        !FileSystemEntity.isFileSync(targetPath)) {
-      throw Exception(
-          'File not found: $targetPath. Has the file in the folder been deleted?');
-    }
-
-    await _updateContentDocx(repoPath, targetPath);
-    // 1. Unzip content.docx -> doc_content
-    await _flushDocxToContent(repoPath);
-
-    // Add doc_content directory
-    await _runGit(['add', kContentDirName], repoPath);
     if (File(p.join(repoPath, 'edges')).existsSync()) {
       await _runGit(['add', 'edges'], repoPath);
     }
@@ -2859,12 +2866,17 @@ Future<Map<String, dynamic>> updateTrackingProject(
         }
       }
 
-      // Ensure content dir exists in repo
-      final contentDir = Directory(p.join(projDir, kContentDirName));
-      if (!contentDir.existsSync()) {
-        contentDir.createSync();
+      // Check if folder type
+      final isFolder = await _isFolderProject(projDir);
+
+      if (!isFolder) {
+        // Ensure content dir exists in repo
+        final contentDir = Directory(p.join(projDir, kContentDirName));
+        if (!contentDir.existsSync()) {
+          contentDir.createSync();
+        }
+        tracking['repoDocxPath'] = contentDir.path;
       }
-      tracking['repoDocxPath'] = contentDir.path;
 
       if (repoPath == null) {
         await _writeTracking(normalizedName, tracking);
@@ -2876,7 +2888,6 @@ Future<Map<String, dynamic>> updateTrackingProject(
 
       // Check if folder type, if so, we are done with tracking update, return.
       // Folder type projects are containers, not git repos themselves.
-      final isFolder = await _isFolderProject(projDir);
       if (isFolder) {
         print(
             '[Perf] Folder project updated. Skipping git operations on root.');
