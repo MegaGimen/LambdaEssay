@@ -2521,7 +2521,11 @@ Future<void> syncFolderProject(String name) async {
 
   var targetBaseDir = projDir;
   if (isWorkspaceRoot) {
-    final projectName = p.basename(sourceRoot);
+    // Fix: Use package name instead of source filename for project root
+    String pkgPath = tracking['packagePath'] as String? ?? '';
+    if (pkgPath.isEmpty) pkgPath = name;
+    final projectName = _trackingBaseName(pkgPath);
+
     targetBaseDir = p.join(projDir, projectName);
     if (!Directory(targetBaseDir).existsSync()) {
       Directory(targetBaseDir).createSync(recursive: true);
