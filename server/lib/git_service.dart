@@ -1305,7 +1305,7 @@ Future<String?> _findWorkspaceRoot(String repoPath) async {
   String current = p.normalize(repoPath);
   final root = p.rootPrefix(current);
   while (true) {
-    final metaFile = File(p.join(current, kWorkspaceMetaFile));
+    final metaFile = File(p.join(current, "folder_meta.json"));//让他包含的是folder_meta而不是workspace最基础的json文件
     if (metaFile.existsSync()) return current;
     final parent = p.dirname(current);
     if (parent == current || parent == root) break;
