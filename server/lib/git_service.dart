@@ -744,16 +744,35 @@ Future<void> _notifyParentFolderProject(String repoPath) async {
   print("Calling _notifyParentFolderProject!");
   try {
     final baseDir = _baseDir();
-    Directory current = Directory(p.dirname(repoPath));
+    final workspaceBase = _workspaceBaseDir();
 
-    // Safety: repo must be inside baseDir
+    // Safety: repo must be inside baseDir or workspaceBase
     // Note: isWithin returns true only if strictly inside
-    if (!p.isWithin(baseDir, repoPath)) return;
+    if (!p.isWithin(baseDir, repoPath) && !p.isWithin(workspaceBase, repoPath)) {
+      print(
+          "Repo $repoPath is not within baseDir or workspaceBase, skipping notify parent.");
+      return;
+    }
+
+    final workspaceRoot = await _findWorkspaceRoot(repoPath);
+
+    Directory current = Directory(p.dirname(repoPath));
 
     while (true) {
       final path = current.path;
+
+      // Stop if we hit workspace root
+      if (workspaceRoot != null && p.equals(path, workspaceRoot)) {
+        print("Reached workspace root $path, stopping notify parent.");
+        break;
+      }
+
       // Stop if we reach baseDir or go above it
-      if (path == baseDir || !p.isWithin(baseDir, path)) break;
+      if (path == baseDir ||
+          path == workspaceBase ||
+          (!p.isWithin(baseDir, path) && !p.isWithin(workspaceBase, path))) {
+        break;
+      }
 
       // Check for folder_meta.json to identify folder project
       if (File(p.join(path, 'folder_meta.json')).existsSync()) {
