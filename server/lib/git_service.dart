@@ -3685,6 +3685,8 @@ Future<Map<String, dynamic>> pullFromRemote(
       final isFolderProject =
           File(p.join(projDir, 'folder_meta.json')).existsSync();
 
+      print('Debug: pullFromRemote - repoPath: $projDir, isFresh: $isFresh, isFolderProject: $isFolderProject');
+
       if (isFolderProject) {
         // Folder Project Additive Pull Logic
         try {
@@ -3890,6 +3892,21 @@ Future<Map<String, dynamic>> pullFromRemote(
     }
 
     // Check if it is a folder project (has folder_meta.json)
+    final hasFolderMeta = File(p.join(projDir, 'folder_meta.json')).existsSync();
+    print('Debug: pullFromRemote - Final check - hasFolderMeta: $hasFolderMeta');
+
+    if (hasFolderMeta) {
+      // Folder projects should not have tracking.json or content.docx in the root
+      print('Debug: Folder project detected. Expanding structure...');
+      await _expandFolderProject(projDir, structureOnly: isFresh);
+    } else {
+       // Only sync external if it's NOT a folder project
+       // This prevents content.docx creation in folder project roots
+       print('Debug: File project detected (or mixed). Syncing to external...');
+       await _syncToExternal(projDir);
+    }
+
+    /*
     if (File(p.join(projDir, 'folder_meta.json')).existsSync()) {
       final trackingJsonPath = p.join(projDir, 'tracking.json');
       final tracking = await _readTrackingJson(trackingJsonPath);
@@ -3902,9 +3919,10 @@ Future<Map<String, dynamic>> pullFromRemote(
 
     // Sync external docx with pulled content
     await _syncToExternal(projDir);
+    */
 
     // Notify parent folder project if applicable (only for folder projects)
-    if (File(p.join(projDir, 'folder_meta.json')).existsSync()) {
+    if (hasFolderMeta) {
       await _notifyParentFolderProject(projDir);
     }
 
