@@ -3595,7 +3595,7 @@ Future<void> _checkIfBehind(String repoPath, String remoteUrl) async {
 
 Future<Map<String, dynamic>> pullFromRemote(
     String nameOrPath, String username, String token,
-    {bool force = false, String? targetRepoName}) async {
+    {bool force = false, String? targetRepoName, String? localTrackingZipPath}) async {
   final repoPath =
       p.isAbsolute(nameOrPath) ? nameOrPath : _projectDir(nameOrPath);
   return _withRepoLock(repoPath, () async {
@@ -3776,6 +3776,24 @@ Future<Map<String, dynamic>> pullFromRemote(
       );
       if (res.exitCode != 0) {
         throw Exception('Clone failed: ${res.stderr}');
+      }
+
+      if (localTrackingZipPath != null && localTrackingZipPath.isNotEmpty) {
+        try {
+          final parentDir = Directory(projDir).parent;
+          final globalMetaFile =
+              File(p.join(parentDir.path, '.tracking_workspace.json'));
+          Map<String, dynamic> meta = {};
+          if (await globalMetaFile.exists()) {
+            meta = jsonDecode(await globalMetaFile.readAsString());
+          }
+          meta['externalPath'] = localTrackingZipPath;
+          await globalMetaFile.writeAsString(jsonEncode(meta));
+          print(
+              'Updated global metadata with externalPath: $localTrackingZipPath');
+        } catch (e) {
+          print('Failed to update global metadata: $e');
+        }
       }
     }
 
