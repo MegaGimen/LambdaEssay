@@ -3603,6 +3603,7 @@ Future<void> _checkIfBehind(String repoPath, String remoteUrl) async {
 Future<Map<String, dynamic>> pullFromRemote(
     String nameOrPath, String username, String token,
     {bool force = false, String? targetRepoName, String? localTrackingZipPath, String? currentPath}) async {
+  print('==================================================');
   print('Debug: pullFromRemote - nameOrPath: $nameOrPath, targetRepoName: $targetRepoName, localTrackingZipPath: $localTrackingZipPath');
   final repoPath = (localTrackingZipPath != null && localTrackingZipPath.isNotEmpty)
       ? p.join(
@@ -3787,45 +3788,44 @@ Future<Map<String, dynamic>> pullFromRemote(
       if (res.exitCode != 0) {
         throw Exception('Clone failed: ${res.stderr}');
       }
+    }
 
-      if (localTrackingZipPath != null && localTrackingZipPath.isNotEmpty) {
-        print('==================================================');
-        print('DEBUG: New Project Pull - Packing Strategy');
-        print('repoPath (projDir): $projDir');
-        print('parentDir (workspace): ${parentDir.path}');
-        print('localTrackingZipPath: $localTrackingZipPath');
-        print('==================================================');
+    if (localTrackingZipPath != null && localTrackingZipPath.isNotEmpty) {
+      print('==================================================');
+      print('DEBUG: New Project Pull - Packing Strategy');
+      print('repoPath (projDir): $projDir');
+      print('localTrackingZipPath: $localTrackingZipPath');
+      print('==================================================');
 
-        try {
-          final parentDir = Directory(projDir).parent;
-          final globalMetaFile =
-              File(p.join(parentDir.path, '.tracking_workspace.json'));
-          Map<String, dynamic> meta = {};
-          if (await globalMetaFile.exists()) {
-            meta = jsonDecode(await globalMetaFile.readAsString());
-          }
-          meta['externalPath'] = localTrackingZipPath;
-          meta['packagePath'] = localTrackingZipPath;
-          await globalMetaFile.writeAsString(jsonEncode(meta));
-          print(
-              'Updated global metadata with externalPath: $localTrackingZipPath');
-
-          // Ensure folder_meta.json exists for the root of the workspace if it's a new package
-          final folderMeta = File(p.join(projDir, 'folder_meta.json'));
-          if (!folderMeta.existsSync()) {
-            print('Creating default folder_meta.json at ${folderMeta.path}');
-            await folderMeta.writeAsString(jsonEncode({'files': {}, 'folders': {}}));
-          }
-
-          // Pack the tracking package immediately after cloning and setup
-          print('Packing initial structure to $localTrackingZipPath');
-          await _exportFolderToTrackingPackage(parentDir.path, localTrackingZipPath);
-          print('Packing completed successfully (allegedly)');
-
-        } catch (e, s) {
-          print('Failed to update global metadata or pack: $e');
-          print(s);
+      try {
+        final parentDir = Directory(projDir).parent;
+        final globalMetaFile =
+            File(p.join(parentDir.path, '.tracking_workspace.json'));
+        Map<String, dynamic> meta = {};
+        if (await globalMetaFile.exists()) {
+          meta = jsonDecode(await globalMetaFile.readAsString());
         }
+        meta['externalPath'] = localTrackingZipPath;
+        meta['packagePath'] = localTrackingZipPath;
+        await globalMetaFile.writeAsString(jsonEncode(meta));
+        print(
+            'Updated global metadata with externalPath: $localTrackingZipPath');
+
+        // Ensure folder_meta.json exists for the root of the workspace if it's a new package
+        final folderMeta = File(p.join(projDir, 'folder_meta.json'));
+        if (!folderMeta.existsSync()) {
+          print('Creating default folder_meta.json at ${folderMeta.path}');
+          await folderMeta.writeAsString(jsonEncode({'files': {}, 'folders': {}}));
+        }
+
+        // Pack the tracking package immediately after cloning and setup
+        print('Packing initial structure to $localTrackingZipPath');
+        await _exportFolderToTrackingPackage(parentDir.path, localTrackingZipPath);
+        print('Packing completed successfully');
+
+      } catch (e, s) {
+        print('Failed to update global metadata or pack: $e');
+        print(s);
       }
     }
 
