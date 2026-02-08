@@ -1434,9 +1434,16 @@ Future<Map<String, dynamic>> expandLocalTrackingPackage(String filePath) async {
 
 Future<void> _packTrackingDirectory(
     String srcDir, String outPackagePath) async {
+  print('==================================================');
   print('[pack] 开始打包，srcDir=$srcDir, outPackagePath=$outPackagePath');
   final encoder = ZipFileEncoder();
-  encoder.create(outPackagePath);
+  try {
+    encoder.create(outPackagePath);
+  } catch (e) {
+    print('[pack] ERROR creating zip file: $e');
+    throw e;
+  }
+
 
   final root = Directory(srcDir);
   if (!root.existsSync()) {
@@ -3782,6 +3789,13 @@ Future<Map<String, dynamic>> pullFromRemote(
       }
 
       if (localTrackingZipPath != null && localTrackingZipPath.isNotEmpty) {
+        print('==================================================');
+        print('DEBUG: New Project Pull - Packing Strategy');
+        print('repoPath (projDir): $projDir');
+        print('parentDir (workspace): ${parentDir.path}');
+        print('localTrackingZipPath: $localTrackingZipPath');
+        print('==================================================');
+
         try {
           final parentDir = Directory(projDir).parent;
           final globalMetaFile =
@@ -3806,9 +3820,11 @@ Future<Map<String, dynamic>> pullFromRemote(
           // Pack the tracking package immediately after cloning and setup
           print('Packing initial structure to $localTrackingZipPath');
           await _exportFolderToTrackingPackage(parentDir.path, localTrackingZipPath);
+          print('Packing completed successfully (allegedly)');
 
-        } catch (e) {
+        } catch (e, s) {
           print('Failed to update global metadata or pack: $e');
+          print(s);
         }
       }
     }

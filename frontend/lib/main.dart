@@ -1808,9 +1808,15 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       if (localTrackingZipPath != null) body['localTrackingZipPath'] = localTrackingZipPath;
       if (currentPath != null) body['currentPath'] = currentPath;
       
+      print('==================================================');
       print('Debug: Sending pull request: $body');
+      print('==================================================');
 
       final resp = await _postJson('http://localhost:8080/pull', body);
+      
+      print('==================================================');
+      print('Debug: Received pull response: $resp');
+      print('==================================================');
 
       if (!mounted) return;
 
@@ -1854,6 +1860,48 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           setState(() => error = '拉取失败，位于onPull: $message');
         }
         return;
+      }
+
+      // Special handling for New Project Pull (if localTrackingZipPath was provided)
+      if (localTrackingZipPath != null && status == 'success') {
+        // Open it like "Import Tracking Project"
+        // 1. Set currentProjectName
+        // 2. Load sub-repos
+        // 3. Clear pathCtrl (so no graph is shown initially)
+        
+        setState(() {
+          currentProjectName = localTrackingZipPath;
+          // pathCtrl is already set to repoPath by code above, but we might want to clear it if we want "no graph"
+          // However, the user said "like opening a tracking project".
+          // When opening a folder project, we usually show the tree but no graph for the root unless selected.
+          // But wait, pathCtrl controls the graph.
+          
+          packageRootCtrl.text = path ?? '';
+          isFolderProject = true; 
+        });
+
+        // Load sub-repos
+        try {
+          final reposResp = await _postJson('http://localhost:8080/track/repos', {
+            'packagePath': localTrackingZipPath,
+          });
+          final repos = (reposResp['repos'] as List).cast<Map<String, dynamic>>();
+          setState(() {
+            subRepos = repos;
+            // Clear pathCtrl to avoid showing graph immediately
+            pathCtrl.clear();
+            data = null;
+            remoteData = null;
+          });
+        } catch (e) {
+          print('Failed to load sub-repos after pull: $e');
+        }
+
+        if (mounted) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(const SnackBar(content: Text('拉取并创建追踪包成功')));
+        }
+        return; // Stop here, do not proceed to _load() or _onUpdateRepo()
       }
 
       // Reload again to update graph if needed (e.g. fresh clone or new commits)
