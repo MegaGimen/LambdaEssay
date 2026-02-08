@@ -1856,13 +1856,6 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         return;
       }
 
-      final isFresh = resp['isFresh'] == true;
-
-      // Only setup tracking if we have a repoName (project context)
-      if (repoName != null && pathCtrl.text.trim().isNotEmpty) {
-        await _checkAndSetupTracking(repoName, pathCtrl.text.trim(), isFresh);
-      }
-
       // Reload again to update graph if needed (e.g. fresh clone or new commits)
       await _load();
       // Force repo update after pull to sync semantic changes
@@ -1936,10 +1929,27 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     return jsonDecode(resp.body) as Map<String, dynamic>;
   }
 
-  void _handleDirTap(Directory dir, TapDownDetails details) {
+  Future<void> _handleDirTap(Directory dir, TapDownDetails details) async {
     setState(() {
       _selectedFilePath = dir.path;
     });
+
+    // If it is a git repo, open it as a sub-project
+    if (Directory(p.join(dir.path, '.git')).existsSync()) {
+      setState(() {
+        pathCtrl.text = dir.path;
+      });
+      await _load();
+
+      // Check if it needs configuration (missing tracking.json and folder_meta.json)
+      final trackingJson = File(p.join(dir.path, 'tracking.json'));
+      final folderMeta = File(p.join(dir.path, 'folder_meta.json'));
+      
+      if (!trackingJson.existsSync() && !folderMeta.existsSync()) {
+        // Trigger setup dialog
+        await _checkAndSetupTracking(currentProjectName ?? '', dir.path, true);
+      }
+    }
   }
 
   void _handleDirSecondaryTap(Directory dir, TapDownDetails details) {

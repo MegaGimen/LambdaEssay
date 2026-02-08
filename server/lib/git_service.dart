@@ -3795,8 +3795,20 @@ Future<Map<String, dynamic>> pullFromRemote(
           await globalMetaFile.writeAsString(jsonEncode(meta));
           print(
               'Updated global metadata with externalPath: $localTrackingZipPath');
+
+          // Ensure folder_meta.json exists for the root of the workspace if it's a new package
+          final folderMeta = File(p.join(projDir, 'folder_meta.json'));
+          if (!folderMeta.existsSync()) {
+            print('Creating default folder_meta.json at ${folderMeta.path}');
+            await folderMeta.writeAsString(jsonEncode({'files': {}, 'folders': {}}));
+          }
+
+          // Pack the tracking package immediately after cloning and setup
+          print('Packing initial structure to $localTrackingZipPath');
+          await _exportFolderToTrackingPackage(parentDir.path, localTrackingZipPath);
+
         } catch (e) {
-          print('Failed to update global metadata: $e');
+          print('Failed to update global metadata or pack: $e');
         }
       }
     }
