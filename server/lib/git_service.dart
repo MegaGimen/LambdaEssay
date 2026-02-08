@@ -3595,9 +3595,11 @@ Future<void> _checkIfBehind(String repoPath, String remoteUrl) async {
 
 Future<Map<String, dynamic>> pullFromRemote(
     String nameOrPath, String username, String token,
-    {bool force = false, String? targetRepoName, String? localTrackingZipPath}) async {
-  final repoPath =
-      p.isAbsolute(nameOrPath) ? nameOrPath : _projectDir(nameOrPath);
+    {bool force = false, String? targetRepoName, String? localTrackingZipPath, String? currentPath}) async {
+  final repoPath = (localTrackingZipPath != null && localTrackingZipPath.isNotEmpty)
+      ? p.join(
+          _workspaceDirForPackage(localTrackingZipPath), p.basename(nameOrPath))
+      : (p.isAbsolute(nameOrPath) ? nameOrPath : _projectDir(nameOrPath));
   return _withRepoLock(repoPath, () async {
     String effectiveRemoteRepoName;
     if (targetRepoName != null && targetRepoName.isNotEmpty) {
@@ -3788,6 +3790,7 @@ Future<Map<String, dynamic>> pullFromRemote(
             meta = jsonDecode(await globalMetaFile.readAsString());
           }
           meta['externalPath'] = localTrackingZipPath;
+          meta['packagePath'] = localTrackingZipPath;
           await globalMetaFile.writeAsString(jsonEncode(meta));
           print(
               'Updated global metadata with externalPath: $localTrackingZipPath');
@@ -3861,6 +3864,7 @@ Future<Map<String, dynamic>> pullFromRemote(
     return {
       'status': 'success',
       'path': projDir,
+      'openPath': currentPath ?? projDir,
       'isFresh': isFresh,
     };
   });

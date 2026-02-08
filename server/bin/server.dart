@@ -1995,6 +1995,7 @@ Future<void> main(List<String> args) async {
     final force = data['force'] == true;
     final targetRepoName = (data['targetRepoName'] as String?)?.trim();
     final localTrackingZipPath = (data['localTrackingZipPath'] as String?)?.trim();
+    final currentPath = _sanitizePath(data['currentPath'] as String?);
 
     final pathArg = repoPath.isNotEmpty ? repoPath : repoName;
 
@@ -2005,7 +2006,7 @@ Future<void> main(List<String> args) async {
     }
     try {
       final result = await pullFromRemote(pathArg, username, token,
-          force: force, targetRepoName: targetRepoName, localTrackingZipPath: localTrackingZipPath);
+          force: force, targetRepoName: targetRepoName, localTrackingZipPath: localTrackingZipPath, currentPath: currentPath);
       print("pullResult=${result}");
       return _cors(Response.ok(jsonEncode(result),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
