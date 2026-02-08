@@ -1753,7 +1753,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           await _executePull(
               repoName: pathCtrl.text.trim(),
               repoPath: pathCtrl.text.trim(),
-              targetRepoName: hash);
+              targetRepoName: hash,
+              currentPath: pathCtrl.text.trim());
           return;
         }
       }
@@ -1763,7 +1764,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         setState(() => error = '未选择具体追踪节点');
         return;
       }
-      await _executePull(repoName: repoPath, repoPath: repoPath);
+      await _executePull(repoName: repoPath, repoPath: repoPath, currentPath: pathCtrl.text.trim());
       return;
     }
 
@@ -1776,62 +1777,22 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       if (!mounted) return;
 
       final targetRepoName = selection['name'] as String;
-      // final isRemoteFolder = selection['isFolder'] == true; // Unused in new logic flow
+      
+      String? outputFile = await FilePicker.platform.saveFile(
+        dialogTitle: '选择保存位置',
+        fileName: '$targetRepoName.tracking.zip',
+        type: FileType.custom,
+        allowedExtensions: ['zip'],
+      );
+      if (outputFile == null) return;
+      if (!outputFile.endsWith('.tracking.zip')) outputFile += '.tracking.zip';
 
-      // Check if locally exists
-      final localProjects = await _fetchProjectList();
-      if (!mounted) return;
-
-      if (localProjects.contains(targetRepoName)) {
-        // Open it
-        try {
-          final resp = await _postJson('http://localhost:8080/track/open',
-              {'packagePath': targetRepoName});
-          final repoPath = resp['repoPath'];
-          final docxPath = resp['docxPath'];
-          final type = resp['type'] as String? ?? 'file';
-
-          if (!mounted) return;
-          setState(() {
-            currentProjectName = targetRepoName;
-            pathCtrl.text = repoPath;
-            docxPathCtrl.text = docxPath ?? '';
-            packageRootCtrl.text = repoPath;
-            isFolderProject = type == 'folder';
-            // Clear graph/data as we are at root
-            data = null;
-            remoteData = null;
-          });
-
-          if (isFolderProject) {
-          final reposResp = await _postJson('http://localhost:8080/track/repos',
-              {'packagePath': targetRepoName});
-            final repos =
-                (reposResp['repos'] as List).cast<Map<String, dynamic>>();
-            if (!mounted) return;
-            setState(() => subRepos = repos);
-          }
-
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('检测到本地项目，已打开并开始拉取...')));
-          }
-
-          // Perform Pull for the opened project (Mode 1 logic)
-          await _executePull(repoName: repoPath, repoPath: repoPath);
-        } catch (e) {
-          setState(() => error = '打开项目失败: $e');
-        }
-      } else {
-        // Does not exist locally, execute new project pull logic
-        // This will trigger clone on backend
-        await _executePull(repoName: targetRepoName);
-      }
+      await _executePull(targetRepoName: targetRepoName, localTrackingZipPath: outputFile);
     }
   }
 
   Future<void> _executePull(
-      {String? repoName, String? repoPath, String? targetRepoName}) async {
+      {String? repoName, String? repoPath, String? targetRepoName, String? localTrackingZipPath, String? currentPath}) async {
     setState(() {
       loading = true;
       error = null;
@@ -1844,6 +1805,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       };
       if (repoName != null) body['repoName'] = repoName;
       if (repoPath != null) body['repoPath'] = repoPath;
+      if (localTrackingZipPath != null) body['localTrackingZipPath'] = localTrackingZipPath;
+      if (currentPath != null) body['currentPath'] = currentPath;
 
       final resp = await _postJson('http://localhost:8080/pull', body);
 

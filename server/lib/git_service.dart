@@ -3767,9 +3767,9 @@ Future<Map<String, dynamic>> pullFromRemote(
         }
       }
     } else {
-      final base = Directory(_baseDir());
-      if (!base.existsSync()) {
-        base.createSync(recursive: true);
+      final parentDir = Directory(projDir).parent;
+      if (!parentDir.existsSync()) {
+        parentDir.createSync(recursive: true);
       }
       final res = await Process.run(
         'git',
