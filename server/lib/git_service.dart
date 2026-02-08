@@ -3596,6 +3596,7 @@ Future<void> _checkIfBehind(String repoPath, String remoteUrl) async {
 Future<Map<String, dynamic>> pullFromRemote(
     String nameOrPath, String username, String token,
     {bool force = false, String? targetRepoName, String? localTrackingZipPath, String? currentPath}) async {
+  print('Debug: pullFromRemote - nameOrPath: $nameOrPath, targetRepoName: $targetRepoName, localTrackingZipPath: $localTrackingZipPath');
   final repoPath = (localTrackingZipPath != null && localTrackingZipPath.isNotEmpty)
       ? p.join(
           _workspaceDirForPackage(localTrackingZipPath), p.basename(nameOrPath))

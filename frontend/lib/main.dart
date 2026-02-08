@@ -1787,7 +1787,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       if (outputFile == null) return;
       if (!outputFile.endsWith('.tracking.zip')) outputFile += '.tracking.zip';
 
-      await _executePull(targetRepoName: targetRepoName, localTrackingZipPath: outputFile);
+      await _executePull(targetRepoName: targetRepoName, localTrackingZipPath: outputFile, repoName: targetRepoName);
     }
   }
 
@@ -1807,6 +1807,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       if (repoPath != null) body['repoPath'] = repoPath;
       if (localTrackingZipPath != null) body['localTrackingZipPath'] = localTrackingZipPath;
       if (currentPath != null) body['currentPath'] = currentPath;
+      
+      print('Debug: Sending pull request: $body');
 
       final resp = await _postJson('http://localhost:8080/pull', body);
 

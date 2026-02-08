@@ -1996,6 +1996,8 @@ Future<void> main(List<String> args) async {
     final targetRepoName = (data['targetRepoName'] as String?)?.trim();
     final localTrackingZipPath = (data['localTrackingZipPath'] as String?)?.trim();
     final currentPath = _sanitizePath(data['currentPath'] as String?);
+    
+    print('Debug: /pull request - repoPath: $repoPath, repoName: $repoName, targetRepoName: $targetRepoName, localTrackingZipPath: $localTrackingZipPath');
 
     final pathArg = repoPath.isNotEmpty ? repoPath : repoName;
 
