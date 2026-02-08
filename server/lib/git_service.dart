@@ -1434,7 +1434,7 @@ Future<Map<String, dynamic>> expandLocalTrackingPackage(String filePath) async {
 
 Future<void> _packTrackingDirectory(
     String srcDir, String outPackagePath) async {
-  print('==================================================');
+  
   print('[pack] 开始打包，srcDir=$srcDir, outPackagePath=$outPackagePath');
   final encoder = ZipFileEncoder();
   try {
@@ -2499,7 +2499,7 @@ Future<List<Map<String, dynamic>>> listProjectRepos(String name) async {
 }
 
 Future<void> syncFolderProject(String name) async {
-  print('==================================================');
+  
   print('[Debug][syncFolderProject] Start for name: $name');
 
   final projDir = _projectDir(name);
@@ -2636,7 +2636,7 @@ Future<void> syncFolderProject(String name) async {
   }
   
   print('[Debug][syncFolderProject] End for $name');
-  print('==================================================');
+  
 }
 
 Future<Map<String, dynamic>> openTrackingProject(String name) async {
@@ -2649,11 +2649,23 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
 
   var repoPath = projDir;
   final subName = _trackingBaseName(packagePath);
+
+  // Check if we are in a workspace root (which we should be for .tracking.zip)
+  final isWorkspaceRoot = File(p.join(projDir, kWorkspaceMetaFile)).existsSync();
+
   if (subName.isNotEmpty && subName != '.') {
     final subDir = p.join(projDir, subName);
     if (Directory(p.join(subDir, '.git')).existsSync() ||
         File(p.join(subDir, 'tracking.json')).existsSync()) {
       repoPath = subDir;
+    } else if (isWorkspaceRoot) {
+      // If we are in a workspace root, we MUST use the subfolder for the repo,
+      // even if it doesn't exist yet (we are about to create/init it).
+      // This prevents accidental initialization in the workspace root.
+      repoPath = subDir;
+      if (!Directory(repoPath).existsSync()) {
+        Directory(repoPath).createSync(recursive: true);
+      }
     }
   }
 
@@ -2853,9 +2865,22 @@ Future<Map<String, dynamic>> updateTrackingProject(
         final subName = _trackingBaseName(normalizedName);
         if (subName.isNotEmpty && subName != '.') {
           final subDir = p.join(projDir, subName);
-          // If we are a folder project (sourcePath is dir), we likely want the repo in the subfolder
+          
+          bool switchToSub = false;
+
+          // Case 1: Folder project matching name
           if (FileSystemEntity.isDirectorySync(sourcePath!) &&
               sourcePath.endsWith(subName)) {
+            switchToSub = true;
+          }
+
+          // Case 2: Workspace root context (e.g. .tracking.zip)
+          // If the current projDir has .tracking_workspace.json, we should NEVER init .git in it.
+          if (File(p.join(projDir, kWorkspaceMetaFile)).existsSync()) {
+            switchToSub = true;
+          }
+
+          if (switchToSub) {
             print('[updateTrackingProject] Switching initialization to subfolder: $subDir');
             if (!Directory(subDir).existsSync()) {
               Directory(subDir).createSync(recursive: true);
@@ -3603,7 +3628,7 @@ Future<void> _checkIfBehind(String repoPath, String remoteUrl) async {
 Future<Map<String, dynamic>> pullFromRemote(
     String nameOrPath, String username, String token,
     {bool force = false, String? targetRepoName, String? localTrackingZipPath, String? currentPath}) async {
-  print('==================================================');
+  
   print('Debug: pullFromRemote - nameOrPath: $nameOrPath, targetRepoName: $targetRepoName, localTrackingZipPath: $localTrackingZipPath');
   final repoPath = (localTrackingZipPath != null && localTrackingZipPath.isNotEmpty)
       ? p.join(
@@ -3791,11 +3816,11 @@ Future<Map<String, dynamic>> pullFromRemote(
     }
 
     if (localTrackingZipPath != null && localTrackingZipPath.isNotEmpty) {
-      print('==================================================');
+      
       print('DEBUG: New Project Pull - Packing Strategy');
       print('repoPath (projDir): $projDir');
       print('localTrackingZipPath: $localTrackingZipPath');
-      print('==================================================');
+      
 
       try {
         final parentDir = Directory(projDir).parent;
