@@ -766,23 +766,19 @@ Future<void> _notifyParentFolderProject(String repoPath) async {
       return;
     }
 
-    final workspaceRoot = await _findWorkspaceRoot(repoPath);
+    // final workspaceRoot = await _findWorkspaceRoot(repoPath);
 
     Directory current = Directory(p.dirname(repoPath));
+    print('==================================================');
+    print('[Debug] _notifyParentFolderProject start loop for repo: $repoPath');
 
     while (true) {
       final path = current.path;
-
-      // Stop if we hit workspace root
-      if (workspaceRoot != null && p.equals(path, workspaceRoot)) {
-        print("Reached workspace root $path, stopping notify parent.");
-        break;
-      }
+      // print('[Debug] Checking path: $path');
 
       // Stop if we reach baseDir or go above it
-      if (path == baseDir ||
-          path == workspaceBase ||
-          (!p.isWithin(baseDir, path) && !p.isWithin(workspaceBase, path))) {
+      if (p.equals(path, baseDir) || p.equals(path, workspaceBase)) {
+        print('[Debug] Reached base/workspace root, stopping.');
         break;
       }
 
