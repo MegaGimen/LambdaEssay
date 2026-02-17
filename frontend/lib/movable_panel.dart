@@ -56,6 +56,7 @@ class _MovableResizablePanelState extends State<MovableResizablePanel> {
 
   Offset? _resizeStartGlobal;
   Size? _resizeStartSize;
+  bool _isInteracting = false;
 
   Offset _clampOffset(Offset value, Size panelSize) {
     final scaledW = panelSize.width * widget.scale;
@@ -90,6 +91,7 @@ class _MovableResizablePanelState extends State<MovableResizablePanel> {
   }
 
   void _startDrag(DragStartDetails d, Offset clampedOffset) {
+    setState(() => _isInteracting = true);
     _dragStartGlobal = d.globalPosition;
     _dragStartOffset = clampedOffset;
   }
@@ -103,12 +105,14 @@ class _MovableResizablePanelState extends State<MovableResizablePanel> {
   }
 
   void _endDrag() {
+    setState(() => _isInteracting = false);
     _dragStartGlobal = null;
     _dragStartOffset = null;
     widget.onInteractionEnd?.call();
   }
 
   void _startResize(DragStartDetails d, Size clampedSize) {
+    setState(() => _isInteracting = true);
     _resizeStartGlobal = d.globalPosition;
     _resizeStartSize = clampedSize;
   }
@@ -134,6 +138,7 @@ class _MovableResizablePanelState extends State<MovableResizablePanel> {
   }
 
   void _endResize() {
+    setState(() => _isInteracting = false);
     _resizeStartGlobal = null;
     _resizeStartSize = null;
     widget.onInteractionEnd?.call();
@@ -158,7 +163,7 @@ class _MovableResizablePanelState extends State<MovableResizablePanel> {
     // But we should probably rely on the child to hide and container to shrink.
     // Let's use the explicit height control.
     
-    return Transform.translate(
+    final panel = Transform.translate(
       offset: clampedOffset,
       child: Transform.scale(
         scale: widget.scale,
@@ -296,5 +301,10 @@ class _MovableResizablePanelState extends State<MovableResizablePanel> {
         ),
       ),
     );
+
+    if (_isInteracting) {
+      return ExcludeSemantics(child: panel);
+    }
+    return panel;
   }
 }
