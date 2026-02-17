@@ -1982,6 +1982,12 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       _selectedFilePath = dir.path;
     });
 
+    // Check if it is a folder project (root/intermediate)
+    // We only want to load graph for leaf nodes (DocxRepo)
+    if (File(p.join(dir.path, 'folder_meta.json')).existsSync()) {
+      return;
+    }
+
     // If it is a git repo, open it as a sub-project
     if (Directory(p.join(dir.path, '.git')).existsSync()) {
       setState(() {

@@ -568,6 +568,18 @@ Future<GraphResponse> getGraph(String repoPath,
 
 Future<GraphResponse> _getGraphUnlocked(String repoPath,
     {int? limit, bool includeLocal = true, List<String>? remoteNames}) async {
+  // Check if it's a folder project. If so, do not return graph (or return empty).
+  // Because we only want to load graph for leaf nodes (DocxRepo).
+  if (await _isFolderProject(repoPath)) {
+    print('Skipping graph for folder project: $repoPath');
+    return GraphResponse(
+        commits: [],
+        branches: [],
+        chains: {},
+        currentBranch: await getCurrentBranch(repoPath),
+        customEdges: []);
+  }
+
   final key = '${repoPath}|${limit ?? 0}|$includeLocal|$remoteNames';
   // final cached = _graphCache[key];
   // if (cached != null) {
