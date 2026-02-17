@@ -527,6 +527,51 @@ Future<void> main(List<String> args) async {
     }
   });
 
+  router.post('/project/save', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final packagePath = _sanitizePath(data['packagePath'] as String?);
+    
+    if (packagePath.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'packagePath required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      await saveTrackingProject(packagePath);
+      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/project/save_as', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final packagePath = _sanitizePath(data['packagePath'] as String?);
+    final newPackagePath = _sanitizePath(data['newPackagePath'] as String?);
+
+    if (packagePath.isEmpty || newPackagePath.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'packagePath and newPackagePath required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      await saveTrackingProject(packagePath, newPackagePath);
+      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
   router.get('/project/list', (Request req) async {
     try {
       final projects = await listProjects();

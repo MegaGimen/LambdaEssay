@@ -1444,6 +1444,49 @@ Future<Map<String, dynamic>> expandLocalTrackingPackage(String filePath) async {
 }
 
 
+Future<void> saveTrackingProject(String currentPackagePath, [String? newPackagePath]) async {
+  print('[saveTrackingProject] Start: current=$currentPackagePath, new=$newPackagePath');
+  final normalizedCurrent = _sanitizeFsPath(currentPackagePath);
+  final workspaceDir = _workspaceDirForPackage(normalizedCurrent);
+  
+  if (!Directory(workspaceDir).existsSync()) {
+     print('[saveTrackingProject] Workspace not found at $workspaceDir');
+     throw Exception('Workspace not found for package: $currentPackagePath');
+  }
+
+  String targetPath = normalizedCurrent;
+  if (newPackagePath != null && newPackagePath.trim().isNotEmpty) {
+      targetPath = _sanitizeFsPath(newPackagePath);
+      
+      // Update metadata
+      await _writeWorkspaceMeta(workspaceDir, targetPath);
+      
+      // Pack to new location
+      await _exportFolderToTrackingPackage(workspaceDir, targetPath);
+      
+      // Attempt rename
+      final newWorkspaceDir = _workspaceDirForPackage(targetPath);
+      if (workspaceDir != newWorkspaceDir) {
+          try {
+             if (Directory(newWorkspaceDir).existsSync()) {
+                 Directory(newWorkspaceDir).deleteSync(recursive: true);
+             }
+             // Ensure parent exists
+             Directory(newWorkspaceDir).parent.createSync(recursive: true);
+             Directory(workspaceDir).renameSync(newWorkspaceDir);
+             print('[saveTrackingProject] Renamed workspace to $newWorkspaceDir');
+          } catch (e) {
+             print('[saveTrackingProject] Rename failed: $e');
+             // Non-fatal
+          }
+      }
+  } else {
+      // Just pack
+      await _exportFolderToTrackingPackage(workspaceDir, targetPath);
+  }
+  print('[saveTrackingProject] Done');
+}
+
 Future<void> _packTrackingDirectory(
     String srcDir, String outPackagePath) async {
   

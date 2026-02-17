@@ -3604,12 +3604,110 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     );
   }
 
+  Future<void> _saveProject() async {
+    if (currentProjectName == null) return;
+    
+    setState(() {
+      loading = true;
+    });
+
+    try {
+      await _postJson('$baseUrl/project/save', {
+        'packagePath': currentProjectName,
+      });
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('保存成功')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('保存失败: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          loading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _saveProjectAs() async {
+    if (currentProjectName == null) return;
+
+    final String? newPath = await FilePicker.platform.saveFile(
+      dialogTitle: '另存为',
+      fileName: p.basename(currentProjectName!),
+      allowedExtensions: ['zip'],
+      type: FileType.custom,
+    );
+
+    if (newPath == null) return;
+
+    String finalPath = newPath;
+    if (!finalPath.toLowerCase().endsWith('.tracking.zip')) {
+        finalPath += '.tracking.zip';
+    }
+
+    setState(() {
+      loading = true;
+    });
+
+    try {
+      await _postJson('$baseUrl/project/save_as', {
+        'packagePath': currentProjectName,
+        'newPackagePath': finalPath,
+      });
+      
+      setState(() {
+        currentProjectName = finalPath;
+        // Update packageRootCtrl if it matches the old project name? 
+        // Usually packageRootCtrl points to the REPO path, not the package path (zip file).
+        // But currentProjectName IS the package path for tracking packages.
+        // We don't need to change pathCtrl or packageRootCtrl because the repo path stays the same (we just renamed/moved the workspace pointer essentially).
+        // Wait, if we renamed the workspace, the repo path MIGHT have changed if it depends on MD5 of package path.
+        // If the backend renamed the workspace directory, then the old repo path is invalid!
+        // The backend logic I wrote: "renamed workspace to newWorkspaceDir".
+        // So yes, we MUST update the repo path references.
+      });
+
+      // We need to reload the project completely because the repo path has changed.
+      // Call _openProject with the new path.
+      await _openProject(finalPath, isFolderProject: isFolderProject);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('另存为成功: $finalPath')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('另存为失败: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          loading = false;
+        });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final showFolderHint = isFolderProject &&
         (pathCtrl.text.trim().isEmpty ||
             p.equals(pathCtrl.text.trim(), packageRootCtrl.text.trim()));
-    return Listener(
+    
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.keyS, control: true): _saveProject,
+        const SingleActivator(LogicalKeyboardKey.keyS, control: true, shift: true): _saveProjectAs,
+      },
+      child: Focus(
+        autofocus: true,
+        child: Listener(
       onPointerSignal: (event) {
         if (event is PointerScrollEvent) {
           final keys = HardwareKeyboard.instance.logicalKeysPressed;
@@ -4133,6 +4231,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             ),
           if (loading) const Center(child: CircularProgressIndicator()),
         ],
+      ),
+    ),
       ),
     );
   }
