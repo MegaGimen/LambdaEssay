@@ -229,6 +229,7 @@ class FoldableDirectoryTree extends StatefulWidget {
   final List<Widget>? folderActions;
   final List<Widget>? fileActions;
   final Widget Function(String fileExtension)? fileIconBuilder;
+  final bool Function(FileSystemEntity)? filter;
   
   // Custom properties
   final String? selectedPath;
@@ -251,6 +252,7 @@ class FoldableDirectoryTree extends StatefulWidget {
     this.enableDeleteFileOption = false,
     this.enableDeleteFolderOption = false,
     this.fileIconBuilder,
+    this.filter,
     this.selectedPath,
     this.updatedPaths,
   });
@@ -272,6 +274,7 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
     final entries = directory
         .listSync()
         .where((entry) => path.basename(entry.path) != '.git')
+        .where((entry) => widget.filter?.call(entry) ?? true)
         .toList();
     entries.sort((a, b) {
       if (a is Directory && b is File) return -1;

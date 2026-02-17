@@ -753,7 +753,6 @@ String _stripCredentials(String url) {
 }
 
 Future<void> _notifyParentFolderProject(String repoPath) async {
-  print("Calling _notifyParentFolderProject!");
   try {
     final baseDir = _baseDir();
     final workspaceBase = _workspaceBaseDir();
@@ -769,8 +768,6 @@ Future<void> _notifyParentFolderProject(String repoPath) async {
     // final workspaceRoot = await _findWorkspaceRoot(repoPath);
 
     Directory current = Directory(p.dirname(repoPath));
-    print('==================================================');
-    print('[Debug] _notifyParentFolderProject start loop for repo: $repoPath');
 
     while (true) {
       final path = current.path;
@@ -2740,19 +2737,23 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
   }
 
   if (tracking.isEmpty) {
-    final initial = {
-      'name': packagePath,
-      'packagePath': packagePath,
-    };
-    // _writeTracking writes to root by default if file missing,
-    // but here we might want to write to repoPath if it's different.
-    // However, _writeTracking is not easily overridable without changing signature.
-    // We can manually write if repoPath != projDir
-    if (repoPath != projDir) {
-      await File(p.join(repoPath, 'tracking.json'))
-          .writeAsString(jsonEncode(initial));
-    } else {
-      await _writeTracking(packagePath, initial);
+    // Check if it is a folder project (has folder_meta.json)
+    // If so, do NOT create tracking.json
+    if (!File(p.join(repoPath, 'folder_meta.json')).existsSync()) {
+      final initial = {
+        'name': packagePath,
+        'packagePath': packagePath,
+      };
+      // _writeTracking writes to root by default if file missing,
+      // but here we might want to write to repoPath if it's different.
+      // However, _writeTracking is not easily overridable without changing signature.
+      // We can manually write if repoPath != projDir
+      if (repoPath != projDir) {
+        await File(p.join(repoPath, 'tracking.json'))
+            .writeAsString(jsonEncode(initial));
+      } else {
+        await _writeTracking(packagePath, initial);
+      }
     }
   }
 
@@ -2767,7 +2768,7 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
 
   if (shouldInitStructure) {
     final pkgPath = (tracking['packagePath'] as String?) ?? packagePath;
-    await _ensureFolderProjectStructure(repoPath, tracking['docxPath'],
+    await _ensureFolderProjectStructure(repoPath, tracking['docxPath'] ?? '',
         trackingExt: kTrackingExt, packagePath: pkgPath);
   }
 

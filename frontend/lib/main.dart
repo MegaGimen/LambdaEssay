@@ -3578,15 +3578,23 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
               child: ConstrainedBox(
                 constraints: BoxConstraints(minWidth: _sidebarWidth),
                 child: DirectoryTreeStateProvider(
-                  notifier: _treeNotifier,
-                  child: FoldableDirectoryTree(
-                    rootPath: rootPath,
-                    selectedPath: _selectedFilePath,
-                    updatedPaths: _repoUpdates.entries
-                        .where((e) => e.value)
-                        .map((e) => e.key)
-                        .toSet(),
-                    fileIconBuilder: (extension) => const Icon(
+                    notifier: _treeNotifier,
+                    child: FoldableDirectoryTree(
+                      rootPath: rootPath,
+                      selectedPath: _selectedFilePath,
+                      updatedPaths: _repoUpdates.entries
+                          .where((e) => e.value)
+                          .map((e) => e.key)
+                          .toSet(),
+                      filter: (entity) {
+                        // Filter out hash-named directories (32 hex chars) which are likely internal artifacts
+                        final name = p.basename(entity.path);
+                        if (entity is Directory && RegExp(r'^[a-fA-F0-9]{32}$').hasMatch(name)) {
+                          return false;
+                        }
+                        return true;
+                      },
+                      fileIconBuilder: (extension) => const Icon(
                         Icons.description,
                         size: 16,
                         color: Colors.blueGrey),
