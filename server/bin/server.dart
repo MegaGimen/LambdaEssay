@@ -1928,7 +1928,20 @@ Future<void> main(List<String> args) async {
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
-      final result = await listBackupCommits(repoName,token);
+      final result = await listBackupCommits(repoName, token, onProgress: (percent, received, total) {
+         final msg = jsonEncode({
+           'type': 'backup_progress',
+           'repo': repoName,
+           'percent': percent,
+           'received': received,
+           'total': total
+         });
+         for (final socket in _activeFrontendSockets) {
+            try {
+              socket.sink.add(msg);
+            } catch (_) {}
+         }
+      });
       return _cors(Response.ok(jsonEncode(result), headers: {
         'Content-Type': 'application/json; charset=utf-8',
       }));

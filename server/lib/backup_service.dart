@@ -55,7 +55,8 @@ String _getBackupDir(String repoName) {
 }
 
 Future<Map<String, dynamic>> listBackupCommits(
-    String repoName, String AuthToken) async {
+    String repoName, String AuthToken,
+    {Function(double percent, int received, int total)? onProgress}) async {
   final dirPath = _getBackupDir(repoName);
   final dir = Directory(dirPath);
   String LocalSha1 = "";
@@ -68,6 +69,7 @@ Future<Map<String, dynamic>> listBackupCommits(
   print("Debug,url=$zipUrl");
   
   bool cacheHit = false;
+  String? chainViewUrl;
 
   try {
     final request = http.Request('GET', Uri.parse(zipUrl));
@@ -78,6 +80,8 @@ Future<Map<String, dynamic>> listBackupCommits(
        print(body);
        throw Exception('Failed to download backup: ${response.statusCode}');
     }
+
+    chainViewUrl = response.headers['x-chain-view-url'];
 
     // Check content type to see if it is JSON (cache hit message) or Zip
     final ct = response.headers['content-type'] ?? '';
@@ -112,10 +116,14 @@ Future<Map<String, dynamic>> listBackupCommits(
              received += chunk.length;
              sink.add(chunk);
              if (contentLength != null) {
-               final percent = (received / contentLength * 100).toStringAsFixed(1);
-               stdout.write('\rDownloading: $percent% ($received / $contentLength)');
+               final percent = (received / contentLength * 100);
+               if (onProgress != null) {
+                 onProgress(percent, received, contentLength);
+               }
              } else {
-               stdout.write('\rDownloading: $received bytes');
+               if (onProgress != null) {
+                 onProgress(0.0, received, 0);
+               }
              }
            },
            onDone: () {
@@ -159,7 +167,8 @@ Future<Map<String, dynamic>> listBackupCommits(
   final commits = await _getCommitsFromDir(effectiveRepoPath, repoName);
   return {
     'commits': commits,
-    'cacheHit': cacheHit
+    'cacheHit': cacheHit,
+    'chainViewUrl': chainViewUrl
   };
 }
 

@@ -1,8 +1,11 @@
 import 'dart:convert';
+import 'dart:io'; // For Process.run
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:web_socket_channel/status.dart' as status;
 import 'models.dart';
 import 'graph_view.dart'; // For SimpleGraphView
 
@@ -24,6 +27,9 @@ class _BackupPageState extends State<BackupPage> {
   bool _loading = false;
   String? _error;
   bool _graphHovering = false;
+  WebSocketChannel? _channel;
+  double _downloadProgress = 0.0;
+  String? _chainViewUrl;
 
   List<CommitNode> _commits = [];
   // Store comparison results for each backup commit vs local
@@ -36,12 +42,34 @@ class _BackupPageState extends State<BackupPage> {
   @override
   void initState() {
     super.initState();
+    _connectWebSocket();
     // _sharedTc.addListener(_onScaleChanged);
     _loadBackups();
   }
 
+  void _connectWebSocket() {
+    try {
+      _channel = WebSocketChannel.connect(Uri.parse('ws://localhost:8080/ws/client'));
+      _channel!.stream.listen((message) {
+        try {
+          final data = jsonDecode(message);
+          if (data['type'] == 'backup_progress' && data['repo'] == widget.projectName) {
+            if (mounted) {
+              setState(() {
+                _downloadProgress = (data['percent'] as num).toDouble();
+              });
+            }
+          }
+        } catch (_) {}
+      });
+    } catch (e) {
+      debugPrint('WebSocket error: $e');
+    }
+  }
+
   @override
   void dispose() {
+    _channel?.sink.close(status.goingAway);
     // _sharedTc.removeListener(_onScaleChanged);
     _sharedTc.dispose();
     super.dispose();
@@ -58,6 +86,7 @@ class _BackupPageState extends State<BackupPage> {
       _error = null;
       _commits = [];
       _comparisons.clear();
+      _downloadProgress = 0.0;
     });
     try {
       final url = '$backupBase/backup/commits';
@@ -74,6 +103,7 @@ class _BackupPageState extends State<BackupPage> {
       final j = jsonDecode(resp.body) as Map<String, dynamic>;
       final list = (j['commits'] as List?) ?? const [];
       final bool cacheHit = j['cacheHit'] == true;
+      _chainViewUrl = j['chainViewUrl'] as String?;
       
       if (cacheHit && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -179,6 +209,24 @@ class _BackupPageState extends State<BackupPage> {
     return colors;
   }
 
+  Future<void> _launchUrl(String url) async {
+    try {
+      if (Platform.isWindows) {
+        await Process.run('explorer', [url]);
+      } else if (Platform.isMacOS) {
+        await Process.run('open', [url]);
+      } else if (Platform.isLinux) {
+        await Process.run('xdg-open', [url]);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('无法打开链接: $e')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final repo = widget.projectName;
@@ -208,6 +256,11 @@ class _BackupPageState extends State<BackupPage> {
             foregroundColor: Colors.white,
             title: Text('历史备份预览: $repo'),
             actions: [
+              TextButton.icon(
+                onPressed: _chainViewUrl != null ? () => _launchUrl(_chainViewUrl!) : null,
+                icon: Icon(Icons.link, color: _chainViewUrl != null ? Colors.white : Colors.white24),
+                label: Text('区块链链接预览', style: TextStyle(color: _chainViewUrl != null ? Colors.white : Colors.white24)),
+              ),
               SizedBox(
                 width: 150,
                 child: Slider(
@@ -371,7 +424,29 @@ class _BackupPageState extends State<BackupPage> {
             child: ModalBarrier(dismissible: false, color: Colors.black),
           ),
         if (_loading)
-          const Center(child: CircularProgressIndicator()),
+          Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const CircularProgressIndicator(),
+                if (_downloadProgress > 0) ...[
+                  const SizedBox(height: 16),
+                  Text(
+                    '正在下载: ${_downloadProgress.toStringAsFixed(1)}%',
+                    style: const TextStyle(color: Colors.white, fontSize: 16),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: 200,
+                    child: LinearProgressIndicator(
+                      value: (_downloadProgress / 100).clamp(0.0, 1.0),
+                      backgroundColor: Colors.white24,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
       ],
     ),),);
   }
