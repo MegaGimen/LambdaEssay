@@ -187,6 +187,29 @@ Future<void> _precacheSnapshots(String repoName, String repoPath) async {
   for (final commitId in commits) {
     final targetDir = Directory(p.join(checkoutRoot.path, commitId));
     if (await targetDir.exists()) {
+      // Repair logic: check if we have a dummy repo but actually have an inner repo
+      if (await Directory(p.join(targetDir.path, '.git')).exists()) {
+        bool hasInner = false;
+        final subs = targetDir.listSync().whereType<Directory>();
+        for (final s in subs) {
+          if (p.basename(s.path) == '.git') continue;
+          if (await File(p.join(s.path, 'HEAD')).exists() &&
+              await File(p.join(s.path, 'config')).exists() &&
+              await Directory(p.join(s.path, 'refs')).exists()) {
+            hasInner = true;
+            break;
+          }
+        }
+        if (hasInner) {
+          print("Repairing cache: Removing dummy .git folder for $commitId");
+          try {
+            await Directory(p.join(targetDir.path, '.git'))
+                .delete(recursive: true);
+          } catch (e) {
+            print("Failed to delete dummy .git: $e");
+          }
+        }
+      }
       // Skip if already cached
       continue;
     }
@@ -219,6 +242,7 @@ Future<void> _precacheSnapshots(String repoName, String repoPath) async {
     bool hasBareRepo = false;
     final subs = targetDir.listSync().whereType<Directory>();
     for (final s in subs) {
+      if (p.basename(s.path) == '.git') continue;
       if (await File(p.join(s.path, 'HEAD')).exists() && 
           await File(p.join(s.path, 'config')).exists() && 
           await Directory(p.join(s.path, 'refs')).exists()) {
@@ -337,27 +361,36 @@ Future<Map<String, dynamic>> getBackupChildGraph(
   // The snapshot directory contains the child repo contents directly
   // It might be a normal repo (with .git) or bare-ish
   String gitDir = snapshotPath;
-  if (await Directory(p.join(snapshotPath, '.git')).exists()) {
-    gitDir = p.join(snapshotPath, '.git');
-  } else {
-    // Check if it looks like a bare repo/embedded git dir
-    if (!await File(p.join(snapshotPath, 'HEAD')).exists()) {
-      // Maybe inside a subdir?
-      final subs = snapshotDir.listSync().whereType<Directory>();
-      for (final s in subs) {
-        if (await Directory(p.join(s.path, '.git')).exists()) {
-          gitDir = p.join(s.path, '.git');
-          break;
-        }
-        // Check for bare repo
-        if (await File(p.join(s.path, 'HEAD')).exists() && 
-            await File(p.join(s.path, 'config')).exists() && 
-            await Directory(p.join(s.path, 'refs')).exists()) {
-          gitDir = s.path;
-          break;
+  
+  // First check for inner bare repo, as it is the most specific content
+  bool foundInner = false;
+  final subs = snapshotDir.listSync().whereType<Directory>();
+  for (final s in subs) {
+      if (p.basename(s.path) == '.git') continue;
+      if (await File(p.join(s.path, 'HEAD')).exists() && 
+          await File(p.join(s.path, 'config')).exists() && 
+          await Directory(p.join(s.path, 'refs')).exists()) {
+        gitDir = s.path;
+        foundInner = true;
+        break;
+      }
+  }
+
+  if (!foundInner) {
+      if (await Directory(p.join(snapshotPath, '.git')).exists()) {
+        gitDir = p.join(snapshotPath, '.git');
+      } else {
+        // Check if it looks like a bare repo/embedded git dir
+        if (!await File(p.join(snapshotPath, 'HEAD')).exists()) {
+          // Maybe inside a subdir?
+          for (final s in subs) {
+            if (await Directory(p.join(s.path, '.git')).exists()) {
+              gitDir = p.join(s.path, '.git');
+              break;
+            }
+          }
         }
       }
-    }
   }
 
   return (await _getGraphFromGitDir(gitDir)).toJson();
@@ -467,27 +500,36 @@ Future<GraphResponse> getBackupGraph(String repoName, String commitId) async {
   // The snapshot directory contains the child repo contents directly
   // It might be a normal repo (with .git) or bare-ish
   String gitDir = snapshotPath;
-  if (await Directory(p.join(snapshotPath, '.git')).exists()) {
-    gitDir = p.join(snapshotPath, '.git');
-  } else {
-    // Check if it looks like a bare repo/embedded git dir
-    if (!await File(p.join(snapshotPath, 'HEAD')).exists()) {
-      // Maybe inside a subdir?
-      final subs = snapshotDir.listSync().whereType<Directory>();
-      for (final s in subs) {
-        if (await Directory(p.join(s.path, '.git')).exists()) {
-          gitDir = p.join(s.path, '.git');
-          break;
-        }
-        // Check for bare repo
-        if (await File(p.join(s.path, 'HEAD')).exists() && 
-            await File(p.join(s.path, 'config')).exists() && 
-            await Directory(p.join(s.path, 'refs')).exists()) {
-          gitDir = s.path;
-          break;
+  
+  // First check for inner bare repo, as it is the most specific content
+  bool foundInner = false;
+  final subs = snapshotDir.listSync().whereType<Directory>();
+  for (final s in subs) {
+      if (p.basename(s.path) == '.git') continue;
+      if (await File(p.join(s.path, 'HEAD')).exists() && 
+          await File(p.join(s.path, 'config')).exists() && 
+          await Directory(p.join(s.path, 'refs')).exists()) {
+        gitDir = s.path;
+        foundInner = true;
+        break;
+      }
+  }
+
+  if (!foundInner) {
+      if (await Directory(p.join(snapshotPath, '.git')).exists()) {
+        gitDir = p.join(snapshotPath, '.git');
+      } else {
+        // Check if it looks like a bare repo/embedded git dir
+        if (!await File(p.join(snapshotPath, 'HEAD')).exists()) {
+          // Maybe inside a subdir?
+          for (final s in subs) {
+            if (await Directory(p.join(s.path, '.git')).exists()) {
+              gitDir = p.join(s.path, '.git');
+              break;
+            }
+          }
         }
       }
-    }
   }
 
   return _getGraphFromGitDir(gitDir);
