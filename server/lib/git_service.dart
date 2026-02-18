@@ -2348,11 +2348,14 @@ Future<Map<String, dynamic>> createTrackingProject(
     await _exportFolderToTrackingPackage(projDir, packagePath);
   }
 
+  // Check if it's a folder project
+  final isFolder = await _isFolderProject(repoPath);
+
   print('[createTrackingProject] 项目创建完成，返回信息');
   return {
     'name': packagePath,
-    'repoPath': projDir,
-    'type': 'file',
+    'repoPath': repoPath,
+    'type': isFolder ? 'folder' : 'file',
   };
 }
 
