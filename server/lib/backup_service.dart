@@ -120,7 +120,7 @@ Future<void> _precacheSnapshots(String repoName, String repoPath) async {
   }
 
   // Get all commit hashes
-  final res = await Process.run('mingw64/bin/git.exe', ['log', '--format=%H'],
+  final res = await Process.run('git', ['log', '--format=%H'],
       workingDirectory: repoPath);
   if (res.exitCode != 0) {
     throw Exception('Failed to get commits for precache: ${res.stderr}');
@@ -144,7 +144,7 @@ Future<void> _precacheSnapshots(String repoName, String repoPath) async {
     print('Caching snapshot for $commitId...');
     
     // Checkout commit in the parent repo
-    final checkoutRes = await Process.run('mingw64/bin/git.exe', ['checkout', '-f', commitId],
+    final checkoutRes = await Process.run('git', ['checkout', '-f', commitId],
         workingDirectory: repoPath);
     if (checkoutRes.exitCode != 0) {
       print('Failed to checkout $commitId: ${checkoutRes.stderr}');
@@ -181,16 +181,16 @@ Future<void> _precacheSnapshots(String repoName, String repoPath) async {
     // If the snapshot itself doesn't contain a .git folder (which it likely doesn't if it's just a file backup),
     // we create a dummy one.
     if (!hasBareRepo && !await Directory(p.join(targetDir.path, '.git')).exists()) {
-        await Process.run('mingw64/bin/git.exe', ['init'], workingDirectory: targetDir.path);
-        await Process.run('mingw64/bin/git.exe', ['config', 'user.email', 'backup@local'], workingDirectory: targetDir.path);
-        await Process.run('mingw64/bin/git.exe', ['config', 'user.name', 'BackupBot'], workingDirectory: targetDir.path);
-        await Process.run('mingw64/bin/git.exe', ['add', '.'], workingDirectory: targetDir.path);
-        await Process.run('mingw64/bin/git.exe', ['commit', '-m', 'Snapshot state'], workingDirectory: targetDir.path);
+        await Process.run('git', ['init'], workingDirectory: targetDir.path);
+        await Process.run('git', ['config', 'user.email', 'backup@local'], workingDirectory: targetDir.path);
+        await Process.run('git', ['config', 'user.name', 'BackupBot'], workingDirectory: targetDir.path);
+        await Process.run('git', ['add', '.'], workingDirectory: targetDir.path);
+        await Process.run('git', ['commit', '-m', 'Snapshot state'], workingDirectory: targetDir.path);
     }
   }
 
   // Restore master
-  await Process.run('mingw64/bin/git.exe', ['checkout', '-f', 'master'],
+  await Process.run('git', ['checkout', '-f', 'master'],
     workingDirectory: repoPath);
 }
 
@@ -201,7 +201,7 @@ Future<List<Map<String, dynamic>>> _getCommitsFromDir(
   // Previously we checked for cached snapshots here, but now we rely on the backup repo's git history directly.
   
   final result = await Process.run(
-    'mingw64/bin/git.exe',
+    'git',
     [
       'log',
       '--pretty=format:%H|%P|%an|%ad|%s',
@@ -349,7 +349,7 @@ Future<GraphResponse> _getGraphFromGitDir(String gitDir, {int? limit}) async {
   }
 
   final res =
-      await Process.run('mingw64/bin/git.exe', logArgs, stdoutEncoding: utf8);
+      await Process.run('git', logArgs, stdoutEncoding: utf8);
   if (res.exitCode != 0) throw Exception('Git log failed: ${res.stderr}');
 
   final lines = LineSplitter.split(res.stdout as String).toList();
@@ -460,7 +460,7 @@ Future<Map<String, List<String>>> _getBranchChainsFromGitDir(
     if (limit != null && limit > 0) {
       args.add('--max-count=$limit');
     }
-    final res = await Process.run('mingw64/bin/git.exe', args);
+    final res = await Process.run('git', args);
     final lines = LineSplitter.split(res.stdout as String).toList();
     final ids = <String>[];
     for (final l in lines) {
@@ -476,7 +476,7 @@ Future<Map<String, List<String>>> _getBranchChainsFromGitDir(
 Future<String?> _getCurrentBranchFromGitDir(String gitDir) async {
   // For bare repo, HEAD might point to a branch
   try {
-    final res = await Process.run('mingw64/bin/git.exe',
+    final res = await Process.run('git',
         ['--git-dir=$gitDir', 'symbolic-ref', '--short', 'HEAD']);
     if (res.exitCode == 0) return (res.stdout as String).trim();
   } catch (_) {}

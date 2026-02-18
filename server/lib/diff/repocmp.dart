@@ -24,7 +24,7 @@ Future<Map<String, dynamic>> compareGitRepos({
   }
 
   // 获取Git绝对路径
-  final gitPath = p.absolute('mingw64/bin/git.exe');
+  final gitPath = p.absolute('git');
 
   // 创建临时目录
   final tempDir = await Directory.systemTemp.createTemp('git_compare_');

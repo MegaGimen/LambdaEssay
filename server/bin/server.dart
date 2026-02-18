@@ -83,7 +83,7 @@ Future<void> main(List<String> args) async {
   }
 
   final setGlobal = await Process.run(
-      'mingw64/bin/git.exe', ['config', '--global', 'core.autocrlf', 'false']);
+      'git', ['config', '--global', 'core.autocrlf', 'false']);
   if (setGlobal.exitCode == 0) {
     print('✓ 已设置全局 core.autocrlf = false');
   } else {
@@ -698,7 +698,7 @@ Future<void> main(List<String> args) async {
       }
 
       // Find parent
-      final parentRes = await Process.run('mingw64/bin/git.exe', 
+      final parentRes = await Process.run('git', 
           ['log', '-1', '--format=%P', commitId], 
           workingDirectory: repoPath);
       
@@ -710,7 +710,7 @@ Future<void> main(List<String> args) async {
       final afterDocx = p.join(tempDir.path, 'after.docx');
       
       // Extract commit docx
-      final afterRes = await Process.run('mingw64/bin/git.exe', 
+      final afterRes = await Process.run('git', 
           ['show', '$commitId:content.docx'], 
           workingDirectory: repoPath, stdoutEncoding: null);
           
@@ -733,7 +733,7 @@ Future<void> main(List<String> args) async {
         result = "Initial commit (no parent)";
       } else {
         final beforeDocx = p.join(tempDir.path, 'before.docx');
-        final beforeRes = await Process.run('mingw64/bin/git.exe', 
+        final beforeRes = await Process.run('git', 
             ['show', '$parentId:content.docx'], 
             workingDirectory: repoPath, stdoutEncoding: null);
             
@@ -1747,7 +1747,7 @@ Future<void> main(List<String> args) async {
       }
 
       // Find parent
-      final parentRes = await Process.run('mingw64/bin/git.exe', 
+      final parentRes = await Process.run('git', 
           ['log', '-1', '--format=%P', commitId], 
           workingDirectory: repoPath);
       
@@ -1759,7 +1759,7 @@ Future<void> main(List<String> args) async {
       final afterDocx = p.join(tempDir.path, 'after.docx');
       
       // Extract commit docx
-      final afterRes = await Process.run('mingw64/bin/git.exe', 
+      final afterRes = await Process.run('git', 
           ['show', '$commitId:content.docx'], 
           workingDirectory: repoPath, stdoutEncoding: null);
           
@@ -1780,7 +1780,7 @@ Future<void> main(List<String> args) async {
         result = "Initial commit (no parent)";
       } else {
         final beforeDocx = p.join(tempDir.path, 'before.docx');
-        final beforeRes = await Process.run('mingw64/bin/git.exe', 
+        final beforeRes = await Process.run('git', 
             ['show', '$parentId:content.docx'], 
             workingDirectory: repoPath, stdoutEncoding: null);
             

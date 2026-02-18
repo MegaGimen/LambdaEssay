@@ -87,7 +87,7 @@ Copyright (C) 2025 Free Software Foundation, Inc.
 
 对于复杂逻辑，可生成测试脚本；简单逻辑不需要
 
-Git位置：mingw64/bin/git.exe
+Git位置：git
 
 如果中断了dart analyze/flutter analyze操作，不需要重新执行
 
