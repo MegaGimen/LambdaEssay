@@ -42,7 +42,7 @@ String _baseDir() {
   return p.join(Directory.systemTemp.path, 'gitdocx_history_cache');
 }
 
-final String _backupBaseUrl = 'http://47.242.109.145:4829';
+final String _backupBaseUrl = 'https://llinker.com/gitbackup/';
 final String _tempDirName = p.join(_baseDir(), 'temp_backups');
 
 // New checkout base directory
