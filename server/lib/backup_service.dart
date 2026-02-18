@@ -54,7 +54,7 @@ String _getBackupDir(String repoName) {
   return p.join(p.dirname(scriptDir), _tempDirName, repoName);
 }
 
-Future<List<Map<String, dynamic>>> listBackupCommits(
+Future<Map<String, dynamic>> listBackupCommits(
     String repoName, String AuthToken) async {
   final dirPath = _getBackupDir(repoName);
   final dir = Directory(dirPath);
@@ -66,42 +66,88 @@ Future<List<Map<String, dynamic>>> listBackupCommits(
   final zipUrl =
       '$_backupBaseUrl/backups/$repoName/download?token=$AuthToken&LocalSha1=$LocalSha1';
   print("Debug,url=$zipUrl");
-  final resp = await http.get(Uri.parse(zipUrl));
-
-  if (resp.statusCode != 200) {
-    print(resp.body);
-    throw Exception('Failed to download backup: ${resp.statusCode}');
-  }
+  
+  bool cacheHit = false;
 
   try {
-    final jsonData = jsonDecode(resp.body);
-    print("Debug,jsonData=$jsonData,everything cool bro!");
-    if (jsonData["message"] == "success") print("File up to date");
-  } catch (_) {
-    print("New file!");
-    //新的文件
-    if (await dir.exists()) await dir.delete(recursive: true);
-    if (await File('$dirPath.zip').exists())
-      await File('$dirPath.zip').delete();
-    print("Deleted");
-    if (!await dir.exists()) {
-      // Download
-      print('Downloading backup for $repoName...');
+    final request = http.Request('GET', Uri.parse(zipUrl));
+    final response = await http.Client().send(request);
 
-      final zipFile = File('$dirPath.zip');
-      await zipFile.parent.create(recursive: true);
-      await zipFile.writeAsBytes(resp.bodyBytes);
+    if (response.statusCode != 200) {
+       final body = await response.stream.bytesToString();
+       print(body);
+       throw Exception('Failed to download backup: ${response.statusCode}');
+    }
 
-      // Unzip using PowerShell
-      print('Unzipping $repoName...');
-      final res = await Process.run('powershell', [
-        '-Command',
-        'Expand-Archive -Path "${zipFile.path}" -DestinationPath "$dirPath" -Force'
-      ]);
+    // Check content type to see if it is JSON (cache hit message) or Zip
+    final ct = response.headers['content-type'] ?? '';
+    if (ct.contains('application/json')) {
+       final body = await response.stream.bytesToString();
+       final jsonData = jsonDecode(body);
+       print("Debug,jsonData=$jsonData,everything cool bro!");
+       if (jsonData["message"] == "success") {
+         print("File up to date");
+         cacheHit = true;
+       }
+    } else {
+       print("New file!");
+       cacheHit = false;
+       // New file
+       if (await dir.exists()) await dir.delete(recursive: true);
+       if (await File('$dirPath.zip').exists())
+         await File('$dirPath.zip').delete();
+       print("Deleted old files");
 
-      if (res.exitCode != 0) {
-        throw Exception('Failed to unzip: ${res.stderr}');
-      }
+       if (!await dir.exists()) {
+         print('Downloading backup for $repoName...');
+         final zipFile = File('$dirPath.zip');
+         await zipFile.parent.create(recursive: true);
+         
+         final contentLength = response.contentLength;
+         int received = 0;
+         final sink = zipFile.openWrite();
+         
+         await response.stream.listen(
+           (List<int> chunk) {
+             received += chunk.length;
+             sink.add(chunk);
+             if (contentLength != null) {
+               final percent = (received / contentLength * 100).toStringAsFixed(1);
+               stdout.write('\rDownloading: $percent% ($received / $contentLength)');
+             } else {
+               stdout.write('\rDownloading: $received bytes');
+             }
+           },
+           onDone: () {
+             print('\nDownload complete.');
+           },
+           onError: (e) {
+             print('\nDownload error: $e');
+             throw e;
+           },
+           cancelOnError: true,
+         ).asFuture();
+         
+         await sink.close();
+
+         // Unzip using PowerShell
+         print('Unzipping $repoName...');
+         final res = await Process.run('powershell', [
+           '-Command',
+           'Expand-Archive -Path "${zipFile.path}" -DestinationPath "$dirPath" -Force'
+         ]);
+
+         if (res.exitCode != 0) {
+           throw Exception('Failed to unzip: ${res.stderr}');
+         }
+       }
+    }
+  } catch (e) {
+    print('Error during backup sync: $e');
+    // If we have a local cache, we might want to proceed? 
+    // But for now let's just rethrow or ensure we can proceed if file exists.
+    if (!await File('$dirPath.zip').exists() && !await dir.exists()) {
+       throw e;
     }
   }
 
@@ -110,7 +156,11 @@ Future<List<Map<String, dynamic>>> listBackupCommits(
   final effectiveRepoPath = await _findEffectiveRepoPath(repoName);
   await _precacheSnapshots(repoName, effectiveRepoPath);
 
-  return _getCommitsFromDir(effectiveRepoPath, repoName);
+  final commits = await _getCommitsFromDir(effectiveRepoPath, repoName);
+  return {
+    'commits': commits,
+    'cacheHit': cacheHit
+  };
 }
 
 Future<void> _precacheSnapshots(String repoName, String repoPath) async {

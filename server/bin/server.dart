@@ -1928,8 +1928,8 @@ Future<void> main(List<String> args) async {
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
-      final commits = await listBackupCommits(repoName,token);
-      return _cors(Response.ok(jsonEncode({'commits': commits}), headers: {
+      final result = await listBackupCommits(repoName,token);
+      return _cors(Response.ok(jsonEncode(result), headers: {
         'Content-Type': 'application/json; charset=utf-8',
       }));
     } catch (e) {

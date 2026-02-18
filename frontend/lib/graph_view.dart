@@ -440,51 +440,6 @@ class GraphPainter extends CustomPainter {
     //   ..style = PaintingStyle.stroke
     //   ..strokeWidth = 1.5;
     */
-
-      double gx, gy;
-      bool drawEdge = false;
-      double hx = 0, hy = 0;
-
-      if (currentHeadId != null) {
-        final headRow = rowOf[currentHeadId];
-        final headLane = laneOf[currentHeadId];
-        if (headRow != null && headLane != null) {
-          final ghostRow = headRow - 1;
-          gx = headLane * laneWidth + laneWidth / 2;
-          gy = ghostRow * rowHeight + rowHeight / 2;
-          hx = headLane * laneWidth + laneWidth / 2;
-          hy = headRow * rowHeight + rowHeight / 2;
-          drawEdge = true;
-        } else {
-           gx = laneWidth / 2;
-           gy = rowHeight / 2;
-        }
-      } else {
-        gx = laneWidth / 2;
-        gy = rowHeight / 2;
-      }
-
-      final opacity = 0.3 + 0.7 * (flashValue ?? 1.0);
-      final ghostColor = const Color.fromARGB(255, 255, 0, 0).withValues(alpha: opacity);
-
-      if (drawEdge) {
-        final edgePaint = Paint()
-          ..color = ghostColor
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2.0;
-        
-        final path = Path();
-        path.moveTo(gx, gy);
-        path.lineTo(hx, hy);
-        _drawDashedPath(canvas, path, edgePaint);
-      }
-
-      final nodePaint = Paint()
-          ..color = ghostColor
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 3.0;
-        
-      canvas.drawCircle(Offset(gx, gy), nodeRadius, nodePaint);
   }
 
   void _drawChain(
