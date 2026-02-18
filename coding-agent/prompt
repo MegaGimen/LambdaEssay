@@ -172,6 +172,30 @@ LambdaEssay项目通过类似Git的方式管理Word文档版本，但避免了Gi
 *   **隐私保护**: 远程服务器只看到哈希命名的仓库，无法直接从文件名推断项目结构。
 *   **空追踪包**: 新建的追踪包默认为空，用户可随后导入内容。
 
+### 备份与恢复系统 (Backup & Recovery System)
+
+备份系统旨在防止误操作（如Force Push）导致的数据丢失，采用“仓库的仓库”架构。
+
+#### 1. 后端架构 (Python - server/LambdaEssay_backup)
+- **核心逻辑**：位于 `backup_manager.py`。
+- **双层仓库结构**：
+  - **子仓库 (Son Repo)**：用户的原始Git仓库的镜像（Bare Repo, `--mirror`）。位于 `backups/{repo_name}_parent/{repo_name}_son`。
+  - **父仓库 (Parent Repo)**：一个普通的Git仓库，包含子仓库的所有文件。位于 `backups/{repo_name}_parent`。
+- **备份流程**：
+  1. 同步子仓库（`git fetch` / `git remote update`）。
+  2. 父仓库执行 `git add *` 和 `git commit`，将子仓库作为一个普通文件夹及其内容（Git对象、Refs等）进行版本控制。
+  3. 每次备份生成一个父仓库的Commit，代表子仓库在某一时刻的完整快照。
+  4. **区块链存证**：将备份的Hash链记录到区块链（或模拟区块链）中，确保不可篡改。
+
+#### 2. 客户端服务 (Dart - server/lib/backup_service.dart)
+- **职责**：负责与备份服务器交互，下载和还原备份。
+- **缓存机制**：
+  - 下载的备份存储在 `gitdocx_history_cache` 目录。
+  - 支持 `If-None-Match` 类似的缓存验证（通过 `LocalSha1`）。
+- **预缓存 (Pre-caching)**：
+  - 下载备份包（Parent Repo）后，会自动解析其中的 Commit 历史。
+  - 将每个历史版本的子仓库快照解压/Checkout到临时目录，以便快速查看和恢复。
+
 ### 注意事项：
 1. 在增加新的功能时，要时刻加上每一步的调试信息，服务器返回500状态码的同时，后端必须定位到报错的位置
 2. 在debug的时候加入调试信息。为了更好地区分，当在修复一个bug时，用“=============”（*50）来隔开debug的区域和其它区域的输出
