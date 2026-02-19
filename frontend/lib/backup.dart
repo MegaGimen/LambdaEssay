@@ -256,11 +256,6 @@ class _BackupPageState extends State<BackupPage> {
             foregroundColor: Colors.white,
             title: Text('历史备份预览: $repo'),
             actions: [
-              TextButton.icon(
-                onPressed: _chainViewUrl != null ? () => _launchUrl(_chainViewUrl!) : null,
-                icon: Icon(Icons.link, color: _chainViewUrl != null ? Colors.white : Colors.white24),
-                label: Text('区块链链接预览', style: TextStyle(color: _chainViewUrl != null ? Colors.white : Colors.white24)),
-              ),
               SizedBox(
                 width: 150,
                 child: Slider(
@@ -311,6 +306,50 @@ class _BackupPageState extends State<BackupPage> {
                         child: ExpansionTile(
                           title: Text('时间: ${c.date}',
                               style: const TextStyle(fontWeight: FontWeight.bold)),
+                          subtitle: Container(
+                            margin: const EdgeInsets.only(top: 8),
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.blue.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(
+                                  color: Colors.blue.withOpacity(0.3)),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.commit,
+                                    size: 20, color: Colors.blue),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: SelectableText(sha,
+                                      style: const TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.bold,
+                                          fontFamily: 'monospace',
+                                          color: Colors.blue)),
+                                ),
+                                if (_chainViewUrl != null) ...[
+                                  const SizedBox(width: 16),
+                                  TextButton.icon(
+                                    onPressed: () => _launchUrl(_chainViewUrl!),
+                                    icon: const Icon(Icons.verified_user,
+                                        size: 16, color: Colors.green),
+                                    label: const Text('点我去区块链验证备份链是否完整真实',
+                                        style: TextStyle(
+                                            color: Colors.green, fontSize: 12)),
+                                    style: TextButton.styleFrom(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 8, vertical: 4),
+                                      minimumSize: Size.zero,
+                                      tapTargetSize:
+                                          MaterialTapTargetSize.shrinkWrap,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
                           children: [
                             Padding(
                               padding: const EdgeInsets.all(12),

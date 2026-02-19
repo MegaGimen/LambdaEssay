@@ -327,6 +327,7 @@ Future<List<Map<String, dynamic>>> _getCommitsFromDir(
       'date': date,
       'subject': subject,
     });
+    print("Found backup commit: $id");
   }
   return commits;
 }
