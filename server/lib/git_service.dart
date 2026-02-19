@@ -2143,6 +2143,11 @@ Future<Map<String, dynamic>> createTrackingProject(
 
   await _writeWorkspaceMeta(projDir, packagePath);
 
+  // Mark as folder project (empty container)
+  if (!File(p.join(projDir, 'folder_meta.json')).existsSync()) {
+      await File(p.join(projDir, 'folder_meta.json')).writeAsString('{"files":{}, "folders":{}}');
+  }
+
   if (packagePath.toLowerCase().endsWith(kTrackingExt)) {
     print('[createTrackingProject] 以 .tracking.zip 结尾，打包...');
     await _exportFolderToTrackingPackage(projDir, packagePath);
@@ -2530,21 +2535,15 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
   final subName = _trackingBaseName(packagePath);
 
   // Check if we are in a workspace root (which we should be for .tracking.zip)
-  final isWorkspaceRoot = File(p.join(projDir, kWorkspaceMetaFile)).existsSync();
+  // final isWorkspaceRoot = File(p.join(projDir, kWorkspaceMetaFile)).existsSync();
 
   if (subName.isNotEmpty && subName != '.') {
     final subDir = p.join(projDir, subName);
     if (Directory(p.join(subDir, '.git')).existsSync() ||
         File(p.join(subDir, 'tracking.json')).existsSync()) {
-      repoPath = subDir;
-    } else if (isWorkspaceRoot) {
-      // If we are in a workspace root, we MUST use the subfolder for the repo,
-      // even if it doesn't exist yet (we are about to create/init it).
-      // This prevents accidental initialization in the workspace root.
-      repoPath = subDir;
-      if (!Directory(repoPath).existsSync()) {
-        Directory(repoPath).createSync(recursive: true);
-      }
+      // It exists as a sub-repo, but we are opening the PROJECT (package),
+      // so we should stick to the root projDir as the entry point.
+      // repoPath = subDir; // DISABLED: Always open root
     }
   }
 
@@ -2574,6 +2573,7 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
       final initial = {
         'name': packagePath,
         'packagePath': packagePath,
+        // No docxPath for root project as it is a container
       };
       // _writeTracking writes to root by default if file missing,
       // but here we might want to write to repoPath if it's different.
@@ -2596,6 +2596,11 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
       FileSystemEntity.isDirectorySync(tracking['docxPath'])) {
     shouldInitStructure = true;
   }
+  
+  // Force structure init if it's a root project (no docxPath)
+  if (tracking['docxPath'] == null) {
+      shouldInitStructure = true;
+  }
 
   if (shouldInitStructure) {
     final pkgPath = (tracking['packagePath'] as String?) ?? packagePath;
@@ -2609,15 +2614,23 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
 
   // Re-check folder status after potential structure init
   final isFolder = await _isFolderProject(repoPath);
+  
+  // Root project is ALWAYS a folder project
+  final isRoot = await _isWorkspaceRoot(repoPath) || repoPath == projDir;
 
   return {
     'name': packagePath,
     'repoPath': repoPath,
     'docxPath': tracking['docxPath'],
-    'type': isFolder ? 'folder' : 'file',
+    'type': (isFolder || isRoot) ? 'folder' : 'file',
     'packagePath': packagePath,
   };
 }
+
+Future<bool> _isWorkspaceRoot(String path) async {
+    return File(p.join(path, kWorkspaceMetaFile)).existsSync();
+}
+
 
 Future<Map<String, dynamic>?> getTrackingInfo(String repoPath) async {
   final normalized = p.normalize(repoPath);
@@ -2654,46 +2667,16 @@ Future<Map<String, dynamic>> updateTrackingProject(
     } else {
       projDir = await _ensureWorkspace(normalizedName);
     }
-    // Resolve repoPath if in subfolder
-    final subName = _trackingBaseName(normalizedName);
-    if (subName.isNotEmpty && subName != '.') {
-      final subDir = p.join(projDir, subName);
-      if (Directory(p.join(subDir, '.git')).existsSync() ||
-          File(p.join(subDir, 'tracking.json')).existsSync()) {
-        projDir = subDir;
-      }
-    }
+    // We do NOT auto-resolve to subfolder if it is the root project.
+    // The root project is the container.
   }
   if (repoPath != null) {
     final gitDir = Directory(p.join(projDir, '.git'));
     if (!gitDir.existsSync()) {
       print('[updateTrackingProject] No .git at $projDir, trying to resolve');
-      final baseName = p.basenameWithoutExtension(projDir);
-      if (baseName.isNotEmpty && baseName != '.') {
-        final subDir = p.join(projDir, baseName);
-        if (Directory(p.join(subDir, '.git')).existsSync() ||
-            File(p.join(subDir, 'tracking.json')).existsSync()) {
-          print('[updateTrackingProject] Resolved repoPath to $subDir');
-          projDir = subDir;
-        }
-      }
-      if (!Directory(p.join(projDir, '.git')).existsSync()) {
-        try {
-          final entries = Directory(projDir)
-              .listSync(recursive: false)
-              .whereType<Directory>();
-          for (final entry in entries) {
-            if (Directory(p.join(entry.path, '.git')).existsSync()) {
-              print(
-                  '[updateTrackingProject] Resolved repoPath by scan: ${entry.path}');
-              projDir = entry.path;
-              break;
-            }
-          }
-        } catch (e) {
-          print('[updateTrackingProject] Failed to scan for git repo: $e');
-        }
-      }
+      // If we are updating the root project, and .git is missing, it might be an empty container.
+      // We should NOT try to resolve to a sub-repo unless explicitly asked.
+      // But updateTrackingProject logic for root is just metadata sync.
     }
   }
   return _withRepoLock(projDir, () async {
@@ -2725,6 +2708,29 @@ Future<Map<String, dynamic>> updateTrackingProject(
         tracking['docxPath'] = sourcePath;
       }
 
+      // Check if root project (no docxPath usually)
+      final isRoot = await _isWorkspaceRoot(projDir) || (sourcePath == null && repoPath == null);
+      
+      // If root project, we force it to be a folder project and skip docx checks
+      if (isRoot) {
+          print('[updateTrackingProject] Root project detected. Treating as folder.');
+          
+          await _notifyParentFolderProject(projDir);
+          await syncFolderProject(name);
+
+          try {
+             await _persistTrackingPackageForRepo(projDir);
+          } catch (e) {
+             print('Persist tracking package failed: $e');
+          }
+
+          return {
+            'repoPath': projDir,
+            'workingChanged': false,
+            'head': null,
+          };
+      }
+
       // Verify source exists
       bool sourceExists = false;
       if (sourcePath != null && sourcePath.isNotEmpty) {
@@ -2739,7 +2745,13 @@ Future<Map<String, dynamic>> updateTrackingProject(
       sectionSw.reset();
 
       if (!sourceExists) {
-        return {'needDocx': true, 'repoPath': projDir};
+        // Allow empty source for folder projects / workspace roots
+        final isFolder = await _isFolderProject(projDir);
+        // We already checked isRoot above, but double check
+        
+        if (!isFolder && !isRoot) {
+           return {'needDocx': true, 'repoPath': projDir};
+        }
       }
 
       // Ensure repo is initialized if it doesn't exist (e.g. empty project populated for the first time)
