@@ -684,10 +684,16 @@ Future<GraphResponse> _getGraphUnlocked(String repoPath,
 }
 
 Future<bool> _isFolderProject(String repoPath) async {
-  // If it has .gitmodules, it's definitely a folder project
+  // Check if it is a folder project (has .gitmodules)
+  // We prefer .gitmodules over legacy folder_meta.json
   if (File(p.join(repoPath, '.gitmodules')).existsSync()) {
     return true;
   }
+  
+  // Legacy check (deprecated, but keep for now until fully migrated)
+  // if (File(p.join(repoPath, 'folder_meta.json')).existsSync()) {
+  //   return true;
+  // }
   // If it has content.docx or doc_content, it is a leaf (document) project
   if (File(p.join(repoPath, kRepoDocxName)).existsSync()) return false;
   if (Directory(p.join(repoPath, kContentDirName)).existsSync()) return false;
@@ -1380,6 +1386,12 @@ Future<void> saveTrackingProject(String currentPackagePath, [String? newPackageP
   if (!Directory(workspaceDir).existsSync()) {
      print('[saveTrackingProject] Workspace not found at $workspaceDir');
      throw Exception('Workspace not found for package: $currentPackagePath');
+  }
+
+  // Ensure folder_meta.json is gone
+  final folderMeta = File(p.join(workspaceDir, 'folder_meta.json'));
+  if (folderMeta.existsSync()) {
+      folderMeta.deleteSync();
   }
 
   String targetPath = normalizedCurrent;
@@ -2144,9 +2156,9 @@ Future<Map<String, dynamic>> createTrackingProject(
   await _writeWorkspaceMeta(projDir, packagePath);
 
   // Mark as folder project (empty container)
-  if (!File(p.join(projDir, 'folder_meta.json')).existsSync()) {
-      await File(p.join(projDir, 'folder_meta.json')).writeAsString('{"files":{}, "folders":{}}');
-  }
+  // if (!File(p.join(projDir, 'folder_meta.json')).existsSync()) {
+  //     await File(p.join(projDir, 'folder_meta.json')).writeAsString('{"files":{}, "folders":{}}');
+  // }
 
   if (packagePath.toLowerCase().endsWith(kTrackingExt)) {
     print('[createTrackingProject] 以 .tracking.zip 结尾，打包...');
@@ -2297,54 +2309,7 @@ Future<List<Map<String, dynamic>>> listProjectRepos(String name) async {
     }
   }
 
-  // 2. Legacy: folder_meta.json
-  final metaFile = File(p.join(projDir, 'folder_meta.json'));
-  if (metaFile.existsSync()) {
-    try {
-      final meta = jsonDecode(await metaFile.readAsString());
-      final items = meta['items'] as Map<String, dynamic>?;
-      if (items != null) {
-        for (final relPath in items.keys) {
-          final info = items[relPath];
-          final repoPath = p.join(projDir, relPath);
-
-          String? subDocxPath;
-          // Try to read local tracking.json if exists
-          final repoTrackingPath = p.join(repoPath, 'tracking.json');
-          if (File(repoTrackingPath).existsSync()) {
-            final repoTracking = await _readTrackingJson(repoTrackingPath);
-            final repoDocxBase = repoTracking['docxPath'] as String?;
-            if (repoDocxBase != null && repoDocxBase.isNotEmpty) {
-              final internalPath = repoTracking['internalPath'] as String?;
-              subDocxPath = (internalPath != null && internalPath.isNotEmpty)
-                  ? p.join(repoDocxBase, internalPath)
-                  : repoDocxBase;
-            }
-          }
-          // Infer from root
-          if (subDocxPath == null && rootDocxPath != null) {
-            // Remove .tracking.zip extension from relPath if present to map to .docx
-            // Actually relPath usually ends with .tracking.zip
-            final mapped = p.setExtension(relPath, '.docx');
-            subDocxPath = p.join(rootDocxPath, mapped);
-          }
-
-          results.add({
-            'relPath': relPath,
-            'repoPath': repoPath,
-            'docxPath': subDocxPath,
-            'name': info['name'],
-            'remoteUrl': info['remoteUrl'],
-          });
-        }
-        return results;
-      }
-    } catch (e) {
-      print('Error reading folder_meta.json in listProjectRepos: $e');
-    }
-  }
-
-  // 2. Fallback: Scan directory
+  // 2. Fallback: Scan directory (Preferred method now)
   final dir = Directory(projDir);
   if (dir.existsSync()) {
     // Scan for .git directories
@@ -2352,10 +2317,14 @@ Future<List<Map<String, dynamic>>> listProjectRepos(String name) async {
     for (final entity in entities) {
       if (entity is Directory && p.basename(entity.path) == '.git') {
         final repoPath = entity.parent.path;
+        // Skip the root project repo itself
+        if (p.equals(p.normalize(repoPath), p.normalize(projDir))) continue;
+        
         final relPath = p.relative(repoPath, from: projDir);
 
         String? subDocxPath;
         final repoTrackingPath = p.join(repoPath, 'tracking.json');
+
         if (File(repoTrackingPath).existsSync()) {
           final repoTracking = await _readTrackingJson(repoTrackingPath);
           final repoDocxBase = repoTracking['docxPath'] as String?;
@@ -2480,9 +2449,8 @@ Future<void> syncFolderProject(String name) async {
       }
     }
 
-    // 3. Update folder_meta.json
-    await _scanAndUpdateFolderMeta(targetBaseDir, sourceRoot,
-        trackingExt: kTrackingExt);
+    // 3. Update folder_meta.json (Deprecated)
+  // await _scanAndUpdateFolderMeta(targetBaseDir, sourceRoot, trackingExt: kTrackingExt);
 
     // 4. Scan target folder for repos (directories with .git)
     // We need to be careful not to delete the root projDir itself if it happens to be a repo (unlikely in folder mode)
@@ -2569,32 +2537,29 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
   }
 
   if (tracking.isEmpty) {
-    // Check if it is a folder project (has folder_meta.json)
-    // If so, do NOT create tracking.json
-    if (!File(p.join(repoPath, 'folder_meta.json')).existsSync()) {
-      final initial = {
+    // Check if it is a folder project (has .gitmodules or no tracking.json)
+    // If so, do NOT create tracking.json in root if it's meant to be a container
+    // But wait, if it's a container, we just need a name.
+    
+    final initial = {
         'name': packagePath,
         'packagePath': packagePath,
         // No docxPath for root project as it is a container
-      };
-      // _writeTracking writes to root by default if file missing,
-      // but here we might want to write to repoPath if it's different.
-      // However, _writeTracking is not easily overridable without changing signature.
-      // We can manually write if repoPath != projDir
-      if (repoPath != projDir) {
-        await File(p.join(repoPath, 'tracking.json'))
-            .writeAsString(jsonEncode(initial));
-      } else {
+    };
+      
+    if (repoPath != projDir) {
+        await File(p.join(repoPath, 'tracking.json')).writeAsString(jsonEncode(initial));
+    } else {
         await _writeTracking(packagePath, initial);
-      }
     }
   }
 
   // Check and auto-init structure for folder projects if needed
   bool shouldInitStructure = false;
-  if (File(p.join(repoPath, 'folder_meta.json')).existsSync()) {
-    shouldInitStructure = true;
-  } else if (tracking['docxPath'] != null &&
+  // if (File(p.join(repoPath, 'folder_meta.json')).existsSync()) {
+  //   shouldInitStructure = true;
+  // } else 
+  if (tracking['docxPath'] != null &&
       FileSystemEntity.isDirectorySync(tracking['docxPath'])) {
     shouldInitStructure = true;
   }
@@ -3578,67 +3543,39 @@ Future<Map<String, dynamic>> pullFromRemote(
     }
 
     if (!isFresh) {
-      // Check if it is a folder project (has folder_meta.json)
-      final isFolderProject =
-          File(p.join(projDir, 'folder_meta.json')).existsSync();
-
-      print('Debug: pullFromRemote - repoPath: $projDir, isFresh: $isFresh, isFolderProject: $isFolderProject');
-
-      if (isFolderProject) {
-        // Folder Project Additive Pull Logic
+      // Check if it is a folder project (has .gitmodules)
+  final isFolderProject = File(p.join(projDir, '.gitmodules')).existsSync();
+  print('Debug: pullFromRemote - repoPath: $projDir, isFresh: $isFresh, isFolderProject: $isFolderProject');
+  
+  if (isFolderProject || !File(p.join(projDir, 'tracking.json')).existsSync()) {
+      // If it has .gitmodules OR if it has no tracking.json (likely an empty container just initialized),
+      // we treat it as a folder project.
+      
+     // Folder Project Pull Logic: Pull Container + Update Submodules
         try {
           await _ensureUniqueRemote(projDir, remoteName, remoteUrl);
           await _runGit(['fetch', remoteName], projDir);
 
-          // Read remote folder_meta.json
-          String? remoteMetaContent;
-          try {
-            final out = await _runGit(
-                ['show', '$remoteName/master:folder_meta.json'], projDir);
-            if (out.isNotEmpty) remoteMetaContent = out.join('\n');
-          } catch (e) {
-            print('Failed to show master:folder_meta.json: $e');
-            // Try HEAD if master fails
-            try {
-              final out = await _runGit(
-                  ['show', 'FETCH_HEAD:folder_meta.json'], projDir);
-              if (out.isNotEmpty) remoteMetaContent = out.join('\n');
-            } catch (e2) {
-              print('Failed to show FETCH_HEAD:folder_meta.json: $e2');
-            }
+          // For folder projects (containers), we generally just want to sync the structure (gitmodules)
+          // We can try to fast-forward merge or reset hard to remote master if we treat it as a pure container.
+          
+          final current = await getCurrentBranch(projDir);
+          if (current != null) {
+              // Try merge first? Or reset hard? 
+              // Since user says "folder_meta is deprecated", we assume we trust git structure.
+              // Let's do a pull (fetch + merge)
+              await _runGit(['pull', remoteName, current], projDir);
+          } else {
+              // Detached head?
+              await _runGit(['fetch', remoteName, 'master'], projDir);
+              await _runGit(['reset', '--hard', '$remoteName/master'], projDir);
           }
+          
+          // Update submodules
+          await _runGit(['submodule', 'update', '--init', '--recursive'], projDir);
 
-          if (remoteMetaContent != null) {
-            final remoteMeta = jsonDecode(remoteMetaContent);
-            final localMetaFile = File(p.join(projDir, 'folder_meta.json'));
-            Map<String, dynamic> localMeta = {};
-            if (localMetaFile.existsSync()) {
-              localMeta = jsonDecode(await localMetaFile.readAsString());
-            }
-
-            final remoteItems =
-                remoteMeta['items'] as Map<String, dynamic>? ?? {};
-            if (localMeta['items'] == null) localMeta['items'] = {};
-            final localItems = localMeta['items'] as Map<String, dynamic>;
-
-            bool changed = false;
-            for (final key in remoteItems.keys) {
-              if (!localItems.containsKey(key)) {
-                localItems[key] = remoteItems[key];
-                changed = true;
-                print('Added new item from remote: $key');
-              }
-            }
-
-            if (changed) {
-              await localMetaFile.writeAsString(jsonEncode(localMeta));
-              // We do NOT reset hard. We just updated the metadata.
-              // The actual content expansion happens later in _expandFolderProject which is called at the end of this function.
-            }
-          }
         } catch (e) {
-          print('Folder project additive pull failed: $e');
-          // Fallback or rethrow?
+          print('Folder project pull failed: $e');
           throw Exception('Folder project pull failed: $e');
         }
       } else {
@@ -3736,11 +3673,11 @@ Future<Map<String, dynamic>> pullFromRemote(
             'Updated global metadata with externalPath: $localTrackingZipPath');
 
         // Ensure folder_meta.json exists for the root of the workspace if it's a new package
-        final folderMeta = File(p.join(projDir, 'folder_meta.json'));
-        if (!folderMeta.existsSync()) {
-          print('Creating default folder_meta.json at ${folderMeta.path}');
-          await folderMeta.writeAsString(jsonEncode({'files': {}, 'folders': {}}));
-        }
+        // final folderMeta = File(p.join(projDir, 'folder_meta.json'));
+        // if (!folderMeta.existsSync()) {
+        //   print('Creating default folder_meta.json at ${folderMeta.path}');
+        //   await folderMeta.writeAsString(jsonEncode({'files': {}, 'folders': {}}));
+        // }
 
         // Pack the tracking package immediately after cloning and setup
         print('Packing initial structure to $localTrackingZipPath');
@@ -3788,11 +3725,11 @@ Future<Map<String, dynamic>> pullFromRemote(
       print('Sync branches failed: $e');
     }
 
-    // Check if it is a folder project (has folder_meta.json)
-    final hasFolderMeta = File(p.join(projDir, 'folder_meta.json')).existsSync();
-    print('Debug: pullFromRemote - Final check - hasFolderMeta: $hasFolderMeta');
+    // Check if it is a folder project (has .gitmodules)
+    final hasGitModules = File(p.join(projDir, '.gitmodules')).existsSync();
+    print('Debug: pullFromRemote - Final check - hasGitModules: $hasGitModules');
 
-    if (hasFolderMeta) {
+    if (hasGitModules) {
       // Folder projects should not have tracking.json or content.docx in the root
       print('Debug: Folder project detected. Expanding structure...');
       await _expandFolderProject(projDir, structureOnly: isFresh);
@@ -3803,23 +3740,8 @@ Future<Map<String, dynamic>> pullFromRemote(
        await _syncToExternal(projDir);
     }
 
-    /*
-    if (File(p.join(projDir, 'folder_meta.json')).existsSync()) {
-      final trackingJsonPath = p.join(projDir, 'tracking.json');
-      final tracking = await _readTrackingJson(trackingJsonPath);
-      if (tracking['docxPath'] != projDir) {
-        tracking['docxPath'] = projDir;
-        await File(trackingJsonPath).writeAsString(jsonEncode(tracking));
-      }
-      await _expandFolderProject(projDir, structureOnly: isFresh);
-    }
-
-    // Sync external docx with pulled content
-    await _syncToExternal(projDir);
-    */
-
     // Notify parent folder project if applicable (only for folder projects)
-    if (hasFolderMeta) {
+    if (hasGitModules) {
       await _notifyParentFolderProject(projDir);
     }
 
