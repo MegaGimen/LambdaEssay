@@ -2195,13 +2195,27 @@ Future<Map<String, dynamic>> importTrackingSource(
   final source = _sanitizeFsPath(sourcePath);
   
   if (FileSystemEntity.isFileSync(source)) {
+     // Single file import
+     // We import it INTO the targetDir.
+     // If targetDir is root (empty), it goes to root.
+     // But wait, user expects "Import File" -> adds file to current view.
+     // So relTargetDir is correct.
      await _addDocxSubmodule(workspace, relTargetDir, source);
   } else if (FileSystemEntity.isDirectorySync(source)) {
+     // Directory import
+     // We want to preserve the directory name itself as a container.
+     // e.g. Importing "FolderA" into root -> "FolderA/..."
+     
+     final importBaseName = p.basename(source);
+     final importBaseDir = p.join(relTargetDir, importBaseName); 
+
      final files = Directory(source).listSync(recursive: true).whereType<File>().where((f) => p.extension(f.path).toLowerCase() == '.docx');
+     
      for (final f in files) {
         final relFile = p.relative(f.path, from: source);
-        final fileTargetDir = p.join(relTargetDir, p.dirname(relFile));
-        await _addDocxSubmodule(workspace, fileTargetDir, f.path);
+        final fileTargetDir = p.join(importBaseDir, p.dirname(relFile));
+        final normalizedTarget = p.normalize(fileTargetDir);
+        await _addDocxSubmodule(workspace, normalizedTarget, f.path);
      }
   }
   return {};
