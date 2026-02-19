@@ -684,13 +684,109 @@ Future<GraphResponse> _getGraphUnlocked(String repoPath,
 }
 
 Future<bool> _isFolderProject(String repoPath) async {
+  // If it has .gitmodules, it's definitely a folder project
   if (File(p.join(repoPath, '.gitmodules')).existsSync()) {
     return true;
   }
+  // If it has content.docx or doc_content, it is a leaf (document) project
+  if (File(p.join(repoPath, kRepoDocxName)).existsSync()) return false;
+  if (Directory(p.join(repoPath, kContentDirName)).existsSync()) return false;
+
+  // If it has neither, assume it's a folder project (e.g. empty root)
+  // unless it ends with .tracking.zip which we treat as container
   if (p.basename(repoPath).toLowerCase().endsWith(kTrackingExt)) {
       return true;
   }
-  return false;
+  
+  // Fallback: Check if it's inside another git repo? 
+  // But for now, lack of content implies folder.
+  return true;
+}
+
+Future<void> pushRepo(String repoPath) async {
+  return _withRepoLock(repoPath, () async {
+    print('[Push] Pushing $repoPath');
+    await _runGit(['push'], repoPath);
+    
+    // Auto-push parent if this is a sub-repo
+    if (!await _isFolderProject(repoPath)) {
+        final rootPath = await _findWorkspaceRoot(repoPath);
+        if (rootPath != null && p.normalize(rootPath) != p.normalize(repoPath)) {
+             print('[AutoPush] Pushing parent: $rootPath');
+             try {
+                 await _runGit(['push'], rootPath);
+             } catch (e) {
+                 print('[AutoPush] Parent push failed: $e');
+             }
+        }
+    }
+  });
+}
+
+Future<void> pullRepo(String repoPath) async {
+    return _withRepoLock(repoPath, () async {
+        print('[Pull] Pulling $repoPath');
+        await _runGit(['pull'], repoPath);
+        
+        if (await _isFolderProject(repoPath)) {
+            print('[Pull] Updating submodules for $repoPath');
+            await _runGit(['submodule', 'update', '--init', '--recursive'], repoPath);
+        }
+    });
+}
+
+Future<List<String>> listRemoteRepos(String token) async {
+    final url = 'http://47.242.109.145:3000/api/v1/user/repos';
+    final headers = {
+        'Authorization': 'token $token',
+        'Content-Type': 'application/json',
+    };
+    
+    try {
+        final resp = await http.get(Uri.parse(url), headers: headers);
+        if (resp.statusCode == 200) {
+            final List<dynamic> data = jsonDecode(resp.body);
+            final List<String> repos = [];
+            // MD5 hash is 32 hex characters
+            final hashRegex = RegExp(r'^[a-f0-9]{32}$', caseSensitive: false);
+            
+            for (final repo in data) {
+                final name = repo['name'] as String;
+                // Filter out hash-named repos (sub-repos)
+                if (!hashRegex.hasMatch(name)) {
+                    repos.add(repo['clone_url'] as String);
+                }
+            }
+            return repos;
+        } else {
+            print('Failed to list repos: ${resp.statusCode} ${resp.body}');
+        }
+    } catch (e) {
+        print('Error listing remote repos: $e');
+    }
+    return [];
+}
+
+Future<String> cloneAndPackageProject(String remoteUrl, String savePath) async {
+    final tmpDir = await Directory.systemTemp.createTemp('clone_pkg_');
+    try {
+        print('[Clone] Cloning $remoteUrl to ${tmpDir.path}');
+        final res = await Process.run('git', ['clone', '--recursive', remoteUrl, tmpDir.path]);
+        if (res.exitCode != 0) {
+            throw Exception('Clone failed: ${res.stderr}');
+        }
+        
+        // Pack to .tracking.zip
+        print('[Clone] Packing to $savePath');
+        await _packTrackingDirectory(tmpDir.path, savePath);
+        return savePath;
+    } finally {
+        try {
+            tmpDir.deleteSync(recursive: true);
+        } catch (e) {
+            print('Error cleaning up tmp clone dir: $e');
+        }
+    }
 }
 
 Future<void> _updateFolderMeta(String parentRepoPath, String childRelPath,
@@ -712,119 +808,12 @@ String _stripCredentials(String url) {
 }
 
 Future<void> _notifyParentFolderProject(String repoPath) async {
-  try {
-    final baseDir = _baseDir();
-    final workspaceBase = _workspaceBaseDir();
-
-    // Safety: repo must be inside baseDir or workspaceBase
-    // Note: isWithin returns true only if strictly inside
-    if (!p.isWithin(baseDir, repoPath) && !p.isWithin(workspaceBase, repoPath)) {
-      print(
-          "Repo $repoPath is not within baseDir or workspaceBase, skipping notify parent.");
-      return;
-    }
-
-    // final workspaceRoot = await _findWorkspaceRoot(repoPath);
-
-    Directory current = Directory(p.dirname(repoPath));
-
-    while (true) {
-      final path = current.path;
-      // print('[Debug] Checking path: $path');
-
-      // Stop if we reach baseDir or go above it
-      if (p.equals(path, baseDir) || p.equals(path, workspaceBase)) {
-        print('[Debug] Reached base/workspace root, stopping.');
-        break;
-      }
-
-      // Check for folder_meta.json to identify folder project
-      if (File(p.join(path, 'folder_meta.json')).existsSync()) {
-        final relPath = p.relative(repoPath, from: path);
-        final childName = p.basename(repoPath);
-        String remoteUrl = '';
-        try {
-          // Try to find ANY remote
-          print("repoPath: $repoPath");
-          final remotes = await _runGit(['remote'], repoPath);
-          print("remotes: $remotes");
-          if (remotes.isNotEmpty) {
-            // Default to the first remote as requested
-            final targetRemote = remotes.first.trim();
-
-            final urls =
-                await _runGit(['remote', 'get-url', targetRemote], repoPath);
-            if (urls.isNotEmpty) {
-              remoteUrl = _stripCredentials(urls.first.trim());
-            }
-          }
-        } catch (e, s) {
-          print('Error getting remote info in _notifyParentFolderProject: $e\n$s');
-        }
-
-        await _updateFolderMeta(path, relPath, childName, remoteUrl);
-
-        // Recursive: Now treat 'path' (parent) as the child and notify its parent
-        await _notifyParentFolderProject(path);
-        break; // Found the parent folder project and notified, stop this branch.
-      }
-
-      final parent = current.parent;
-      if (parent.path == current.path) break; // System root
-      current = parent;
-    }
-  } catch (e) {
-    print('Failed to notify parent folder project: $e');
-  }
+  // Deprecated: No-op
 }
 
 Future<void> _expandFolderProject(String repoPath,
     {bool structureOnly = false}) async {
-  final metaFile = File(p.join(repoPath, 'folder_meta.json'));
-  if (!metaFile.existsSync()) return;
-
-  try {
-    final meta = jsonDecode(await metaFile.readAsString());
-    final items = meta['items'] as Map<String, dynamic>?;
-    if (items == null) return;
-
-    for (final relPath in items.keys) {
-      final info = items[relPath];
-      final childPath = p.join(repoPath, relPath);
-      final childDir = Directory(childPath);
-
-      if (!childDir.existsSync()) {
-        childDir.createSync(recursive: true);
-      }
-
-      final gitDir = Directory(p.join(childPath, '.git'));
-      if (!gitDir.existsSync()) {
-        // Init empty repo
-        await Process.run('git', ['init'], workingDirectory: childPath);
-
-        // Set remote
-        final remoteUrl = info['remoteUrl'] as String?;
-        if (remoteUrl != null && remoteUrl.isNotEmpty) {
-          await Process.run('git', ['remote', 'add', 'origin', remoteUrl],
-              workingDirectory: childPath);
-        }
-
-        // Create tracking.json for child?
-        // Maybe not needed until user opens it.
-      } else if (!structureOnly) {
-        // If git dir exists and NOT structureOnly, we might want to ensure remote or pull?
-        // But logic below doesn't pull.
-        // And pullFromRemote for root calls this.
-        // If we want to support "Pull New Project" which means CLONE root + expand structure (init + remote),
-        // then checking !gitDir.existsSync() is enough because it will create them.
-        // The user says: "Do not pull".
-        // The current code (and this update) DOES NOT pull content for sub-repos here.
-        // So "structureOnly" is implicit for new repos.
-      }
-    }
-  } catch (e) {
-    print('Failed to expand folder project: $e');
-  }
+    // Deprecated: No-op
 }
 
 Future<bool> _repoHasCommit(String repoPath, String commitId) async {
@@ -838,6 +827,43 @@ Future<bool> _repoHasCommit(String repoPath, String commitId) async {
   }
 }
 
+Future<void> _updateParentSubmodule(String subRepoPath, String author, String message) async {
+    final rootPath = await _findWorkspaceRoot(subRepoPath);
+    // If no parent found, or the parent IS the subRepo (should not happen if logic is correct), return
+    if (rootPath == null || p.normalize(rootPath) == p.normalize(subRepoPath)) return;
+    
+    // Check if rootPath is actually a git repo (it should be)
+    if (!Directory(p.join(rootPath, '.git')).existsSync()) return;
+
+    final relPath = p.relative(subRepoPath, from: rootPath).replaceAll(r'\', '/');
+    
+    print('[AutoUpdateParent] Updating submodule pointer for $relPath in $rootPath');
+
+    try {
+        // git add <submodule_path> in root
+        await _runGit(['add', relPath], rootPath);
+        
+        // Check if there are changes to commit
+        final status = await _runGit(['status', '--porcelain'], rootPath);
+        if (status.isEmpty) {
+            print('[AutoUpdateParent] No changes in parent repo.');
+            return;
+        }
+
+        // git commit in root
+        final parentMsg = 'Update submodule $relPath: $message';
+        final safeAuthor = author.trim().isEmpty ? 'Unknown' : author.trim();
+        final authorArg = '$safeAuthor <$safeAuthor@gitdocx.local>';
+        
+        await _runGit(['commit', '--author=$authorArg', '-m', parentMsg], rootPath);
+        print('[AutoUpdateParent] Parent repo updated.');
+    } catch (e) {
+        print('[AutoUpdateParent] Failed to update parent repo: $e');
+        // We do not throw here to avoid failing the child commit if parent update fails
+        // But maybe we should warn?
+    }
+}
+
 Future<void> commitChanges(
     String repoPath, String author, String message) async {
   return _withRepoLock(repoPath, () async {
@@ -845,39 +871,38 @@ Future<void> commitChanges(
 
     final isFolder = await _isFolderProject(repoPath);
 
-    if (!isFolder) {
-      final info = await _resolveTrackingInfo(repoPath);
-      final targetPath = info['docxPath'] as String?;
-
-      if (targetPath == null) {
-        throw Exception(
-            'Missing "docxPath" in tracking.json (or tracking.json not found). Please re-configure the project.');
-      }
-
-      if (!FileSystemEntity.isDirectorySync(targetPath) &&
-          !FileSystemEntity.isFileSync(targetPath)) {
-        throw Exception(
-            'File not found: $targetPath. Has the file in the folder been deleted?');
-      }
-
-      await _updateContentDocx(repoPath, targetPath);
-      // 1. Unzip content.docx -> doc_content
-      await _flushDocxToContent(repoPath);
-
-      // Add doc_content directory
-      await _runGit(['add', kContentDirName], repoPath);
-    } else {
-      // Folder project: only track metadata
-      await _runGit(['add', 'folder_meta.json'], repoPath);
+    if (isFolder) {
+       throw Exception("Operation not allowed: Cannot commit directly to the root (folder) repository. Please commit to a specific document repository.");
     }
+
+    final info = await _resolveTrackingInfo(repoPath);
+    final targetPath = info['docxPath'] as String?;
+
+    if (targetPath == null) {
+      throw Exception(
+          'Missing "docxPath" in tracking.json (or tracking.json not found). Please re-configure the project.');
+    }
+
+    if (!FileSystemEntity.isDirectorySync(targetPath) &&
+        !FileSystemEntity.isFileSync(targetPath)) {
+      throw Exception(
+          'File not found: $targetPath. Has the file in the folder been deleted?');
+    }
+
+    await _updateContentDocx(repoPath, targetPath);
+    // 1. Unzip content.docx -> doc_content
+    await _flushDocxToContent(repoPath);
+
+    // Add doc_content directory
+    await _runGit(['add', kContentDirName], repoPath);
+    
     if (File(p.join(repoPath, 'edges')).existsSync()) {
       await _runGit(['add', 'edges'], repoPath);
     }
     if (File(p.join(repoPath, '.gitignore')).existsSync()) {
       await _runGit(['add', '.gitignore'], repoPath);
-      print("Add Gitignore!");
     }
-    print("Do You add Gitignore?");
+    
     final safeAuthor = author.trim().isEmpty ? 'Unknown' : author.trim();
     final authorArg = '$safeAuthor <$safeAuthor@gitdocx.local>';
     await _runGit(['commit', '--author=$authorArg', '-m', message], repoPath);
@@ -889,8 +914,8 @@ Future<void> commitChanges(
       unawaited(ensureCommitPreviewAssets(repoPath, head));
     }
 
-    // Notify parent folder project if applicable
-    await _notifyParentFolderProject(repoPath);
+    // Auto-update parent repo (submodule pointer)
+    await _updateParentSubmodule(repoPath, author, message);
 
     try {
       await _persistTrackingPackageForRepo(repoPath);
@@ -904,20 +929,10 @@ Future<void> commitChanges(
 
 Future<void> createBranch(String repoPath, String branchName) async {
   return _withRepoLock(repoPath, () async {
-    // 1. Create branch in root repo (always)
-    await _runGit(['checkout', '-b', branchName], repoPath);
-
     if (await _isFolderProject(repoPath)) {
-      final name = p.basename(repoPath);
-      final repos = await listProjectRepos(name);
-      for (final r in repos) {
-        try {
-          await _runGit(['checkout', '-b', branchName], r['repoPath']);
-        } catch (e) {
-          print('Failed to create branch in ${r['repoPath']}: $e');
-        }
-      }
+        throw Exception("Operation not allowed: Cannot create branches on the root (folder) repository.");
     }
+    await _runGit(['checkout', '-b', branchName], repoPath);
     clearCache();
   });
 }
@@ -925,29 +940,16 @@ Future<void> createBranch(String repoPath, String branchName) async {
 Future<void> switchBranch(String projectName, String branchName) async {
   final repoPath = _projectDir(projectName);
   return _withRepoLock(repoPath, () async {
+    if (await _isFolderProject(repoPath)) {
+        throw Exception("Operation not allowed: Cannot switch branches on the root (folder) repository.");
+    }
+    
     final sw = Stopwatch()..start();
-
-    // 1. Switch branch in root repo (always)
     await _runGit(['checkout', '-f', branchName], repoPath);
     print(
-        '[Perf][GitService][SwitchBranch][CheckoutRoot] ${sw.elapsedMilliseconds}ms');
-    sw.reset();
-
-    if (await _isFolderProject(repoPath)) {
-      final repos = await listProjectRepos(projectName);
-      for (final r in repos) {
-        try {
-          await _runGit(['checkout', '-f', branchName], r['repoPath']);
-        } catch (e) {
-          print('Failed to switch branch in ${r['repoPath']}: $e');
-        }
-      }
-    }
-
-    clearCache();
-    print(
-        '[Perf][GitService][SwitchBranch][ClearCache] ${sw.elapsedMilliseconds}ms');
+        '[Perf][GitService][SwitchBranch][Checkout] ${sw.elapsedMilliseconds}ms');
     sw.stop();
+    clearCache();
   });
 }
 
