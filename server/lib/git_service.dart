@@ -2414,7 +2414,7 @@ Future<void> syncFolderProject(String name) async {
   print('[Debug][syncFolderProject] sourceRoot: $sourceRoot');
 
   if (sourceRoot == null) {
-    throw Exception('docxPath is missing');
+    print('[Debug][syncFolderProject] No docxPath configured. Skipping external sync steps.');
   }
 
   var targetBaseDir = projDir;
@@ -2431,80 +2431,82 @@ Future<void> syncFolderProject(String name) async {
     print('[Debug][syncFolderProject] Redirecting sync to subdirectory: $targetBaseDir');
   }
 
-  // 1. Scan source folder for .docx files
-  List<File> sourceFiles = [];
-  bool isSourceFile = false;
+  if (sourceRoot != null) {
+    // 1. Scan source folder for .docx files
+    List<File> sourceFiles = [];
+    bool isSourceFile = false;
 
-  if (FileSystemEntity.isFileSync(sourceRoot)) {
-    isSourceFile = true;
-    sourceFiles.add(File(sourceRoot));
-  } else if (FileSystemEntity.isDirectorySync(sourceRoot)) {
-    sourceFiles = Directory(sourceRoot)
-        .listSync(recursive: true)
-        .whereType<File>()
-        .where((f) => p.extension(f.path).toLowerCase() == '.docx')
-        .where((f) => !p.basename(f.path).startsWith('~\$'))
-        .toList();
-  } else {
-    // Source folder deleted? We might want to warn or do nothing, but user said sync.
-    // If source is gone, maybe we should delete everything? Safer to throw for now.
-    throw Exception('Source not found: $sourceRoot');
-  }
-
-  final sourceRelPaths = <String>{};
-
-  // 2. Update or Create repos
-  for (final file in sourceFiles) {
-    String relPath;
-    if (isSourceFile) {
-      relPath = p.basename(file.path);
+    if (FileSystemEntity.isFileSync(sourceRoot)) {
+      isSourceFile = true;
+      sourceFiles.add(File(sourceRoot));
+    } else if (FileSystemEntity.isDirectorySync(sourceRoot)) {
+      sourceFiles = Directory(sourceRoot)
+          .listSync(recursive: true)
+          .whereType<File>()
+          .where((f) => p.extension(f.path).toLowerCase() == '.docx')
+          .where((f) => !p.basename(f.path).startsWith('~\$'))
+          .toList();
     } else {
-      relPath = p.relative(file.path, from: sourceRoot);
+      // Source folder deleted? We might want to warn or do nothing, but user said sync.
+      // If source is gone, maybe we should delete everything? Safer to throw for now.
+      throw Exception('Source not found: $sourceRoot');
     }
-    
-    final relTrackingPath = p.setExtension(relPath, kTrackingExt);
-    sourceRelPaths.add(relTrackingPath);
 
-    final targetRepoPath = p.join(targetBaseDir, relTrackingPath);
-    // This will create if not exists, or update content.docx if exists
-    if (!Directory(targetRepoPath).existsSync()) {
-      final packagePath = tracking['packagePath'] as String? ?? '';
-      if (packagePath.isNotEmpty) {
-        await _initTrackingRepo(targetRepoPath, file.path, packagePath);
+    final sourceRelPaths = <String>{};
+
+    // 2. Update or Create repos
+    for (final file in sourceFiles) {
+      String relPath;
+      if (isSourceFile) {
+        relPath = p.basename(file.path);
       } else {
-        await _initSingleRepo(targetRepoPath, file.path);
+        relPath = p.relative(file.path, from: sourceRoot);
       }
-    } else {
-      await _updateContentDocx(targetRepoPath, file.path);
+      
+      final relTrackingPath = p.setExtension(relPath, kTrackingExt);
+      sourceRelPaths.add(relTrackingPath);
+
+      final targetRepoPath = p.join(targetBaseDir, relTrackingPath);
+      // This will create if not exists, or update content.docx if exists
+      if (!Directory(targetRepoPath).existsSync()) {
+        final packagePath = tracking['packagePath'] as String? ?? '';
+        if (packagePath.isNotEmpty) {
+          await _initTrackingRepo(targetRepoPath, file.path, packagePath);
+        } else {
+          await _initSingleRepo(targetRepoPath, file.path);
+        }
+      } else {
+        await _updateContentDocx(targetRepoPath, file.path);
+      }
     }
-  }
 
-  // 3. Update folder_meta.json
-  await _scanAndUpdateFolderMeta(targetBaseDir, sourceRoot,
-      trackingExt: kTrackingExt);
+    // 3. Update folder_meta.json
+    await _scanAndUpdateFolderMeta(targetBaseDir, sourceRoot,
+        trackingExt: kTrackingExt);
 
-  // 4. Scan target folder for repos (directories with .git)
-  // We need to be careful not to delete the root projDir itself if it happens to be a repo (unlikely in folder mode)
-  final targetDir = Directory(targetBaseDir);
-  if (targetDir.existsSync()) {
-    final entities = targetDir.listSync(recursive: true);
-    for (final entity in entities) {
-      if (entity is Directory && p.basename(entity.path) == '.git') {
-        final repoPath = entity.parent.path;
-        // If repoPath is the project root, skip? Folder mode structure: projDir/sub/a.docx/.git
-        if (p.equals(p.normalize(repoPath), p.normalize(targetBaseDir))) continue;
+    // 4. Scan target folder for repos (directories with .git)
+    // We need to be careful not to delete the root projDir itself if it happens to be a repo (unlikely in folder mode)
+    final targetDir = Directory(targetBaseDir);
+    if (targetDir.existsSync()) {
+      final entities = targetDir.listSync(recursive: true);
+      for (final entity in entities) {
+        if (entity is Directory && p.basename(entity.path) == '.git') {
+          final repoPath = entity.parent.path;
+          // If repoPath is the project root, skip? Folder mode structure: projDir/sub/a.docx/.git
+          if (p.equals(p.normalize(repoPath), p.normalize(targetBaseDir))) continue;
 
-        final relPath = p.relative(repoPath, from: targetBaseDir);
+          final relPath = p.relative(repoPath, from: targetBaseDir);
 
-        // Check if this relPath exists in source
-        if (!sourceRelPaths.contains(relPath)) {
-          // User requested NOT to delete orphaned repos during sync.
-          // print('Deleting orphaned repo: $repoPath');
-          // try {
-          //   entity.parent.deleteSync(recursive: true);
-          // } catch (e) {
-          //   print('Failed to delete orphaned repo: $e');
-          // }
+          // Check if this relPath exists in source
+          if (!sourceRelPaths.contains(relPath)) {
+            // User requested NOT to delete orphaned repos during sync.
+            // print('Deleting orphaned repo: $repoPath');
+            // try {
+            //   entity.parent.deleteSync(recursive: true);
+            // } catch (e) {
+            //   print('Failed to delete orphaned repo: $e');
+            // }
+          }
         }
       }
     }
