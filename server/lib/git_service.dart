@@ -2228,7 +2228,7 @@ Future<void> _addDocxSubmodule(String rootPath, String relDir, String docxPath) 
    await File(p.join(fullSubmodulePath, 'tracking.json')).writeAsString(jsonEncode(tracking));
    
    await _runGit(['add', '.'], fullSubmodulePath);
-   await _runGit(['commit', '-m', 'Initial content'], fullSubmodulePath);
+   await _runGit(['commit', '-m', 'first version'], fullSubmodulePath);
    
    final remoteRepoName = _calculateHash(submodulePath);
    final remoteUrl = '../$remoteRepoName.git';
