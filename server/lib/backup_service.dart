@@ -42,7 +42,7 @@ String _baseDir() {
   return p.join(Directory.systemTemp.path, 'gitdocx_history_cache');
 }
 
-final String _backupBaseUrl = 'http://47.242.109.145:4829';
+final String _backupBaseUrl = 'https://llinker.com/gitbackup/';
 final String _tempDirName = p.join(_baseDir(), 'temp_backups');
 
 // New checkout base directory
@@ -54,8 +54,9 @@ String _getBackupDir(String repoName) {
   return p.join(p.dirname(scriptDir), _tempDirName, repoName);
 }
 
-Future<List<Map<String, dynamic>>> listBackupCommits(
-    String repoName, String AuthToken) async {
+Future<Map<String, dynamic>> listBackupCommits(
+    String repoName, String AuthToken,
+    {Function(double percent, int received, int total)? onProgress}) async {
   final dirPath = _getBackupDir(repoName);
   final dir = Directory(dirPath);
   String LocalSha1 = "";
@@ -65,42 +66,99 @@ Future<List<Map<String, dynamic>>> listBackupCommits(
 
   final zipUrl =
       '$_backupBaseUrl/backups/$repoName/download?token=$AuthToken&LocalSha1=$LocalSha1';
-  final resp = await http.get(Uri.parse(zipUrl));
-
-  if (resp.statusCode != 200) {
-    print(resp.body);
-    throw Exception('Failed to download backup: ${resp.statusCode}');
-  }
+  print("Debug,url=$zipUrl");
+  
+  bool cacheHit = false;
+  String? chainViewUrl;
 
   try {
-    final jsonData = jsonDecode(resp.body);
-    print("Debug,jsonData=$jsonData,everything cool bro!");
-    if (jsonData["message"] == "success") print("File up to date");
-  } catch (_) {
-    print("New file!");
-    //新的文件
-    if (await dir.exists()) await dir.delete(recursive: true);
-    if (await File('$dirPath.zip').exists())
-      await File('$dirPath.zip').delete();
-    print("Deleted");
-    if (!await dir.exists()) {
-      // Download
-      print('Downloading backup for $repoName...');
+    final request = http.Request('GET', Uri.parse(zipUrl));
+    final response = await http.Client().send(request);
 
-      final zipFile = File('$dirPath.zip');
-      await zipFile.parent.create(recursive: true);
-      await zipFile.writeAsBytes(resp.bodyBytes);
+    if (response.statusCode != 200) {
+       final body = await response.stream.bytesToString();
+       print(body);
+       throw Exception('Failed to download backup: ${response.statusCode}');
+    }
 
-      // Unzip using PowerShell
-      print('Unzipping $repoName...');
-      final res = await Process.run('powershell', [
-        '-Command',
-        'Expand-Archive -Path "${zipFile.path}" -DestinationPath "$dirPath" -Force'
-      ]);
+    chainViewUrl = response.headers['x-chain-view-url'];
 
-      if (res.exitCode != 0) {
-        throw Exception('Failed to unzip: ${res.stderr}');
-      }
+    // Check content type to see if it is JSON (cache hit message) or Zip
+    final ct = response.headers['content-type'] ?? '';
+    if (ct.contains('application/json')) {
+       final body = await response.stream.bytesToString();
+       final jsonData = jsonDecode(body);
+       print("Debug,jsonData=$jsonData,everything cool bro!");
+       if (jsonData["message"] == "success") {
+         print("File up to date");
+         cacheHit = true;
+         if (jsonData.containsKey('chain_url')) {
+           chainViewUrl = jsonData['chain_url'];
+         }
+       }
+    } else {
+       print("New file!");
+       cacheHit = false;
+       // New file
+       if (await dir.exists()) await dir.delete(recursive: true);
+       if (await File('$dirPath.zip').exists())
+         await File('$dirPath.zip').delete();
+       print("Deleted old files");
+
+       if (!await dir.exists()) {
+         print('Downloading backup for $repoName...');
+         final zipFile = File('$dirPath.zip');
+         await zipFile.parent.create(recursive: true);
+         
+         final contentLength = response.contentLength;
+         int received = 0;
+         final sink = zipFile.openWrite();
+         
+         await response.stream.listen(
+           (List<int> chunk) {
+             received += chunk.length;
+             sink.add(chunk);
+             if (contentLength != null) {
+               final percent = (received / contentLength * 100);
+               if (onProgress != null) {
+                 onProgress(percent, received, contentLength);
+               }
+             } else {
+               if (onProgress != null) {
+                 onProgress(0.0, received, 0);
+               }
+             }
+           },
+           onDone: () {
+             print('\nDownload complete.');
+           },
+           onError: (e) {
+             print('\nDownload error: $e');
+             throw e;
+           },
+           cancelOnError: true,
+         ).asFuture();
+         
+         await sink.close();
+
+         // Unzip using PowerShell
+         print('Unzipping $repoName...');
+         final res = await Process.run('powershell', [
+           '-Command',
+           'Expand-Archive -Path "${zipFile.path}" -DestinationPath "$dirPath" -Force'
+         ]);
+
+         if (res.exitCode != 0) {
+           throw Exception('Failed to unzip: ${res.stderr}');
+         }
+       }
+    }
+  } catch (e) {
+    print('Error during backup sync: $e');
+    // If we have a local cache, we might want to proceed? 
+    // But for now let's just rethrow or ensure we can proceed if file exists.
+    if (!await File('$dirPath.zip').exists() && !await dir.exists()) {
+       throw e;
     }
   }
 
@@ -109,55 +167,20 @@ Future<List<Map<String, dynamic>>> listBackupCommits(
   final effectiveRepoPath = await _findEffectiveRepoPath(repoName);
   await _precacheSnapshots(repoName, effectiveRepoPath);
 
-  return _getCommitsFromDir(effectiveRepoPath, repoName);
+  final commits = await _getCommitsFromDir(effectiveRepoPath, repoName);
+  return {
+    'commits': commits,
+    'cacheHit': cacheHit,
+    'chainViewUrl': chainViewUrl
+  };
 }
 
 Future<void> _precacheSnapshots(String repoName, String repoPath) async {
-  // New logic for pre-exploded snapshots
-  final dir = Directory(repoPath);
-  if (await dir.exists()) {
-    final entities = dir.listSync();
-    final snapshotDirs = entities.whereType<Directory>().where((d) {
-      return p.basename(d.path).contains('_son-');
-    }).toList();
-    print(
-        "On executing _precacheSnapshots with param snapshotDirs=$snapshotDirs");
-    if (snapshotDirs.isNotEmpty) {
-      print('Found ${snapshotDirs.length} snapshots.');
-      final checkoutRoot = Directory(p.join(_checkoutBaseDir, repoName));
-      if (!await checkoutRoot.exists()) {
-        await checkoutRoot.create(recursive: true);
-      }
-
-      for (final d in snapshotDirs) {
-        final name = p.basename(d.path);
-        final parts = name.split('_son-');
-        if (parts.length < 2) continue;
-        final commitId = parts.last;
-
-        final targetDir = Directory(p.join(checkoutRoot.path, commitId));
-        if (await targetDir.exists()) {
-          await targetDir.delete(recursive: true);
-        }
-
-        try {
-          await d.rename(targetDir.path);
-        } catch (e) {
-          await Process.run('powershell', [
-            '-Command',
-            'Copy-Item -Path "${d.path}" -Destination "${targetDir.path}" -Recurse -Force'
-          ]);
-          await d.delete(recursive: true);
-        }
-
-        await Process.run('git', ['init', '--bare', '.'],
-            workingDirectory: targetDir.path);
-      }
-      return;
-    }
+  final checkoutRoot = Directory(p.join(_checkoutBaseDir, repoName));
+  if (!await checkoutRoot.exists()) {
+    await checkoutRoot.create(recursive: true);
   }
 
-  /*
   // Get all commit hashes
   final res = await Process.run('git', ['log', '--format=%H'],
       workingDirectory: repoPath);
@@ -171,20 +194,40 @@ Future<void> _precacheSnapshots(String repoName, String repoPath) async {
       .where((e) => e.isNotEmpty)
       .toList();
 
-  final checkoutRoot = Directory(p.join(_checkoutBaseDir, repoName));
-  if (!await checkoutRoot.exists()) {
-    await checkoutRoot.create(recursive: true);
-  }
+  print('Found ${commits.length} commits in backup repo.');
 
   for (final commitId in commits) {
     final targetDir = Directory(p.join(checkoutRoot.path, commitId));
     if (await targetDir.exists()) {
+      // Repair logic: check if we have a dummy repo but actually have an inner repo
+      if (await Directory(p.join(targetDir.path, '.git')).exists()) {
+        bool hasInner = false;
+        final subs = targetDir.listSync().whereType<Directory>();
+        for (final s in subs) {
+          if (p.basename(s.path) == '.git') continue;
+          if (await File(p.join(s.path, 'HEAD')).exists() &&
+              await File(p.join(s.path, 'config')).exists() &&
+              await Directory(p.join(s.path, 'refs')).exists()) {
+            hasInner = true;
+            break;
+          }
+        }
+        if (hasInner) {
+          print("Repairing cache: Removing dummy .git folder for $commitId");
+          try {
+            await Directory(p.join(targetDir.path, '.git'))
+                .delete(recursive: true);
+          } catch (e) {
+            print("Failed to delete dummy .git: $e");
+          }
+        }
+      }
       // Skip if already cached
       continue;
     }
 
     print('Caching snapshot for $commitId...');
-    print("repoPath=$repoPath");
+    
     // Checkout commit in the parent repo
     final checkoutRes = await Process.run('git', ['checkout', '-f', commitId],
         workingDirectory: repoPath);
@@ -193,99 +236,56 @@ Future<void> _precacheSnapshots(String repoName, String repoPath) async {
       continue;
     }
 
-    // Identify child directory in the checked out state
-    // We scan subdirectories for a git repo
-    String? childPath;
-    final parentDir = Directory(repoPath);
-    // Be careful not to pick .git folder of parent
-    await for (final entity in parentDir.list(recursive: false)) {
-      if (entity is Directory) {
-        if (p.basename(entity.path) == '.git') continue;
+    // Copy content to targetDir
+    await targetDir.create(recursive: true);
+    
+    // Use PowerShell to copy everything except .git folder of the backup repo
+    // We want to capture the workspace state at that commit.
+    final copyRes = await Process.run('powershell', [
+      '-Command',
+      'Get-ChildItem -Path "${repoPath}" -Exclude ".git" | Copy-Item -Destination "${targetDir.path}" -Recurse -Force'
+    ]);
 
-        // Check if this directory looks like a git repo (bare or normal)
-        // Normal: has .git subdirectory
-        // Bare-ish/Embedded: has HEAD, config, objects, refs
-        if (await Directory(p.join(entity.path, '.git')).exists()) {
-          childPath = entity.path; // Normal repo structure
-          break;
-        } else if (await File(p.join(entity.path, 'HEAD')).exists() &&
-            await File(p.join(entity.path, 'config')).exists() &&
-            await Directory(p.join(entity.path, 'objects')).exists()) {
-          print("bare");
-          childPath = entity.path; // Bare/Embedded structure
-          break;
-        }
+    if (copyRes.exitCode != 0) {
+      print('Failed to copy snapshot for $commitId: ${copyRes.stderr}');
+    }
+    
+    // Check if we have a bare repo in subdirectories
+    bool hasBareRepo = false;
+    final subs = targetDir.listSync().whereType<Directory>();
+    for (final s in subs) {
+      if (p.basename(s.path) == '.git') continue;
+      if (await File(p.join(s.path, 'HEAD')).exists() && 
+          await File(p.join(s.path, 'config')).exists() && 
+          await Directory(p.join(s.path, 'refs')).exists()) {
+        hasBareRepo = true;
+        break;
       }
     }
 
-    if (childPath != null) {
-      // Copy childPath to targetDir
-      // Using PowerShell for robust recursive copy
-      await targetDir.create(recursive: true);
-      final copyRes = await Process.run('powershell', [
-        '-Command',
-        'Copy-Item -Path "${childPath}\\*" -Destination "${targetDir.path}" -Recurse -Force'
-      ]);
-      print("copied ${childPath} to ${targetDir.path}");
-      final childPath_hashRes = await Process.run('powershell', ['-Command', 'hash-files "${childPath}"']);
-if (childPath_hashRes.exitCode != 0) {
-  stderr.writeln("hash-files 执行失败 (childPath): ${childPath_hashRes.stderr.toString()}");
-  throw Exception("hash-files 命令失败，退出码: ${childPath_hashRes.exitCode}");
-}
-final childPathstdoutOutput = childPath_hashRes.stdout.toString();
-
-final targetDir_hashRes = await Process.run('powershell', ['-Command', 'hash-files "${targetDir.path}"']);
-if (targetDir_hashRes.exitCode != 0) {
-  stderr.writeln("hash-files 执行失败 (targetDir): ${targetDir_hashRes.stderr.toString()}");
-  throw Exception("hash-files 命令失败，退出码: ${targetDir_hashRes.exitCode}");
-}
-final targetDirstdoutOutput = targetDir_hashRes.stdout.toString();
-
-final childoutputFile = File('${Directory.current.path}/child${commitId}.txt');
-final targetoutputFile = File('${Directory.current.path}/target${commitId}.txt');
-
-await childoutputFile.writeAsString(childPathstdoutOutput);
-await targetoutputFile.writeAsString(targetDirstdoutOutput);
-      if (copyRes.exitCode != 0) {
-        print('Failed to copy snapshot for $commitId: ${copyRes.stderr}');
-      }
-    } else {
-      print('No child repo found in commit $commitId');
+    // Ensure targetDir is a valid git repo (so getGraph works correctly for comparison)
+    // If the snapshot itself doesn't contain a .git folder (which it likely doesn't if it's just a file backup),
+    // we create a dummy one.
+    if (!hasBareRepo && !await Directory(p.join(targetDir.path, '.git')).exists()) {
+        await Process.run('git', ['init'], workingDirectory: targetDir.path);
+        await Process.run('git', ['config', 'user.email', 'backup@local'], workingDirectory: targetDir.path);
+        await Process.run('git', ['config', 'user.name', 'BackupBot'], workingDirectory: targetDir.path);
+        await Process.run('git', ['add', '.'], workingDirectory: targetDir.path);
+        await Process.run('git', ['commit', '-m', 'Snapshot state'], workingDirectory: targetDir.path);
     }
   }
 
-  //Restore master
-  //await Process.run('git', ['checkout', '-f', 'master'],
-  //  workingDirectory: repoPath);
-  */
+  // Restore master
+  await Process.run('git', ['checkout', '-f', 'master'],
+    workingDirectory: repoPath);
 }
 
 Future<List<Map<String, dynamic>>> _getCommitsFromDir(
     String repoPath, String repoName) async {
   print("Execute _getCommitsFromDir with param repoPath=$repoPath");
-  // Check for cached snapshots first (Snapshot Mode)
-  final cachedRepoDir = Directory(p.join(_checkoutBaseDir, repoName));
-  if (await cachedRepoDir.exists()) {
-    print("cachedRepoDir.exists");
-    final subs = cachedRepoDir.listSync().whereType<Directory>().toList();
-    if (subs.isNotEmpty) {
-      // We are in snapshot mode
-      final commits = <Map<String, dynamic>>[];
-      for (final d in subs) {
-        final id = p.basename(d.path);
-        commits.add({
-          'id': id,
-          'parents': [],
-          'refs': [],
-          'author': 'Snapshot',
-          'date': DateTime.now().toIso8601String(),
-          'subject': 'Snapshot $id',
-        });
-      }
-      return commits;
-    }
-  }
-
+  
+  // Previously we checked for cached snapshots here, but now we rely on the backup repo's git history directly.
+  
   final result = await Process.run(
     'git',
     [
@@ -327,42 +327,38 @@ Future<List<Map<String, dynamic>>> _getCommitsFromDir(
       'date': date,
       'subject': subject,
     });
+    print("Found backup commit: $id");
   }
   return commits;
 }
 
 Future<String> _findEffectiveRepoPath(String repoName) async {
   final repoDir = _getBackupDir(repoName);
-  print("repodir=$repoDir");
+  print("Searching for repo in: $repoDir");
+
+  // 1. Check if repoDir itself is a git repo
   if (await Directory(p.join(repoDir, '.git')).exists()) {
-    print(1);
     return repoDir;
   }
 
-  // Check if we have already cached snapshots in _checkoutBaseDir
-  final checkoutDir = Directory(p.join(_checkoutBaseDir, repoName));
-  if (await checkoutDir.exists() && checkoutDir.listSync().isNotEmpty) {
-    print(2);
-    print(checkoutDir);
-    return p.join(repoDir, repoName); // Who the fuck writes this piece of shit
+  // 2. Check if repoDir/<repoName>_parent is a git repo
+  final parentDir = Directory(p.join(repoDir, '${repoName}_parent'));
+  if (await parentDir.exists() && await Directory(p.join(parentDir.path, '.git')).exists()) {
+    return parentDir.path;
   }
 
-  // Check if we have snapshot folders (pre-exploded)
+  // 3. Fallback: Check immediate subdirectories
   final dir = Directory(repoDir);
   if (await dir.exists()) {
-    final subs = dir.listSync().whereType<Directory>();
-    if (subs.any((d) => p.basename(d.path).contains('_son-'))) {
-      print(3);
-      return repoDir;
-    }
+      final subs = dir.listSync().whereType<Directory>();
+      for(final sub in subs) {
+          if (await Directory(p.join(sub.path, '.git')).exists()) {
+              return sub.path;
+          }
+      }
   }
 
-  final subs = Directory(repoDir).listSync().whereType<Directory>().toList();
-  print("subs=$subs");
-  if (subs.length == 1) {
-    return subs.first.path;
-  }
-  throw Exception('Parent repository not found');
+  throw Exception('Parent repository not found in $repoDir');
 }
 
 Future<Map<String, dynamic>> getBackupChildGraph(
@@ -378,20 +374,36 @@ Future<Map<String, dynamic>> getBackupChildGraph(
   // The snapshot directory contains the child repo contents directly
   // It might be a normal repo (with .git) or bare-ish
   String gitDir = snapshotPath;
-  if (await Directory(p.join(snapshotPath, '.git')).exists()) {
-    gitDir = p.join(snapshotPath, '.git');
-  } else {
-    // Check if it looks like a bare repo/embedded git dir
-    if (!await File(p.join(snapshotPath, 'HEAD')).exists()) {
-      // Maybe inside a subdir?
-      final subs = snapshotDir.listSync().whereType<Directory>();
-      for (final s in subs) {
-        if (await Directory(p.join(s.path, '.git')).exists()) {
-          gitDir = p.join(s.path, '.git');
-          break;
+  
+  // First check for inner bare repo, as it is the most specific content
+  bool foundInner = false;
+  final subs = snapshotDir.listSync().whereType<Directory>();
+  for (final s in subs) {
+      if (p.basename(s.path) == '.git') continue;
+      if (await File(p.join(s.path, 'HEAD')).exists() && 
+          await File(p.join(s.path, 'config')).exists() && 
+          await Directory(p.join(s.path, 'refs')).exists()) {
+        gitDir = s.path;
+        foundInner = true;
+        break;
+      }
+  }
+
+  if (!foundInner) {
+      if (await Directory(p.join(snapshotPath, '.git')).exists()) {
+        gitDir = p.join(snapshotPath, '.git');
+      } else {
+        // Check if it looks like a bare repo/embedded git dir
+        if (!await File(p.join(snapshotPath, 'HEAD')).exists()) {
+          // Maybe inside a subdir?
+          for (final s in subs) {
+            if (await Directory(p.join(s.path, '.git')).exists()) {
+              gitDir = p.join(s.path, '.git');
+              break;
+            }
+          }
         }
       }
-    }
   }
 
   return (await _getGraphFromGitDir(gitDir)).toJson();
@@ -432,7 +444,8 @@ Future<GraphResponse> _getGraphFromGitDir(String gitDir, {int? limit}) async {
     logArgs.add('--max-count=$limit');
   }
 
-  final res = await Process.run('git', logArgs, stdoutEncoding: utf8);
+  final res =
+      await Process.run('git', logArgs, stdoutEncoding: utf8);
   if (res.exitCode != 0) throw Exception('Git log failed: ${res.stderr}');
 
   final lines = LineSplitter.split(res.stdout as String).toList();
@@ -500,20 +513,36 @@ Future<GraphResponse> getBackupGraph(String repoName, String commitId) async {
   // The snapshot directory contains the child repo contents directly
   // It might be a normal repo (with .git) or bare-ish
   String gitDir = snapshotPath;
-  if (await Directory(p.join(snapshotPath, '.git')).exists()) {
-    gitDir = p.join(snapshotPath, '.git');
-  } else {
-    // Check if it looks like a bare repo/embedded git dir
-    if (!await File(p.join(snapshotPath, 'HEAD')).exists()) {
-      // Maybe inside a subdir?
-      final subs = snapshotDir.listSync().whereType<Directory>();
-      for (final s in subs) {
-        if (await Directory(p.join(s.path, '.git')).exists()) {
-          gitDir = p.join(s.path, '.git');
-          break;
+  
+  // First check for inner bare repo, as it is the most specific content
+  bool foundInner = false;
+  final subs = snapshotDir.listSync().whereType<Directory>();
+  for (final s in subs) {
+      if (p.basename(s.path) == '.git') continue;
+      if (await File(p.join(s.path, 'HEAD')).exists() && 
+          await File(p.join(s.path, 'config')).exists() && 
+          await Directory(p.join(s.path, 'refs')).exists()) {
+        gitDir = s.path;
+        foundInner = true;
+        break;
+      }
+  }
+
+  if (!foundInner) {
+      if (await Directory(p.join(snapshotPath, '.git')).exists()) {
+        gitDir = p.join(snapshotPath, '.git');
+      } else {
+        // Check if it looks like a bare repo/embedded git dir
+        if (!await File(p.join(snapshotPath, 'HEAD')).exists()) {
+          // Maybe inside a subdir?
+          for (final s in subs) {
+            if (await Directory(p.join(s.path, '.git')).exists()) {
+              gitDir = p.join(s.path, '.git');
+              break;
+            }
+          }
         }
       }
-    }
   }
 
   return _getGraphFromGitDir(gitDir);
@@ -552,8 +581,8 @@ Future<Map<String, List<String>>> _getBranchChainsFromGitDir(
 Future<String?> _getCurrentBranchFromGitDir(String gitDir) async {
   // For bare repo, HEAD might point to a branch
   try {
-    final res = await Process.run(
-        'git', ['--git-dir=$gitDir', 'symbolic-ref', '--short', 'HEAD']);
+    final res = await Process.run('git',
+        ['--git-dir=$gitDir', 'symbolic-ref', '--short', 'HEAD']);
     if (res.exitCode == 0) return (res.stdout as String).trim();
   } catch (_) {}
   return null;
