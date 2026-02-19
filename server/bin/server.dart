@@ -1942,6 +1942,7 @@ Future<void> main(List<String> args) async {
             } catch (_) {}
          }
       });
+      print("chainViewUrl: ${result['chainViewUrl']}");
       return _cors(Response.ok(jsonEncode(result), headers: {
         'Content-Type': 'application/json; charset=utf-8',
       }));

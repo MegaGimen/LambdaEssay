@@ -92,6 +92,9 @@ Future<Map<String, dynamic>> listBackupCommits(
        if (jsonData["message"] == "success") {
          print("File up to date");
          cacheHit = true;
+         if (jsonData.containsKey('chain_url')) {
+           chainViewUrl = jsonData['chain_url'];
+         }
        }
     } else {
        print("New file!");
