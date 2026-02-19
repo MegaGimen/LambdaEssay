@@ -75,6 +75,7 @@ Future<void> _killPort(int port) async {
     print('Failed to clean up port $port: $e');
   }
 }
+
 final ProcessManager _processManager = const LocalProcessManager();
 Future<void> main(List<String> args) async {
   if (args.contains('--debugMode')) {
@@ -97,15 +98,13 @@ Future<void> main(List<String> args) async {
       await _killPort(5000);
       print('Starting Heidegger service from $heideggerPath...');
       // 使用 PowerShell 启动 Heidegger.exe，完全隐藏窗口
-      await _processManager.start(
-        [
-          'powershell',
-          '-WindowStyle', 'Hidden',
-          '-Command', 'Start-Process -FilePath "$heideggerPath" -WindowStyle Hidden'
-        ],
-        mode: ProcessStartMode.normal,
-        runInShell: false
-      );
+      await _processManager.start([
+        'powershell',
+        '-WindowStyle',
+        'Hidden',
+        '-Command',
+        'Start-Process -FilePath "$heideggerPath" -WindowStyle Hidden'
+      ], mode: ProcessStartMode.normal, runInShell: false);
     } else {
       print('Heidegger.exe not found at $heideggerPath');
     }
@@ -128,60 +127,63 @@ Future<void> main(List<String> args) async {
       _activePluginSockets.add(channel);
 
       pluginSender = (Map<String, dynamic> message) async {
-         if (_activePluginSockets.isEmpty) return false;
-         final id = _uuid.v4();
-         message['id'] = id;
-         
-         // Send to all connected plugins
-         for (final socket in _activePluginSockets) {
-            try {
-               socket.sink.add(jsonEncode(message));
-            } catch (e) {
-               print('Failed to send to socket: $e');
-            }
-         }
+        if (_activePluginSockets.isEmpty) return false;
+        final id = _uuid.v4();
+        message['id'] = id;
 
-         final mainCompleter = Completer<dynamic>();
-         _pendingRequests[id] = mainCompleter;
-         
-         try {
-             // Wait for first success or timeout
-             final response = await mainCompleter.future.timeout(const Duration(seconds: 30));
-             if (response is Map && response['status'] == 'success') return true;
-             return false;
-         } catch (e) {
-             _pendingRequests.remove(id);
-             return false;
-         }
+        // Send to all connected plugins
+        for (final socket in _activePluginSockets) {
+          try {
+            socket.sink.add(jsonEncode(message));
+          } catch (e) {
+            print('Failed to send to socket: $e');
+          }
+        }
+
+        final mainCompleter = Completer<dynamic>();
+        _pendingRequests[id] = mainCompleter;
+
+        try {
+          // Wait for first success or timeout
+          final response =
+              await mainCompleter.future.timeout(const Duration(seconds: 30));
+          if (response is Map && response['status'] == 'success') return true;
+          return false;
+        } catch (e) {
+          _pendingRequests.remove(id);
+          return false;
+        }
       };
 
       channel.stream.listen((message) {
         // print('Raw WebSocket message: $message');
         try {
-           final data = jsonDecode(message as String);
-           if (data is Map) {
-             if (data['type'] == 'response' && data['id'] != null) {
-                final id = data['id'];
-                // Check if we have a pending request
-                if (_pendingRequests.containsKey(id)) {
-                   if (data['status'] == 'success') {
-                      // If success, complete the main completer immediately
-                      if (!_pendingRequests[id]!.isCompleted) {
-                         _pendingRequests[id]!.complete(data);
-                      }
-                   } else {
-                      print('Plugin reported error/mismatch: ${data['message']}');
-                      // Fail fast
-                      if (!_pendingRequests[id]!.isCompleted) {
-                         _pendingRequests[id]!.complete(data); // Complete with error data
-                      }
-                   }
+          final data = jsonDecode(message as String);
+          if (data is Map) {
+            if (data['type'] == 'response' && data['id'] != null) {
+              final id = data['id'];
+              // Check if we have a pending request
+              if (_pendingRequests.containsKey(id)) {
+                if (data['status'] == 'success') {
+                  // If success, complete the main completer immediately
+                  if (!_pendingRequests[id]!.isCompleted) {
+                    _pendingRequests[id]!.complete(data);
+                  }
+                } else {
+                  print('Plugin reported error/mismatch: ${data['message']}');
+                  // Fail fast
+                  if (!_pendingRequests[id]!.isCompleted) {
+                    _pendingRequests[id]!
+                        .complete(data); // Complete with error data
+                  }
                 }
-             } else if (data['type'] == 'event' && data['event'] == 'saved') {
-                final path = data['path'] as String?;
-                if (path != null) {
-                   print('Plugin reported save event for: $path. But we ignore it. ');
-                   /*
+              }
+            } else if (data['type'] == 'event' && data['event'] == 'saved') {
+              final path = data['path'] as String?;
+              if (path != null) {
+                print(
+                    'Plugin reported save event for: $path. But we ignore it. ');
+                /*
                    // Notify frontend to start loading immediately
                    for (final socket in _activeFrontendSockets) {
                      try {
@@ -206,15 +208,15 @@ Future<void> main(List<String> args) async {
                      }
                    }
                    */
-                } else {
-                   print('Plugin reported save event but path is null');
-                }
-             } else {
-               print('Received from plugin: $message');
-             }
-           }
-        } catch(e) {
-             print('WebSocket message error: $e');
+              } else {
+                print('Plugin reported save event but path is null');
+              }
+            } else {
+              print('Received from plugin: $message');
+            }
+          }
+        } catch (e) {
+          print('WebSocket message error: $e');
         }
       }, onDone: () {
         print('Word Plugin disconnected');
@@ -224,12 +226,10 @@ Future<void> main(List<String> args) async {
         }
         // Notify frontend
         for (final socket in _activeFrontendSockets) {
-           try {
-             socket.sink.add(jsonEncode({
-               'type': 'com_status',
-               'status': 'disconnected'
-             }));
-           } catch (_) {}
+          try {
+            socket.sink.add(
+                jsonEncode({'type': 'com_status', 'status': 'disconnected'}));
+          } catch (_) {}
         }
       }, onError: (e) {
         print('WebSocket error: $e');
@@ -239,12 +239,10 @@ Future<void> main(List<String> args) async {
         }
         // Notify frontend
         for (final socket in _activeFrontendSockets) {
-           try {
-             socket.sink.add(jsonEncode({
-               'type': 'com_status',
-               'status': 'disconnected'
-             }));
-           } catch (_) {}
+          try {
+            socket.sink.add(
+                jsonEncode({'type': 'com_status', 'status': 'disconnected'}));
+          } catch (_) {}
         }
       });
     })(req);
@@ -292,15 +290,12 @@ Future<void> main(List<String> args) async {
       if (body.isNotEmpty) {
         final data = jsonDecode(body) as Map<String, dynamic>;
         if (data['options'] != null) {
-           options = data['options'] as Map<String, dynamic>;
+          options = data['options'] as Map<String, dynamic>;
         }
       }
     } catch (_) {}
 
-    final success = await pluginSender!({
-      'action': 'save',
-      'options': options
-    });
+    final success = await pluginSender!({'action': 'save', 'options': options});
 
     if (success) {
       return _cors(Response.ok(jsonEncode({'message': 'Save command sent'}),
@@ -325,7 +320,7 @@ Future<void> main(List<String> args) async {
     Map<String, dynamic> options = {};
 
     final contentType = req.headers['content-type'] ?? '';
-    
+
     if (contentType.toLowerCase().contains('application/json')) {
       final body = await req.readAsString();
       try {
@@ -333,25 +328,25 @@ Future<void> main(List<String> args) async {
         content = data['content'] as String?;
         type = (data['type'] as String?) ?? 'text';
         if (data['options'] != null) {
-           if (data['options'] is String) {
-             try {
-                options = jsonDecode(data['options']) as Map<String, dynamic>;
-             } catch(_) {}
-           } else {
-             options = data['options'] as Map<String, dynamic>;
-           }
+          if (data['options'] is String) {
+            try {
+              options = jsonDecode(data['options']) as Map<String, dynamic>;
+            } catch (_) {}
+          } else {
+            options = data['options'] as Map<String, dynamic>;
+          }
         }
       } catch (e) {
-         return _cors(Response(400,
-          body: jsonEncode({'error': 'Invalid JSON'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+        return _cors(Response(400,
+            body: jsonEncode({'error': 'Invalid JSON'}),
+            headers: {'Content-Type': 'application/json; charset=utf-8'}));
       }
     } else if (contentType.toLowerCase().contains('multipart/form-data')) {
       final boundary = _boundaryOf(contentType);
       if (boundary == null) {
-         return _cors(Response(400,
-          body: jsonEncode({'error': 'Invalid multipart boundary'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+        return _cors(Response(400,
+            body: jsonEncode({'error': 'Invalid multipart boundary'}),
+            headers: {'Content-Type': 'application/json; charset=utf-8'}));
       }
       final bytesBuilder = BytesBuilder();
       await for (final chunk in req.read()) {
@@ -359,7 +354,7 @@ Future<void> main(List<String> args) async {
       }
       final bodyBytes = bytesBuilder.takeBytes();
       final parts = _parseMultipart(bodyBytes, boundary);
-      
+
       final filePart = parts.firstWhere(
         (p) => (p.name ?? '') == 'file',
         orElse: () => _MultipartPart(null, null, Uint8List(0)),
@@ -370,63 +365,58 @@ Future<void> main(List<String> args) async {
         type = 'base64';
       } else {
         // Try to find content in other parts if not file
-         final contentPart = parts.firstWhere(
+        final contentPart = parts.firstWhere(
           (p) => (p.name ?? '') == 'content',
           orElse: () => _MultipartPart(null, null, Uint8List(0)),
         );
         if (contentPart.data.isNotEmpty) {
-           content = utf8.decode(contentPart.data);
+          content = utf8.decode(contentPart.data);
         }
       }
 
       // Parse type if provided in form
-       final typePart = parts.firstWhere(
-          (p) => (p.name ?? '') == 'type',
-          orElse: () => _MultipartPart(null, null, Uint8List(0)),
-        );
-        if (typePart.data.isNotEmpty) {
-           type = utf8.decode(typePart.data);
-        }
+      final typePart = parts.firstWhere(
+        (p) => (p.name ?? '') == 'type',
+        orElse: () => _MultipartPart(null, null, Uint8List(0)),
+      );
+      if (typePart.data.isNotEmpty) {
+        type = utf8.decode(typePart.data);
+      }
 
       // Parse options
-       final optionsPart = parts.firstWhere(
-          (p) => (p.name ?? '') == 'options',
-          orElse: () => _MultipartPart(null, null, Uint8List(0)),
-        );
-        if (optionsPart.data.isNotEmpty) {
-           try {
-             options = jsonDecode(utf8.decode(optionsPart.data));
-           } catch (e) {
-             print('Failed to parse options: $e');
-           }
+      final optionsPart = parts.firstWhere(
+        (p) => (p.name ?? '') == 'options',
+        orElse: () => _MultipartPart(null, null, Uint8List(0)),
+      );
+      if (optionsPart.data.isNotEmpty) {
+        try {
+          options = jsonDecode(utf8.decode(optionsPart.data));
+        } catch (e) {
+          print('Failed to parse options: $e');
         }
-
+      }
     } else {
-       return _cors(Response(400,
+      return _cors(Response(400,
           body: jsonEncode({'error': 'Unsupported Content-Type'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
 
     if (content == null || content.isEmpty) {
-       return _cors(Response(400,
+      return _cors(Response(400,
           body: jsonEncode({'error': 'Content is required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
 
     final success = await pluginSender!({
       'action': 'replace',
-      'payload': {
-        'content': content,
-        'type': type,
-        'options': options
-      }
+      'payload': {'content': content, 'type': type, 'options': options}
     });
 
     if (success) {
       return _cors(Response.ok(jsonEncode({'message': 'Replace command sent'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     } else {
-       return _cors(Response(500,
+      return _cors(Response(500,
           body: jsonEncode({'error': 'Replace failed or timed out'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
@@ -466,7 +456,7 @@ Future<void> main(List<String> args) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
     var gitdocxPath = _sanitizePath(data['gitdocxPath'] as String?);
-    var trackingPath= _sanitizePath(data['trackingPath'] as String?);
+    var trackingPath = _sanitizePath(data['trackingPath'] as String?);
     var trackingBase = _sanitizePath(data["trackingBase"] as String?);
 
     if (gitdocxPath.isEmpty) {
@@ -474,19 +464,19 @@ Future<void> main(List<String> args) async {
           body: jsonEncode({'error': 'No gitdocxPath'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
-    if(trackingPath.isEmpty) {
+    if (trackingPath.isEmpty) {
       return _cors(Response(400,
           body: jsonEncode({'error': 'No trackingPath'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
-    if(trackingBase.isEmpty) {
+    if (trackingBase.isEmpty) {
       return _cors(Response(400,
           body: jsonEncode({'error': 'No trackingBase'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
 
     try {
-      await deleteProject(gitdocxPath,  trackingPath,  trackingBase);
+      await deleteProject(gitdocxPath, trackingPath, trackingBase);
       return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
         'Content-Type': 'application/json; charset=utf-8',
       }));
@@ -616,7 +606,8 @@ Future<void> main(List<String> args) async {
     final normalized = p.normalize(repoPath);
     try {
       // Fetch remote graph: includeLocal=false, remoteNames=[] (all remotes)
-      final resp = await getGraph(normalized, limit: limit, includeLocal: false, remoteNames: []);
+      final resp = await getGraph(normalized,
+          limit: limit, includeLocal: false, remoteNames: []);
       return _cors(Response.ok(jsonEncode(resp.toJson()),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     } catch (e) {
@@ -692,35 +683,40 @@ Future<void> main(List<String> args) async {
       final appData = Platform.environment['APPDATA'];
       if (appData == null) throw Exception('APPDATA not found');
       final repoPath = p.join(appData, 'gitdocx', repoName);
-      
+
       if (!await Directory(repoPath).exists()) {
-         throw Exception('Repo $repoName not found at $repoPath');
+        throw Exception('Repo $repoName not found at $repoPath');
       }
 
       // Find parent
-      final parentRes = await Process.run('git', 
-          ['log', '-1', '--format=%P', commitId], 
+      final parentRes = await Process.run(
+          'git', ['log', '-1', '--format=%P', commitId],
           workingDirectory: repoPath);
-      
-      if (parentRes.exitCode != 0) throw Exception('Git log failed: ${parentRes.stderr}');
-      
-      final parentId = (parentRes.stdout as String).trim().split(' ').firstWhere((e) => e.isNotEmpty, orElse: () => '');
+
+      if (parentRes.exitCode != 0)
+        throw Exception('Git log failed: ${parentRes.stderr}');
+
+      final parentId = (parentRes.stdout as String)
+          .trim()
+          .split(' ')
+          .firstWhere((e) => e.isNotEmpty, orElse: () => '');
 
       tempDir = await Directory.systemTemp.createTemp('sum_commit_');
       final afterDocx = p.join(tempDir.path, 'after.docx');
-      
+
       // Extract commit docx
-      final afterRes = await Process.run('git', 
-          ['show', '$commitId:content.docx'], 
+      final afterRes = await Process.run(
+          'git', ['show', '$commitId:content.docx'],
           workingDirectory: repoPath, stdoutEncoding: null);
-          
+
       if (afterRes.exitCode != 0) {
         // Maybe file didn't exist in that commit?
         // Check if error is "pathspec ... did not match"
         final err = utf8.decode(afterRes.stderr as List<int>);
         if (err.contains('did not match')) {
-           return _cors(Response.ok(
-            jsonEncode({'output': 'File content.docx not found in this commit'}),
+          return _cors(Response.ok(
+            jsonEncode(
+                {'output': 'File content.docx not found in this commit'}),
             headers: {'Content-Type': 'application/json; charset=utf-8'},
           ));
         }
@@ -733,17 +729,17 @@ Future<void> main(List<String> args) async {
         result = "Initial commit (no parent)";
       } else {
         final beforeDocx = p.join(tempDir.path, 'before.docx');
-        final beforeRes = await Process.run('git', 
-            ['show', '$parentId:content.docx'], 
+        final beforeRes = await Process.run(
+            'git', ['show', '$parentId:content.docx'],
             workingDirectory: repoPath, stdoutEncoding: null);
-            
+
         if (beforeRes.exitCode != 0) {
-             // Parent might not have the file
-             // We can treat it as empty or new file
-             result = "New file created (parent did not have content.docx)";
+          // Parent might not have the file
+          // We can treat it as empty or new file
+          result = "New file created (parent did not have content.docx)";
         } else {
-             await File(beforeDocx).writeAsBytes(beforeRes.stdout as List<int>);
-             result = await summarizeDiff(beforeDocx, afterDocx);
+          await File(beforeDocx).writeAsBytes(beforeRes.stdout as List<int>);
+          result = await summarizeDiff(beforeDocx, afterDocx);
         }
       }
 
@@ -751,7 +747,6 @@ Future<void> main(List<String> args) async {
         jsonEncode({'output': result}),
         headers: {'Content-Type': 'application/json; charset=utf-8'},
       ));
-
     } catch (e) {
       return _cors(Response(500,
           body: jsonEncode({'error': e.toString()}),
@@ -838,7 +833,7 @@ Future<void> main(List<String> args) async {
           body: jsonEncode({'error': 'repoPath, author, message required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
-    
+
     // Attempt to save Word document if plugin is connected
     if (pluginSender != null) {
       print('Executing Word save before commit...');
@@ -891,7 +886,8 @@ Future<void> main(List<String> args) async {
     final data = jsonDecode(body) as Map<String, dynamic>;
     final projectName = (data['projectName'] as String?)?.trim() ?? '';
     final branchName = (data['branchName'] as String?)?.trim() ?? '';
-    if(branchName.contains(projectName+"/")){//拒绝切换远程分支
+    if (branchName.contains(projectName + "/")) {
+      //拒绝切换远程分支
       return _cors(Response(400,
           body: jsonEncode({'error': '禁止切换到远程分支'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
@@ -964,7 +960,7 @@ Future<void> main(List<String> args) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
     final repoPath = _sanitizePath(data['repoPath'] as String?);
-    
+
     final ids = <String>{};
     if (data['commitIds'] != null) {
       for (final item in (data['commitIds'] as List)) {
@@ -982,7 +978,8 @@ Future<void> main(List<String> args) async {
 
     if (repoPath.isEmpty || ids.isEmpty) {
       return _cors(Response(400,
-          body: jsonEncode({'error': 'repoPath and commitId/commitIds required'}),
+          body:
+              jsonEncode({'error': 'repoPath and commitId/commitIds required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
 
@@ -996,9 +993,11 @@ Future<void> main(List<String> args) async {
       }
     }());
 
-    return _cors(Response.ok(jsonEncode({'status': 'scheduled', 'count': ids.length}), headers: {
-      'Content-Type': 'application/json; charset=utf-8',
-    }));
+    return _cors(Response.ok(
+        jsonEncode({'status': 'scheduled', 'count': ids.length}),
+        headers: {
+          'Content-Type': 'application/json; charset=utf-8',
+        }));
   });
 
   router.post('/rollback', (Request req) async {
@@ -1185,7 +1184,8 @@ Future<void> main(List<String> args) async {
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
-      final resp = await updateTrackingProject(name,opIdentical, newDocxPath: newDocxPath, repoPath: repoPath, docxPath: docxPath);
+      final resp = await updateTrackingProject(name, opIdentical,
+          newDocxPath: newDocxPath, repoPath: repoPath, docxPath: docxPath);
       return _cors(Response.ok(jsonEncode(resp), headers: {
         'Content-Type': 'application/json; charset=utf-8',
       }));
@@ -1366,17 +1366,19 @@ Future<void> main(List<String> args) async {
 
         // Check folder status for each repo
         final results = await Future.wait(repoNames.map((name) async {
-           final r = uniqueRepos[name]!;
-           final owner = r['owner']['login'];
-           final checkUrl = '$giteaUrl/api/v1/repos/$owner/$name/contents/folder_meta.json';
-           bool isFolder = false;
-           try {
-             final checkResp = await http.get(Uri.parse(checkUrl), headers: headers);
-             if (checkResp.statusCode == 200) {
-               isFolder = true;
-             }
-           } catch (_) {}
-           return {'name': name, 'isFolder': isFolder};
+          final r = uniqueRepos[name]!;
+          final owner = r['owner']['login'];
+          final checkUrl =
+              '$giteaUrl/api/v1/repos/$owner/$name/contents/folder_meta.json';
+          bool isFolder = false;
+          try {
+            final checkResp =
+                await http.get(Uri.parse(checkUrl), headers: headers);
+            if (checkResp.statusCode == 200) {
+              isFolder = true;
+            }
+          } catch (_) {}
+          return {'name': name, 'isFolder': isFolder};
         }));
 
         if (repoPath != null && repoPath.isNotEmpty) {
@@ -1741,33 +1743,40 @@ Future<void> main(List<String> args) async {
       final appData = Platform.environment['APPDATA'];
       if (appData == null) throw Exception('APPDATA not found');
       final repoPath = p.join(appData, 'gitdocx', repoName);
-      
+
       if (!await Directory(repoPath).exists()) {
-         throw Exception('Repo $repoName not found at $repoPath');
+        throw Exception('Repo $repoName not found at $repoPath');
       }
 
       // Find parent
-      final parentRes = await Process.run('git', 
-          ['log', '-1', '--format=%P', commitId], 
+      final parentRes = await Process.run(
+          'git', ['log', '-1', '--format=%P', commitId],
           workingDirectory: repoPath);
-      
-      if (parentRes.exitCode != 0) throw Exception('Git log failed: ${parentRes.stderr}');
-      
-      final parentId = (parentRes.stdout as String).trim().split(' ').firstWhere((e) => e.isNotEmpty, orElse: () => '');
+
+      if (parentRes.exitCode != 0)
+        throw Exception('Git log failed: ${parentRes.stderr}');
+
+      final parentId = (parentRes.stdout as String)
+          .trim()
+          .split(' ')
+          .firstWhere((e) => e.isNotEmpty, orElse: () => '');
 
       tempDir = await Directory.systemTemp.createTemp('sum_commit_');
       final afterDocx = p.join(tempDir.path, 'after.docx');
-      
+
       // Extract commit docx
-      final afterRes = await Process.run('git', 
-          ['show', '$commitId:content.docx'], 
+      final afterRes = await Process.run(
+          'git', ['show', '$commitId:content.docx'],
           workingDirectory: repoPath, stdoutEncoding: null);
-          
+
       if (afterRes.exitCode != 0) {
         final err = utf8.decode(afterRes.stderr as List<int>);
-        if (err.contains('did not match') || err.contains('exists on disk') || err.contains('pathspec')) {
-           return _cors(Response.ok(
-            jsonEncode({'output': 'File content.docx not found in this commit'}),
+        if (err.contains('did not match') ||
+            err.contains('exists on disk') ||
+            err.contains('pathspec')) {
+          return _cors(Response.ok(
+            jsonEncode(
+                {'output': 'File content.docx not found in this commit'}),
             headers: {'Content-Type': 'application/json; charset=utf-8'},
           ));
         }
@@ -1780,15 +1789,15 @@ Future<void> main(List<String> args) async {
         result = "Initial commit (no parent)";
       } else {
         final beforeDocx = p.join(tempDir.path, 'before.docx');
-        final beforeRes = await Process.run('git', 
-            ['show', '$parentId:content.docx'], 
+        final beforeRes = await Process.run(
+            'git', ['show', '$parentId:content.docx'],
             workingDirectory: repoPath, stdoutEncoding: null);
-            
+
         if (beforeRes.exitCode != 0) {
-             result = "New file created (parent did not have content.docx)";
+          result = "New file created (parent did not have content.docx)";
         } else {
-             await File(beforeDocx).writeAsBytes(beforeRes.stdout as List<int>);
-             result = await summarizeDiff(beforeDocx, afterDocx);
+          await File(beforeDocx).writeAsBytes(beforeRes.stdout as List<int>);
+          result = await summarizeDiff(beforeDocx, afterDocx);
         }
       }
 
@@ -1796,7 +1805,6 @@ Future<void> main(List<String> args) async {
         jsonEncode({'output': result}),
         headers: {'Content-Type': 'application/json; charset=utf-8'},
       ));
-
     } catch (e) {
       return _cors(Response(500,
           body: jsonEncode({'error': e.toString()}),
@@ -1824,7 +1832,8 @@ Future<void> main(List<String> args) async {
 
     if (pathArg.isEmpty || username.isEmpty || token.isEmpty) {
       return _cors(Response(400,
-          body: jsonEncode({'error': 'repoPath (or repoName), username, token required'}),
+          body: jsonEncode(
+              {'error': 'repoPath (or repoName), username, token required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
@@ -1928,19 +1937,20 @@ Future<void> main(List<String> args) async {
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
-      final result = await listBackupCommits(repoName, token, onProgress: (percent, received, total) {
-         final msg = jsonEncode({
-           'type': 'backup_progress',
-           'repo': repoName,
-           'percent': percent,
-           'received': received,
-           'total': total
-         });
-         for (final socket in _activeFrontendSockets) {
-            try {
-              socket.sink.add(msg);
-            } catch (_) {}
-         }
+      final result = await listBackupCommits(repoName, token,
+          onProgress: (percent, received, total) {
+        final msg = jsonEncode({
+          'type': 'backup_progress',
+          'repo': repoName,
+          'percent': percent,
+          'received': received,
+          'total': total
+        });
+        for (final socket in _activeFrontendSockets) {
+          try {
+            socket.sink.add(msg);
+          } catch (_) {}
+        }
       });
       print("chainViewUrl: ${result['chainViewUrl']}");
       return _cors(Response.ok(jsonEncode(result), headers: {
