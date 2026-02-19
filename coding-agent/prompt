@@ -125,7 +125,7 @@ LambdaEssay项目通过类似Git的方式管理Word文档版本，但避免了Gi
 │
 └── example/                     <-- 根目录 (Root Directory)
     │
-    ├── folder_meta.json         <-- 目录结构元数据 (Structure Metadata)
+    ├── .gitmodules              <-- 子模块配置文件 (Submodule Config)
     │
     ├── doc1.tracking.zip/       <-- [子仓库] 文档 doc1.docx 对应的仓库文件夹
     │   ├── .git/                <-- 独立的 Git 版本库
@@ -144,7 +144,7 @@ LambdaEssay项目通过类似Git的方式管理Word文档版本，但避免了Gi
 
 我们采用**分层同步 (Layered Sync)** 策略：**目录结构**与**文档内容**分离同步。
 
-*   **根仓库 (Root Repo)**: 仅同步目录结构 (`folder_meta.json`)，不包含文档内容。
+*   **根仓库 (Root Repo)**: 仅同步目录结构 (`.gitmodules`)，不包含文档内容。
 *   **子仓库 (Sub Repo)**: 每个文档独立同步内容，远程仓库名经过哈希加密，保护隐私且实现隔离。
 
 ```text
@@ -152,8 +152,8 @@ LambdaEssay项目通过类似Git的方式管理Word文档版本，但避免了Gi
 
  ┌───────────────────────────┐                         (1) Push Structure
  │  my_project.tracking.zip  │──────────────────────────────────────────────────> [ my_project.git ]
- │ (Root)                    │                         (Sync folder_meta.json)    (仅存储目录树结构)
- │   folder_meta.json        │
+ │ (Root)                    │                         (Sync .gitmodules)         (仅存储目录树结构)
+ │   .gitmodules             │
  │                           │
  │ ┌───────────────────────┐ │                         (2) Push Content
  │ │ doc1.tracking.zip     │ │──────────────────────────────────────────────────> [ a1b2c3d4...git ]
@@ -169,6 +169,35 @@ LambdaEssay项目通过类似Git的方式管理Word文档版本，但避免了Gi
 *   **按需加载**: 拉取项目时，首先只同步轻量级的结构信息。只有当用户打开文档时，才拉取该文档对应的沉重历史记录。
 *   **隐私保护**: 远程服务器只看到哈希命名的仓库，无法直接从文件名推断项目结构。
 *   **空追踪包**: 新建的追踪包默认为空，用户可随后导入内容。
+
+### 追踪包逻辑更新 (Git Submodules & Leaf Node Architecture)
+
+为明确父子仓库职责，系统架构进行了重构，核心原则是**“用户只操作叶子节点，根节点由系统自动维护”**：
+
+1.  **仓库层级与职责**：
+    *   **父仓库 (Root Repo)**：仅作为容器，管理目录结构和子模块 (`.gitmodules`)。禁止包含 `content.docx` 或 `doc_content`。
+        *   **约束**：用户**不可**直接对父仓库执行 Commit、Switch Branch、Push 或查看 Graph。
+        *   **目的**：仅用于维护项目结构和子仓库的指针。
+    *   **子仓库 (Leaf/Sub Repo)**：对应单个 `.docx` 文件。包含实际文档内容 (`content.docx`) 和 Git 历史。
+        *   **操作**：用户的所有版本控制操作（Commit, Branch, Push, Graph, History）均**只能**针对子仓库（叶子节点）。
+        *   **定义**：.tracking 文件是为了给这些叶子节点的 docx 追踪项目提供说明，告诉程序外部的 docx 文件在哪里。
+
+2.  **自动化联动 (Auto-Sync)**：
+    *   **Commit**: 当用户在子仓库提交变更时，系统自动更新父仓库中对应的 submodule 指针，并提交父仓库的变更（Message: "Update submodule..."）。
+    *   **Push**: 当用户 Push 子仓库时，系统自动先 Push 子仓库，然后 Push 父仓库，确保远程父仓库始终指向最新的子模块版本。
+    *   **Pull**: 拉取父仓库时，会自动执行 `git submodule update --init --recursive` 以拉取所有子模块。
+    *   **Branch**: 新建/切换分支只针对子仓库。父仓库始终保持在默认分支（通常是 master/main），或者由系统自动管理其指针更新。
+
+3.  **新建与导入流程**：
+    *   **新建项目**: `createTrackingProject` 创建一个空的 Git 父仓库，包含 `.gitignore` 和 `.gitmodules` (初始为空)。
+    *   **导入文件**: 用户导入 `.docx` 文件时，后端将其转换为 Git 仓库（`git init`, `commit`），并作为 submodule 添加到当前父仓库 (`git submodule add`)。
+    *   **导入文件夹**: 若用户导入文件夹，程序递归解析该文件夹，将其中每一个 `.docx` 文件都转换为一个独立的 Git 子仓库，并添加到父仓库中。
+
+4.  **远程交互**：
+    *   **拉取新项目**: `listRemoteRepos` 列出远程仓库时，**必须**过滤掉所有哈希命名的子仓库，只展示根仓库供用户选择。
+    *   **拉取逻辑**: 
+        *   若用户选择下载新项目 -> 拉取根仓库 -> 自动打包为 `.tracking.zip`。
+        *   若用户在已打开的项目中拉取特定文件 -> 执行子模块拉取 (`git pull` in submodule)。若子模块不存在或无权限，报错提示。
 
 ### 备份与恢复系统 (Backup & Recovery System)
 

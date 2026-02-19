@@ -789,23 +789,7 @@ Future<String> cloneAndPackageProject(String remoteUrl, String savePath) async {
     }
 }
 
-Future<void> _updateFolderMeta(String parentRepoPath, String childRelPath,
-    String childName, String childRemoteUrl) async {
-  // No-op: We use git submodules now.
-}
 
-String _stripCredentials(String url) {
-  try {
-    final uri = Uri.parse(url);
-    if (uri.userInfo.isNotEmpty) {
-      return uri.replace(userInfo: '').toString();
-    }
-    return url;
-  } catch (e, s) {
-    print('Error stripping credentials: $e\n$s');
-    return url;
-  }
-}
 
 Future<void> _notifyParentFolderProject(String repoPath) async {
   // Deprecated: No-op
@@ -2118,8 +2102,7 @@ Future<void> _extractDocFromCommit(
 }
 
 Future<void> _ensureFolderProjectStructure(String projDir, String docxPath,
-    {bool forceUpdate = false,
-    String trackingExt = '',
+    {String trackingExt = '',
     String? packagePath}) async {
   // No-op
 }
@@ -2242,8 +2225,7 @@ Future<void> _addDocxSubmodule(String rootPath, String relDir, String docxPath) 
    await _runGit(['commit', '-m', 'Add submodule $docName'], rootPath);
 }
 
-Future<void> _initSingleRepo(String repoPath, String? sourceDocxPath,
-    {bool createGit = true}) async {
+Future<void> _initSingleRepo(String repoPath, String? sourceDocxPath) async {
     // Legacy no-op
 }
 
@@ -4197,15 +4179,7 @@ Future<void> deleteProject(String packagePath,
   throw Exception('Legacy delete is not supported for non-tracking packages');
 }
 
-List<File> _findDocxFiles(String rootPath) {
-  if (!Directory(rootPath).existsSync()) return [];
-  return Directory(rootPath)
-      .listSync(recursive: true)
-      .whereType<File>()
-      .where((f) => p.extension(f.path).toLowerCase() == '.docx')
-      .where((f) => !p.basename(f.path).startsWith('~\$'))
-      .toList();
-}
+
 
 
 
