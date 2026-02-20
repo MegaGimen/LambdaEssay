@@ -3417,6 +3417,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       print("DEBUG: Opening repo: ${targetRepo['repoPath']}");
       setState(() {
         pathCtrl.text = targetRepo!['repoPath'];
+        docxPathCtrl.text = targetRepo!['docxPath'] ?? '';
       });
       await _onUpdateRepoAction(
           opIdentical: true,
