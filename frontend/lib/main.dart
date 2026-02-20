@@ -1255,23 +1255,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     });
 
     try {
-      // 1. Check remotes
-      final remotesResp = await _postJson('$baseUrl/get_remotes', {
-        'repoPath': rootPath
-      });
-      final remotes = (remotesResp['remotes'] as List).cast<String>();
-      
-      if (remotes.isEmpty) {
-        // Prompt to add remote
-        if (!mounted) return;
-        final didAdd = await _showAddRemoteDialog(rootPath);
-        if (!didAdd) {
-            setState(() => loading = false);
-            return;
-        }
-      }
-
-      // 2. Push
+      // 1. Direct Push (Backend handles remote creation)
       await _postJson('$baseUrl/push', {
         'repoPath': rootPath,
         'username': _username,
@@ -1291,51 +1275,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     }
   }
 
-  Future<bool> _showAddRemoteDialog(String repoPath) async {
-      final nameCtrl = TextEditingController(text: 'origin');
-      final urlCtrl = TextEditingController();
-      
-      final ok = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-            title: const Text('添加远程仓库'),
-            content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                    const Text('根仓库尚未配置远程仓库，请先添加。'),
-                    const SizedBox(height: 8),
-                    TextField(
-                        controller: nameCtrl,
-                        decoration: const InputDecoration(labelText: 'Remote Name', border: OutlineInputBorder()),
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                        controller: urlCtrl,
-                        decoration: const InputDecoration(labelText: 'Remote URL', border: OutlineInputBorder()),
-                    ),
-                ],
-            ),
-            actions: [
-                TextButton(onPressed: ()=>Navigator.pop(ctx, false), child: const Text('取消')),
-                ElevatedButton(onPressed: ()=>Navigator.pop(ctx, true), child: const Text('添加')),
-            ],
-        )
-      );
-      
-      if (ok == true) {
-          final name = nameCtrl.text.trim();
-          final url = urlCtrl.text.trim();
-          if (name.isNotEmpty && url.isNotEmpty) {
-              await _postJson('$baseUrl/remote/add', {
-                  'repoPath': repoPath,
-                  'name': name,
-                  'url': url
-              });
-              return true;
-          }
-      }
-      return false;
-  }
+
 
   Future<void> _onPush({bool force = false}) async {
     if (!await _ensureToken()) {
@@ -2076,6 +2016,12 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     setState(() {
       _selectedFilePath = dir.path;
     });
+
+    // Ignore root project tap to prevent "Set Tracking Document" dialog
+    if (packageRootCtrl.text.trim().isNotEmpty && 
+        p.equals(dir.path, packageRootCtrl.text.trim())) {
+      return;
+    }
 
     // Check if it is a folder project (root/intermediate)
     // We only want to load graph for leaf nodes (DocxRepo)
@@ -3596,23 +3542,33 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
               width: double.infinity,
               color: Colors.blue.withValues(alpha: 0.1),
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-              child: Row(children: [
-                const Icon(Icons.folder_open, size: 16, color: Colors.blue),
-                const SizedBox(width: 8),
-                Expanded(
-                    child: Text('当前: $currentProjectName',
-                        style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: Colors.blue,
-                            fontSize: 13))),
-                IconButton(
-                    icon: const Icon(Icons.cloud_upload, size: 16, color: Colors.blue),
-                    tooltip: '推送根仓库',
-                    onPressed: _onRootPush,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                )
-              ]),
+              child: Column(
+                children: [
+                  Row(children: [
+                    const Icon(Icons.folder_open, size: 16, color: Colors.blue),
+                    const SizedBox(width: 8),
+                    Expanded(
+                        child: Text('当前: $currentProjectName',
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Colors.blue,
+                                fontSize: 13))),
+                  ]),
+                  const SizedBox(height: 4),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                        icon: const Icon(Icons.cloud_upload, size: 16, color: Colors.blue),
+                        label: const Text('推送根容器', style: TextStyle(fontSize: 12)),
+                        onPressed: _onRootPush,
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          visualDensity: VisualDensity.compact,
+                        ),
+                    ),
+                  )
+                ],
+              ),
             ),
           if (_repoUpdates.isNotEmpty)
             Container(
