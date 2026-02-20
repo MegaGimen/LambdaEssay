@@ -3516,17 +3516,6 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       ),
       child: Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: loading ? null : _onSyncFolder,
-                icon: const Icon(Icons.sync),
-                label: const Text('同步文件夹'),
-              ),
-            ),
-          ),
           if (currentProjectName != null)
             Container(
               width: double.infinity,
