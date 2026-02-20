@@ -3330,6 +3330,70 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     }
   }
 
+  bool _isGitRepo(Directory dir) {
+    final gitPath = p.join(dir.path, '.git');
+    return Directory(gitPath).existsSync() || File(gitPath).existsSync();
+  }
+
+  Directory? _findRepoRoot(Directory dir) {
+    Directory current = dir;
+    int depth = 0;
+    while (depth < 20) {
+      if (_isGitRepo(current)) return current;
+      if (p.equals(current.path, current.parent.path)) break;
+      current = current.parent;
+      depth++;
+    }
+    return null;
+  }
+
+  Future<void> _pullSubmodule(String submodulePath) async {
+    final parentDir = Directory(p.dirname(submodulePath));
+    final root = _findRepoRoot(parentDir);
+    if (root == null) {
+      if (mounted) {
+         ScaffoldMessenger.of(context).showSnackBar(
+             const SnackBar(content: Text('无法找到父仓库，无法拉取子模块'))
+         );
+      }
+      return;
+    }
+    
+    final relPath = p.relative(submodulePath, from: root.path);
+    setState(() => loading = true);
+    
+    try {
+      final result = await Process.run(
+          'git', 
+          ['submodule', 'update', '--init', '--recursive', relPath],
+          workingDirectory: root.path
+      );
+      
+      if (result.exitCode != 0) {
+        throw Exception(result.stderr);
+      }
+      
+      if (mounted) {
+         ScaffoldMessenger.of(context).showSnackBar(
+             const SnackBar(content: Text('子模块拉取成功'))
+         );
+      }
+    } catch (e) {
+      if (mounted) {
+        showDialog(
+            context: context, 
+            builder: (ctx) => AlertDialog(
+              title: const Text('无法打开'),
+              content: Text('本文件尚未被推送到云端或您没有权限打开\nError: $e'),
+              actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('确定'))]
+            )
+        );
+      }
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
   Future<void> _handleFileTap(File file, TapDownDetails details) async {
     final now = DateTime.now();
     final filePath = file.path;
@@ -3351,6 +3415,22 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     print("DEBUG: Double clicked file: $filePath");
 
     final lowerPath = filePath.toLowerCase();
+    
+    // Check for unpulled submodule
+    if (!lowerPath.endsWith('.docx') && !lowerPath.endsWith(kTrackingExt)) {
+       final gitPath = p.join(filePath, '.git');
+       final hasGit = Directory(gitPath).existsSync() || File(gitPath).existsSync();
+       
+       if (!hasGit) {
+          await _pullSubmodule(filePath);
+          if (Directory(gitPath).existsSync() || File(gitPath).existsSync()) {
+             // Continue to open logic
+          } else {
+             return; // Failed to pull
+          }
+       }
+    }
+
     String? expandedType;
     if (lowerPath.endsWith(kTrackingExt)) {
       try {
@@ -3447,12 +3527,33 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       if (!mounted) return;
       await _load();
     } else {
-      print("DEBUG: No matching repo found for $filePath");
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('未找到此文件的追踪信息'), duration: Duration(seconds: 1)),
-        );
+      final gitPath = p.join(filePath, '.git');
+      if (Directory(gitPath).existsSync() || File(gitPath).existsSync()) {
+         print("DEBUG: Opening git repo directly: $filePath");
+         setState(() {
+            pathCtrl.text = filePath;
+            if (File(p.join(filePath, 'content.docx')).existsSync()) {
+               docxPathCtrl.text = p.join(filePath, 'content.docx');
+            } else {
+               docxPathCtrl.text = '';
+            }
+         });
+         await _load();
+         
+         final trackingJson = File(p.join(filePath, 'tracking.json'));
+         final folderMeta = File(p.join(filePath, 'folder_meta.json'));
+         if (!trackingJson.existsSync() && !folderMeta.existsSync()) {
+           await _checkAndSetupTracking(currentProjectName ?? '', filePath, true);
+         }
+
+      } else {
+         print("DEBUG: No matching repo found for $filePath");
+         if (mounted) {
+           ScaffoldMessenger.of(context).showSnackBar(
+             const SnackBar(
+                 content: Text('未找到此文件的追踪信息'), duration: Duration(seconds: 1)),
+           );
+         }
       }
     }
   }

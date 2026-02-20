@@ -264,18 +264,92 @@ class FoldableDirectoryTree extends StatefulWidget {
 /// Recursively builds the directory tree for a given [directory] using [stateNotifier] to manage folder states.
 class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
   bool _isGitRepo(Directory dir) {
-    return Directory(path.join(dir.path, '.git')).existsSync();
+    final gitPath = path.join(dir.path, '.git');
+    return Directory(gitPath).existsSync() || File(gitPath).existsSync();
+  }
+
+  Set<String> _getRepoSubmodules(Directory repoRoot) {
+    final modulesFile = File(path.join(repoRoot.path, '.gitmodules'));
+    final subs = <String>{};
+    if (modulesFile.existsSync()) {
+      try {
+        final lines = modulesFile.readAsLinesSync();
+        for (final line in lines) {
+           final trimmed = line.trim();
+           if (trimmed.startsWith('path = ')) {
+             var pPath = trimmed.substring(7).trim();
+             pPath = path.normalize(pPath);
+             subs.add(pPath);
+           }
+        }
+      } catch (_) {}
+    }
+    return subs;
+  }
+
+  Directory? _findRepoRoot(Directory dir) {
+    Directory current = dir;
+    int depth = 0;
+    while (depth < 20) {
+      if (_isGitRepo(current)) return current;
+      if (path.equals(current.path, current.parent.path)) break;
+      current = current.parent;
+      depth++;
+    }
+    return null;
   }
 
   Widget _buildDirectoryTree(
     Directory directory,
     DirectoryTreeStateNotifier stateNotifier,
   ) {
-    final entries = directory
-        .listSync()
-        .where((entry) => path.basename(entry.path) != '.git')
-        .where((entry) => widget.filter?.call(entry) ?? true)
-        .toList();
+    List<FileSystemEntity> entries = [];
+    try {
+      entries = directory
+          .listSync()
+          .where((entry) => path.basename(entry.path) != '.git')
+          .where((entry) => widget.filter?.call(entry) ?? true)
+          .toList();
+    } catch (e) {
+      // Ignore error
+    }
+    
+    final repoRoot = _findRepoRoot(directory);
+    final submodules = repoRoot != null ? _getRepoSubmodules(repoRoot) : <String>{};
+    
+    String relativeToRoot = '';
+    if (repoRoot != null) {
+      if (path.equals(repoRoot.path, directory.path)) {
+        relativeToRoot = '';
+      } else if (path.isWithin(repoRoot.path, directory.path)) {
+        relativeToRoot = path.relative(directory.path, from: repoRoot.path);
+      }
+    }
+
+    for (final sub in submodules) {
+      String? childName;
+      if (relativeToRoot.isEmpty) {
+        final parts = path.split(sub);
+        if (parts.isNotEmpty) childName = parts[0];
+      } else {
+        if (path.isWithin(relativeToRoot, sub) || 
+            (path.equals(relativeToRoot, path.dirname(sub)) && path.basename(sub) == path.basename(sub))) { 
+             final rel = path.relative(sub, from: relativeToRoot);
+             final parts = path.split(rel);
+             if (parts.isNotEmpty && !rel.startsWith('..')) {
+               childName = parts[0];
+             }
+        }
+      }
+
+      if (childName != null) {
+         final fullPath = path.join(directory.path, childName);
+         if (!entries.any((e) => path.equals(e.path, fullPath))) {
+           entries.add(Directory(fullPath));
+         }
+      }
+    }
+
     entries.sort((a, b) {
       if (a is Directory && b is File) return -1;
       if (a is File && b is Directory) return 1;
@@ -383,6 +457,15 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
                   if (entry is Directory) {
                     bool isDocxRepo = false;
                     bool isTrackingPkg = entry.path.toLowerCase().endsWith(kTrackingExt);
+                    
+                    bool isSubmodule = false;
+                    if (repoRoot != null) {
+                       final rel = path.relative(entry.path, from: repoRoot.path);
+                       final normalizedRel = path.normalize(rel);
+                       if (submodules.contains(normalizedRel)) {
+                         isSubmodule = true;
+                       }
+                    }
 
                     if (isTrackingPkg) {
                       // Rule: Determine if a .tracking.zip is a folder or file by whether it contains .tracking.zip files
@@ -392,6 +475,8 @@ class _FoldableDirectoryTreeState extends State<FoldableDirectoryTree> {
                             (e) => e.path.toLowerCase().endsWith(kTrackingExt));
                       } catch (_) {}
                       isDocxRepo = !hasSubTracking;
+                    } else if (isSubmodule) {
+                       isDocxRepo = true;
                     } else {
                       // Check if this directory is a docx repo (Solo Project)
                       // Logic: Has .git AND (Has content.docx OR Has doc_content OR Has ONLY .git)
