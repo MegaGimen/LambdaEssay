@@ -2554,17 +2554,23 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
     // Check if it is a folder project (has .gitmodules or no tracking.json)
     // If so, do NOT create tracking.json in root if it's meant to be a container
     // But wait, if it's a container, we just need a name.
+
+    // Fix: If this is the workspace root (container), we should NOT create tracking.json
+    // The container is defined by .tracking_workspace.json
+    final isWorkspaceRoot = await _isWorkspaceRoot(projDir);
     
-    final initial = {
-        'name': packagePath,
-        'packagePath': packagePath,
-        // No docxPath for root project as it is a container
-    };
-      
-    if (repoPath != projDir) {
-        await File(p.join(repoPath, 'tracking.json')).writeAsString(jsonEncode(initial));
-    } else {
-        await _writeTracking(packagePath, initial);
+    if (!isWorkspaceRoot) {
+        final initial = {
+            'name': packagePath,
+            'packagePath': packagePath,
+            // No docxPath for root project as it is a container
+        };
+          
+        if (repoPath != projDir) {
+            await File(p.join(repoPath, 'tracking.json')).writeAsString(jsonEncode(initial));
+        } else {
+            await _writeTracking(packagePath, initial);
+        }
     }
   }
 
