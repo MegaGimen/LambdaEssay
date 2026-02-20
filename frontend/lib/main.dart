@@ -2962,14 +2962,22 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
   Future<void> _onChangeDocxPath() async {
     if (currentProjectName == null) return;
-    final name = currentProjectName!;
+    String targetPath = currentProjectName!;
+    
+    // If we are in a folder project (container) and a sub-repo is selected (pathCtrl is not empty),
+    // we should update the sub-repo's tracking info, not the container's.
+    if (isFolderProject && pathCtrl.text.isNotEmpty) {
+      targetPath = pathCtrl.text;
+    }
+
+    final name = targetPath;
     final docxCtrl = TextEditingController(text: docxPathCtrl.text);
 
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
-          title: Text('修改Docx路径: $name'),
+          title: Text('修改Docx路径: ${p.basename(name)}'),
           content: SizedBox(
             width: 500,
             child: Row(
@@ -4052,15 +4060,13 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                                 ],
                               ),
                             ),
-                            if (currentProjectName != null)
+                            if (currentProjectName != null && pathCtrl.text.trim().isNotEmpty)
                               Padding(
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 8, vertical: 4),
                                 child: Row(
                                   children: [
-                                    Text(isFolderProject
-                                        ? '追踪文件夹的路径: '
-                                        : '追踪文档的路径: '),
+                                    const Text('追踪文件的路径: '),
                                     Expanded(
                                       child: TextField(
                                         controller: docxPathCtrl,
