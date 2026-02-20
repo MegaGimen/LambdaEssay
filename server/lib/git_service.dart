@@ -683,6 +683,11 @@ Future<GraphResponse> _getGraphUnlocked(String repoPath,
   return resp;
 }
 
+bool _isGitRepo(String path) {
+  final gitPath = p.join(path, '.git');
+  return Directory(gitPath).existsSync() || File(gitPath).existsSync();
+}
+
 Future<bool> _isFolderProject(String repoPath) async {
   // Check if it is a folder project (has .gitmodules)
   // We prefer .gitmodules over legacy folder_meta.json
@@ -840,7 +845,7 @@ Future<void> _updateParentSubmodule(String subRepoPath, String author, String me
     if (rootPath == null || p.normalize(rootPath) == p.normalize(subRepoPath)) return;
     
     // Check if rootPath is actually a git repo (it should be)
-    if (!Directory(p.join(rootPath, '.git')).existsSync()) return;
+    if (!_isGitRepo(rootPath)) return;
 
     final relPath = p.relative(subRepoPath, from: rootPath).replaceAll(r'\', '/');
     
@@ -1327,7 +1332,7 @@ Future<Map<String, dynamic>> expandLocalTrackingPackage(String filePath) async {
   if (dir.existsSync()) {
     // Already expanded, check content type
     bool hasTracking = dir.listSync().any((e) => e.path.toLowerCase().endsWith(kTrackingExt));
-    bool hasGit = Directory(p.join(dir.path, '.git')).existsSync();
+    bool hasGit = _isGitRepo(dir.path);
     return {
       'path': filePath,
       'type': hasTracking ? 'folder' : (hasGit ? 'file' : 'folder'),
@@ -1377,7 +1382,7 @@ Future<Map<String, dynamic>> expandLocalTrackingPackage(String filePath) async {
     
     // Check type of expanded content
     bool hasTracking = dir.listSync().any((e) => e.path.toLowerCase().endsWith(kTrackingExt));
-    bool hasGit = Directory(p.join(dir.path, '.git')).existsSync();
+    bool hasGit = _isGitRepo(dir.path);
     
     return {
       'path': targetDir,
@@ -2536,7 +2541,7 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
 
   if (subName.isNotEmpty && subName != '.') {
     final subDir = p.join(projDir, subName);
-    if (Directory(p.join(subDir, '.git')).existsSync() ||
+    if (_isGitRepo(subDir) ||
         File(p.join(subDir, 'tracking.json')).existsSync()) {
       // It exists as a sub-repo, but we are opening the PROJECT (package),
       // so we should stick to the root projDir as the entry point.
@@ -2669,8 +2674,7 @@ Future<Map<String, dynamic>> updateTrackingProject(
     // The root project is the container.
   }
   if (repoPath != null) {
-    final gitDir = Directory(p.join(projDir, '.git'));
-    if (!gitDir.existsSync()) {
+    if (!_isGitRepo(projDir)) {
       print('[updateTrackingProject] No .git at $projDir, trying to resolve');
       // If we are updating the root project, and .git is missing, it might be an empty container.
       // We should NOT try to resolve to a sub-repo unless explicitly asked.
@@ -2753,7 +2757,7 @@ Future<Map<String, dynamic>> updateTrackingProject(
       }
 
       // Ensure repo is initialized if it doesn't exist (e.g. empty project populated for the first time)
-      if (!Directory(p.join(projDir, '.git')).existsSync()) {
+      if (!_isGitRepo(projDir)) {
         // New: Check if we should initialize in a subfolder (e.g. example.tracking.zip -> example/.git)
         final subName = _trackingBaseName(normalizedName);
         if (subName.isNotEmpty && subName != '.') {
@@ -3514,7 +3518,6 @@ Future<Map<String, dynamic>> pullFromRemote(
     final remoteName = effectiveRemoteRepoName.toLowerCase();
     final projDir = repoPath;
     final dir = Directory(projDir);
-    final gitDir = Directory(p.join(projDir, '.git'));
 
     final owner = await _resolveRepoOwner(effectiveRemoteRepoName, token);
     final remoteUrl =
@@ -3522,7 +3525,7 @@ Future<Map<String, dynamic>> pullFromRemote(
 
     // Map<String, dynamic>? savedTracking;
     // Map<String, dynamic>? savedTracking;
-    bool isFresh = !dir.existsSync() || !gitDir.existsSync();
+    bool isFresh = !dir.existsSync() || !_isGitRepo(projDir);
 
     if (!isFresh && force) {
       try {

@@ -3384,7 +3384,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             context: context, 
             builder: (ctx) => AlertDialog(
               title: const Text('无法打开'),
-              content: Text('本文件尚未被推送到云端或您没有权限打开\nError: $e'),
+              content: const Text('本文件尚未被推送到云端或您没有权限打开'),
               actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('确定'))]
             )
         );
