@@ -3492,8 +3492,7 @@ Future<Map<String, dynamic>> pullFromRemote(
   
   print('Debug: pullFromRemote - nameOrPath: $nameOrPath, targetRepoName: $targetRepoName, localTrackingZipPath: $localTrackingZipPath, recursive: $recursive');
   final repoPath = (localTrackingZipPath != null && localTrackingZipPath.isNotEmpty)
-      ? p.join(
-          _workspaceDirForPackage(localTrackingZipPath), p.basename(nameOrPath))
+      ? _workspaceDirForPackage(localTrackingZipPath)
       : (p.isAbsolute(nameOrPath) ? nameOrPath : _projectDir(nameOrPath));
   return _withRepoLock(repoPath, () async {
     String effectiveRemoteRepoName;
@@ -3649,6 +3648,22 @@ Future<Map<String, dynamic>> pullFromRemote(
       if (!parentDir.existsSync()) {
         parentDir.createSync(recursive: true);
       }
+      
+      // Ensure target directory is clean before cloning
+      if (Directory(projDir).existsSync()) {
+        try {
+          // If directory exists, git clone will fail if not empty.
+          // Since isFresh is true, we should be safe to clear it.
+          // However, we should be careful if it's the workspace root itself.
+          // If localTrackingZipPath is set, projDir IS the workspace root.
+          // We can delete the content inside or the directory itself.
+          // Deleting directory itself is cleaner.
+          Directory(projDir).deleteSync(recursive: true);
+        } catch (e) {
+          print('Warning: Failed to clear existing project dir: $e');
+        }
+      }
+      
       final res = await Process.run(
         'git',
         ['clone', '-o', remoteName, remoteUrl, projDir],
