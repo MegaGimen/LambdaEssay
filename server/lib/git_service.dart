@@ -3395,6 +3395,20 @@ Future<void> pushToRemote(String repoPath, String username, String token,
       // Automatically setup webhook
       print('hook OK');
       await _ensureWebhook(repoName, owner, token);
+
+      // Update parent submodule URL if applicable
+      if (parentFolder != null && !p.equals(parentFolder, repoPath)) {
+        final relativePath = p.relative(repoPath, from: parentFolder);
+        final submodulePath = relativePath.replaceAll(r'\', '/');
+        print('Updating parent submodule URL for $submodulePath in $parentFolder');
+        try {
+          await _runGit(['submodule', 'set-url', submodulePath, remoteUrl], parentFolder);
+          await _runGit(['add', '.gitmodules'], parentFolder);
+          await _runGit(['commit', '-m', 'Update submodule remote url for $submodulePath'], parentFolder, throwOnError: false);
+        } catch (e) {
+          print('Warning: Failed to update parent submodule URL: $e');
+        }
+      }
     } catch (e) {
       print('Git push failed with error: $e');
       if (!force) {
