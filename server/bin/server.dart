@@ -1545,8 +1545,7 @@ Future<void> main(List<String> args) async {
               final commits = jsonDecode(commitResp.body) as List;
               if (commits.isNotEmpty) {
                 final msg = (commits[0]['commit']['message'] as String).trim();
-                if (msg == 'init folder_meta' ||
-                    msg == 'Update folder metadata') {
+                if (msg.contains('[folder project213897]')) {
                   filteredRepoNames.add((repoName as String).toLowerCase());
                 }
               }

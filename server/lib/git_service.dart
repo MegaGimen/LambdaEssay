@@ -856,7 +856,7 @@ Future<void> _updateParentSubmodule(String subRepoPath, String author, String me
         }
 
         // git commit in root
-        final parentMsg = 'Add submodule $relPath';
+        final parentMsg = 'Add submodule $relPath[folder project213897]';
         final safeAuthor = author.trim().isEmpty ? 'Unknown' : author.trim();
         final authorArg = '$safeAuthor <$safeAuthor@gitdocx.local>';
         
@@ -2264,7 +2264,7 @@ Future<void> _addDocxSubmodule(String rootPath, String relDir, String docxPath) 
    await _runGit(['config', '--file', '.gitmodules', 'submodule.$submodulePath.url', remoteUrl], rootPath);
    
    await _runGit(['add', '.gitmodules'], rootPath);
-   await _runGit(['commit', '-m', 'Add submodule $docName'], rootPath);
+   await _runGit(['commit', '-m', 'Add submodule $docName[folder project213897]'], rootPath);
 }
 
 Future<void> _initSingleRepo(String repoPath, String? sourceDocxPath) async {
@@ -3404,7 +3404,7 @@ Future<void> pushToRemote(String repoPath, String username, String token,
         try {
           await _runGit(['submodule', 'set-url', submodulePath, remoteUrl], parentFolder);
           await _runGit(['add', '.gitmodules'], parentFolder);
-          await _runGit(['commit', '-m', 'Update submodule remote url for $submodulePath'], parentFolder, throwOnError: false);
+          await _runGit(['commit', '-m', 'Update submodule remote url for $submodulePath [folder project213897]'], parentFolder, throwOnError: false);
         } catch (e) {
           print('Warning: Failed to update parent submodule URL: $e');
         }
