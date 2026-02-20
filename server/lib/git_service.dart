@@ -841,7 +841,7 @@ Future<void> _updateParentSubmodule(String subRepoPath, String author, String me
         }
 
         // git commit in root
-        final parentMsg = 'Update submodule $relPath: $message';
+        final parentMsg = 'Add submodule $relPath';
         final safeAuthor = author.trim().isEmpty ? 'Unknown' : author.trim();
         final authorArg = '$safeAuthor <$safeAuthor@gitdocx.local>';
         
@@ -1258,8 +1258,8 @@ Future<String?> _findWorkspaceRoot(String repoPath) async {
   String current = p.normalize(repoPath);
   final root = p.rootPrefix(current);
   while (true) {
-    final metaFile = File(p.join(current, "folder_meta.json"));//让他包含的是folder_meta而不是workspace最基础的json文件
-    if (metaFile.existsSync()) return current;
+    if (File(p.join(current, ".gitmodules")).existsSync()) return current;
+    if (File(p.join(current, ".tracking_workspace.json")).existsSync()) return current;
     final parent = p.dirname(current);
     if (parent == current || parent == root) break;
     current = parent;
@@ -2119,10 +2119,7 @@ Future<void> _ensureFolderProjectStructure(String projDir, String docxPath,
   // No-op
 }
 
-Future<void> _scanAndUpdateFolderMeta(String projDir, String docxPath,
-    {String trackingExt = ''}) async {
-  // No-op
-}
+
 
 Future<Map<String, dynamic>> createTrackingProject(
     String name, String? docxPath) async {
@@ -3318,9 +3315,9 @@ Future<void> pushToRemote(String repoPath, String username, String token,
     } else {
       final relativePath = p.relative(repoPath, from: parentFolder);
       final normalizedRelPath = relativePath.replaceAll(r'\', '/');
-      effectiveRemoteRepoName = _calculateHash(normalizedRelPath);
+      effectiveRemoteRepoName = normalizedRelPath.replaceAll(r'\', '_').replaceAll('/', '_');
       print(
-          'Pushing sub-repo "$repoName" as hashed remote: $effectiveRemoteRepoName (rel: $normalizedRelPath)');
+          'Pushing sub-repo "$repoName" as remote: $effectiveRemoteRepoName (rel: $normalizedRelPath)');
     }
 
     String owner;
@@ -3527,9 +3524,9 @@ Future<Map<String, dynamic>> pullFromRemote(
       } else {
         final relativePath = p.relative(repoPath, from: parentFolder);
         final normalizedRelPath = relativePath.replaceAll(r'\', '/');
-        effectiveRemoteRepoName = _calculateHash(normalizedRelPath);
+        effectiveRemoteRepoName = normalizedRelPath.replaceAll(r'\', '_').replaceAll('/', '_');
         print(
-            'Pulling sub-repo as hashed remote: $effectiveRemoteRepoName (rel: $normalizedRelPath)');
+            'Pulling sub-repo as remote: $effectiveRemoteRepoName (rel: $normalizedRelPath)');
       }
     }
 
@@ -3792,7 +3789,7 @@ Future<Map<String, dynamic>> checkPullStatus(
     if (parentRoot != null && !p.equals(parentRoot, projDir)) {
       final relativePath = p.relative(projDir, from: parentRoot);
       final normalizedRelPath = relativePath.replaceAll(r'\', '/');
-      effectiveRemoteRepoName = _calculateHash(normalizedRelPath);
+      effectiveRemoteRepoName = normalizedRelPath.replaceAll(r'\', '_').replaceAll('/', '_');
     } else {
       effectiveRemoteRepoName = p.basename(projDir);
     }
@@ -3910,7 +3907,7 @@ Future<void> rebasePull(String repoName, String username, String token) async {
   if (parentRoot != null && !p.equals(parentRoot, projDir)) {
     final relativePath = p.relative(projDir, from: parentRoot);
     final normalizedRelPath = relativePath.replaceAll(r'\', '/');
-    effectiveRemoteRepoName = _calculateHash(normalizedRelPath);
+    effectiveRemoteRepoName = normalizedRelPath.replaceAll(r'\', '_').replaceAll('/', '_');
   } else {
     effectiveRemoteRepoName = p.basename(projDir);
   }
@@ -3984,7 +3981,7 @@ Future<PullPreviewResult> previewPull(
     if (parentRoot != null && !p.equals(parentRoot, projDir)) {
       final relativePath = p.relative(projDir, from: parentRoot);
       final normalizedRelPath = relativePath.replaceAll(r'\\', '/');
-      effectiveRemoteRepoName = _calculateHash(normalizedRelPath);
+      effectiveRemoteRepoName = normalizedRelPath.replaceAll(r'\', '_').replaceAll('/', '_');
     } else {
       effectiveRemoteRepoName = p.basename(projDir);
     }

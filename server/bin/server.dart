@@ -78,24 +78,7 @@ Future<void> _killPort(int port) async {
 }
 
 final ProcessManager _processManager = const LocalProcessManager();
-Process? _pythonApiProcess;
 
-/// 检查端口是否被占用
-Future<bool> _isPortInUse(int port) async {
-  try {
-    final result = await Process.run('netstat', ['-ano']);
-    if (result.exitCode != 0) return false;
-    final lines = (result.stdout as String).split(RegExp(r'\r?\n'));
-    for (final line in lines) {
-      if (line.contains(':$port') && line.contains('LISTENING')) {
-        return true;
-      }
-    }
-    return false;
-  } catch (e) {
-    return false;
-  }
-}
 
 Future<void> main(List<String> args) async {
   if (args.contains('--debugMode')) {
@@ -132,18 +115,7 @@ Future<void> main(List<String> args) async {
     print('Failed to start Heidegger: $e');
   }
 
-  // Start Python AI Service (LambdaLinker) in background
-  try {
-    final scriptDir = p.dirname(Platform.script.toFilePath());
-    // scriptDir is .../server/bin
-    // projectRoot is .../LambdaEssay/
-    final projectRoot = p.dirname(p.dirname(scriptDir));
-    final lambdaLinkerDir = p.join(projectRoot, 'LambdaLinker');
-    final apiServerPath = p.join(lambdaLinkerDir, 'api_server.py');
-    final venvPython = p.join(lambdaLinkerDir, 'venv', 'Scripts', 'python.exe');
-  } catch (e) {
-    print('Failed to start Python AI Service: $e');
-  }
+
 
   await initTrackingService();
   final router = Router();
