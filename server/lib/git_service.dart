@@ -709,21 +709,44 @@ Future<bool> _isFolderProject(String repoPath) async {
   return true;
 }
 
+Future<List<String>> getRemotes(String repoPath) async {
+  try {
+    final lines = await _runGit(['remote'], repoPath);
+    return lines.where((l) => l.trim().isNotEmpty).map((l) => l.trim()).toList();
+  } catch (e) {
+    print('Error getting remotes: $e');
+    return [];
+  }
+}
+
 Future<void> pushRepo(String repoPath) async {
   return _withRepoLock(repoPath, () async {
     print('[Push] Pushing $repoPath');
-    await _runGit(['push'], repoPath);
+    // Ensure we are on a branch
+    final current = await getCurrentBranch(repoPath);
+    if (current == null) {
+        throw Exception('Not on any branch. Cannot push.');
+    }
     
-    // Auto-push parent if this is a sub-repo
-    if (!await _isFolderProject(repoPath)) {
-        final rootPath = await _findWorkspaceRoot(repoPath);
-        if (rootPath != null && p.normalize(rootPath) != p.normalize(repoPath)) {
-             print('[AutoPush] Pushing parent: $rootPath');
-             try {
-                 await _runGit(['push'], rootPath);
-             } catch (e) {
-                 print('[AutoPush] Parent push failed: $e');
-             }
+    // Check if remote exists, if so push to it.
+    // We assume 'origin' or the first remote.
+    // If no upstream is configured, we set it.
+    
+    final remotes = await _runGit(['remote'], repoPath);
+    if (remotes.isEmpty) {
+        throw Exception('No remote configured for this repository.');
+    }
+    
+    final remote = remotes.first.trim();
+    
+    try {
+        await _runGit(['push', remote, current], repoPath);
+    } catch (e) {
+        // Try setting upstream
+        if (e.toString().contains('no upstream branch') || e.toString().contains('set-upstream')) {
+             await _runGit(['push', '--set-upstream', remote, current], repoPath);
+        } else {
+            rethrow;
         }
     }
   });
@@ -797,14 +820,6 @@ Future<String> cloneAndPackageProject(String remoteUrl, String savePath) async {
 
 
 
-Future<void> _notifyParentFolderProject(String repoPath) async {
-  // Deprecated: No-op
-}
-
-Future<void> _expandFolderProject(String repoPath,
-    {bool structureOnly = false}) async {
-    // Deprecated: No-op
-}
 
 Future<bool> _repoHasCommit(String repoPath, String commitId) async {
   try {
@@ -952,8 +967,7 @@ Future<void> addRemote(String repoPath, String name, String url) async {
       await _runGit(['remote', 'add', name, url], repoPath);
     }
 
-    // Notify parent folder project if applicable
-    await _notifyParentFolderProject(repoPath);
+    // await _notifyParentFolderProject(repoPath);
   } catch (e) {
     print('Failed to add/update remote $name: $e');
   }
@@ -2592,9 +2606,7 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
         trackingExt: kTrackingExt, packagePath: pkgPath);
   }
 
-  // Always try to notify parent folder project (if any) to keep metadata fresh
-  // This covers the case where we open a sub-project directly
-  await _notifyParentFolderProject(repoPath);
+  // await _notifyParentFolderProject(repoPath);
 
   // Re-check folder status after potential structure init
   final isFolder = await _isFolderProject(repoPath);
@@ -2699,7 +2711,7 @@ Future<Map<String, dynamic>> updateTrackingProject(
       if (isRoot) {
           print('[updateTrackingProject] Root project detected. Treating as folder.');
           
-          await _notifyParentFolderProject(projDir);
+
           await syncFolderProject(name);
 
           try {
@@ -2803,7 +2815,7 @@ Future<Map<String, dynamic>> updateTrackingProject(
         print(
             '[Perf] Folder project updated. Skipping git operations on root.');
 
-        await _notifyParentFolderProject(projDir);
+
         await syncFolderProject(name);
 
         try {
@@ -2905,7 +2917,7 @@ Future<Map<String, dynamic>> updateTrackingProject(
       print(
           '[Perf] updateTrackingProject Total Time: ${totalSw.elapsedMilliseconds}ms');
 
-      await _notifyParentFolderProject(projDir);
+
 
       try {
         await _persistTrackingPackageForRepo(projDir);
@@ -3393,57 +3405,7 @@ Future<void> pushToRemote(String repoPath, String username, String token,
       }
     }
 
-    // Check for parent folder project and update/push if needed
-    try {
-      final baseDir = _baseDir();
-      final workspaceBase = _workspaceBaseDir();
-      Directory current = Directory(p.dirname(repoPath));
 
-      if (p.isWithin(baseDir, repoPath) || p.isWithin(workspaceBase, repoPath)) {
-        while (true) {
-          final path = current.path;
-          if (p.equals(path, baseDir) || p.equals(path, workspaceBase)) break;
-          if (!p.isWithin(baseDir, path) && !p.isWithin(workspaceBase, path)) break;
-
-          if (File(p.join(path, 'folder_meta.json')).existsSync()) {
-            print('Found parent folder project: $path');
-            // Recursively push parent
-            try {
-              await pushToRemote(path, username, token, force: force);
-            } catch (e) {
-              print(
-                  'Push to parent failed: $e. Attempting rebase pull and retry...');
-              try {
-                // If push failed (likely behind), try to pull --rebase
-                final remoteName = p.basename(path).toLowerCase();
-                final parentRemoteUrl =
-                    'http://$username:$token@47.242.109.145:3000/${await _resolveRepoOwner(remoteName, token)}/$remoteName.git';
-                // Ensure unique remote logic for parent too
-                await _ensureUniqueRemote(path, remoteName, parentRemoteUrl);
-
-                await _runGit(['pull', '--rebase', remoteName, 'master'], path);
-                print('Rebase successful. Retrying push...');
-                await pushToRemote(path, username, token, force: force);
-              } catch (retryErr) {
-                print('Retry push failed: $retryErr');
-                // Rethrow original error or new error?
-                // Let's print but not crash the whole chain?
-                // Or maybe we SHOULD crash to let user know sync failed.
-                throw Exception(
-                    'Failed to sync parent folder "$path": $retryErr');
-              }
-            }
-            break;
-          }
-
-          final parent = current.parent;
-          if (parent.path == current.path) break;
-          current = parent;
-        }
-      }
-    } catch (e) {
-      print('Failed to push parent folder: $e');
-    }
   });
 }
 
@@ -3748,8 +3710,8 @@ Future<Map<String, dynamic>> pullFromRemote(
 
     if (hasGitModules) {
       // Folder projects should not have tracking.json or content.docx in the root
-      print('Debug: Folder project detected. Expanding structure...');
-      await _expandFolderProject(projDir, structureOnly: isFresh);
+      print('Debug: Folder project detected. Expanding structure... (Skipped)');
+      // await _expandFolderProject(projDir, structureOnly: isFresh);
     } else {
        // Only sync external if it's NOT a folder project
        // This prevents content.docx creation in folder project roots
@@ -3758,9 +3720,9 @@ Future<Map<String, dynamic>> pullFromRemote(
     }
 
     // Notify parent folder project if applicable (only for folder projects)
-    if (hasGitModules) {
-      await _notifyParentFolderProject(projDir);
-    }
+    // if (hasGitModules) {
+    //   await _notifyParentFolderProject(projDir);
+    // }
 
     try {
       await _persistTrackingPackageForRepo(projDir);

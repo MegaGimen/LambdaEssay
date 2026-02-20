@@ -1,6 +1,5 @@
 import 'package:flutter/foundation.dart';
 import 'dart:convert';
-import 'dart:typed_data';
 import 'dart:math' as math;
 import 'package:path/path.dart' as p;
 import 'dart:io';
@@ -1240,6 +1239,102 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         },
       ),
     );
+  }
+
+  Future<void> _onRootPush() async {
+    if (!await _ensureToken()) {
+      setState(() => error = '请先登录');
+      return;
+    }
+    final rootPath = packageRootCtrl.text.trim();
+    if (rootPath.isEmpty) return;
+
+    setState(() {
+      loading = true;
+      error = null;
+    });
+
+    try {
+      // 1. Check remotes
+      final remotesResp = await _postJson('$baseUrl/get_remotes', {
+        'repoPath': rootPath
+      });
+      final remotes = (remotesResp['remotes'] as List).cast<String>();
+      
+      if (remotes.isEmpty) {
+        // Prompt to add remote
+        if (!mounted) return;
+        final didAdd = await _showAddRemoteDialog(rootPath);
+        if (!didAdd) {
+            setState(() => loading = false);
+            return;
+        }
+      }
+
+      // 2. Push
+      await _postJson('$baseUrl/push', {
+        'repoPath': rootPath,
+        'username': _username,
+        'token': _token,
+      });
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('根仓库推送成功'))
+      );
+
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => error = '根仓库推送失败: $e');
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  Future<bool> _showAddRemoteDialog(String repoPath) async {
+      final nameCtrl = TextEditingController(text: 'origin');
+      final urlCtrl = TextEditingController();
+      
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+            title: const Text('添加远程仓库'),
+            content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                    const Text('根仓库尚未配置远程仓库，请先添加。'),
+                    const SizedBox(height: 8),
+                    TextField(
+                        controller: nameCtrl,
+                        decoration: const InputDecoration(labelText: 'Remote Name', border: OutlineInputBorder()),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                        controller: urlCtrl,
+                        decoration: const InputDecoration(labelText: 'Remote URL', border: OutlineInputBorder()),
+                    ),
+                ],
+            ),
+            actions: [
+                TextButton(onPressed: ()=>Navigator.pop(ctx, false), child: const Text('取消')),
+                ElevatedButton(onPressed: ()=>Navigator.pop(ctx, true), child: const Text('添加')),
+            ],
+        )
+      );
+      
+      if (ok == true) {
+          final name = nameCtrl.text.trim();
+          final url = urlCtrl.text.trim();
+          if (name.isNotEmpty && url.isNotEmpty) {
+              await _postJson('$baseUrl/remote/add', {
+                  'repoPath': repoPath,
+                  'name': name,
+                  'url': url
+              });
+              return true;
+          }
+      }
+      return false;
   }
 
   Future<void> _onPush({bool force = false}) async {
@@ -3110,26 +3205,6 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     }
   }
 
-  Future<void> _onSyncFolder() async {
-    if (currentProjectName == null) return;
-    setState(() => loading = true);
-    try {
-      final resp = await _postJson('http://localhost:8080/track/sync_folder',
-          {'packagePath': currentProjectName});
-      if (resp['status'] == 'ok') {
-        // Reload project list/repos
-        await _openProject(currentProjectName!, isFolderProject: true);
-        if (!mounted) return;
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('文件夹同步完成')));
-      }
-    } catch (e) {
-      if (mounted) setState(() => error = e.toString());
-    } finally {
-      if (mounted) setState(() => loading = false);
-    }
-  }
-
   Future<void> _handleFileSecondaryTap(
       File file, TapDownDetails details) async {
     print("Calling _handleFileSecondaryTap");
@@ -3417,7 +3492,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       print("DEBUG: Opening repo: ${targetRepo['repoPath']}");
       setState(() {
         pathCtrl.text = targetRepo!['repoPath'];
-        docxPathCtrl.text = targetRepo!['docxPath'] ?? '';
+        docxPathCtrl.text = targetRepo['docxPath'] ?? '';
       });
       await _onUpdateRepoAction(
           opIdentical: true,
@@ -3530,6 +3605,13 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                             fontWeight: FontWeight.bold,
                             color: Colors.blue,
                             fontSize: 13))),
+                IconButton(
+                    icon: const Icon(Icons.cloud_upload, size: 16, color: Colors.blue),
+                    tooltip: '推送根仓库',
+                    onPressed: _onRootPush,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                )
               ]),
             ),
           if (_repoUpdates.isNotEmpty)
@@ -6828,9 +6910,11 @@ class _GraphViewState extends State<_GraphView>
     final apy = p.dy - a.dy;
     final ab2 = abx * abx + aby * aby;
     double t = ab2 == 0 ? 0 : (apx * abx + apy * aby) / ab2;
-    if (t < 0)
+    if (t < 0) {
       t = 0;
-    else if (t > 1) t = 1;
+    } else if (t > 1) {
+      t = 1;
+    }
     final cx = a.dx + t * abx;
     final cy = a.dy + t * aby;
     final dx = p.dx - cx;

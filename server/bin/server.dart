@@ -1561,15 +1561,6 @@ Future<void> main(List<String> args) async {
 
         // Unify: Return all repositories without filtering by folder_meta.json
         final results = filteredRepoNames.map((name) {
-          // Use 'isFolder' as generic flag or true since everything is unified?
-          // Or just pass the repo object?
-          // The frontend expects {name, isFolder, ...}?
-          // Let's keep the structure but set isFolder to true (or check logic if needed for icon?)
-          // User said "Unify all as .tracking.zip", so maybe everything is a "folder project" in concept?
-          // But frontend might use isFolder to decide icon.
-          // Let's return the original repo object structure if possible, or the simplified list.
-          // Previous code returned [{'name': name, 'isFolder': isFolder}]
-          // Let's return just that.
           return {'name': name, 'isFolder': true};
         }).toList();
 
@@ -1605,6 +1596,52 @@ Future<void> main(List<String> args) async {
     } catch (e) {
       return _cors(Response(500,
           body: jsonEncode({'error': 'Remote list failed: $e'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/remote/add', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoPath = _sanitizePath(data['repoPath'] as String?);
+    final name = (data['name'] as String?)?.trim() ?? '';
+    final url = (data['url'] as String?)?.trim() ?? '';
+
+    if (repoPath.isEmpty || name.isEmpty || url.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoPath, name, url required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      await addRemote(repoPath, name, url);
+      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/get_remotes', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoPath = _sanitizePath(data['repoPath'] as String?);
+
+    if (repoPath.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoPath required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      final remotes = await getRemotes(repoPath);
+      return _cors(Response.ok(jsonEncode({'remotes': remotes}), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
   });
