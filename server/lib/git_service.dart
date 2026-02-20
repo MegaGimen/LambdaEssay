@@ -758,8 +758,9 @@ Future<void> pullRepo(String repoPath) async {
         await _runGit(['pull'], repoPath);
         
         if (await _isFolderProject(repoPath)) {
-            print('[Pull] Updating submodules for $repoPath');
-            await _runGit(['submodule', 'update', '--init', '--recursive'], repoPath);
+            print('[Pull] Updating submodules structure only (gitmodules)...');
+            // Do not recursive update content. Just init structure.
+            await _runGit(['submodule', 'init'], repoPath);
         }
     });
 }
@@ -800,7 +801,8 @@ Future<String> cloneAndPackageProject(String remoteUrl, String savePath) async {
     final tmpDir = await Directory.systemTemp.createTemp('clone_pkg_');
     try {
         print('[Clone] Cloning $remoteUrl to ${tmpDir.path}');
-        final res = await Process.run('git', ['clone', '--recursive', remoteUrl, tmpDir.path]);
+        // Remove --recursive to avoid pulling submodules
+        final res = await Process.run('git', ['clone', remoteUrl, tmpDir.path]);
         if (res.exitCode != 0) {
             throw Exception('Clone failed: ${res.stderr}');
         }
@@ -3482,9 +3484,13 @@ Future<void> _checkIfBehind(String repoPath, String remoteUrl) async {
 
 Future<Map<String, dynamic>> pullFromRemote(
     String nameOrPath, String username, String token,
-    {bool force = false, String? targetRepoName, String? localTrackingZipPath, String? currentPath}) async {
+    {bool force = false,
+    String? targetRepoName,
+    String? localTrackingZipPath,
+    String? currentPath,
+    bool recursive = false}) async {
   
-  print('Debug: pullFromRemote - nameOrPath: $nameOrPath, targetRepoName: $targetRepoName, localTrackingZipPath: $localTrackingZipPath');
+  print('Debug: pullFromRemote - nameOrPath: $nameOrPath, targetRepoName: $targetRepoName, localTrackingZipPath: $localTrackingZipPath, recursive: $recursive');
   final repoPath = (localTrackingZipPath != null && localTrackingZipPath.isNotEmpty)
       ? p.join(
           _workspaceDirForPackage(localTrackingZipPath), p.basename(nameOrPath))
@@ -3565,7 +3571,16 @@ Future<Map<String, dynamic>> pullFromRemote(
           }
           
           // Update submodules
-          await _runGit(['submodule', 'update', '--init', '--recursive'], projDir);
+          if (recursive) {
+             print('[Pull] Updating submodules (recursive)...');
+             await _runGit(['submodule', 'update', '--init', '--recursive'], projDir);
+          } else {
+             print('[Pull] Updating submodules structure only (gitmodules)...');
+             // We already pulled the container, so .gitmodules is updated.
+             // We might want to sync the submodule registration but NOT download content.
+             // 'git submodule init' registers them in .git/config but doesn't download.
+             await _runGit(['submodule', 'init'], projDir);
+          }
 
         } catch (e) {
           print('Folder project pull failed: $e');

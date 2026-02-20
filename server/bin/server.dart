@@ -2059,9 +2059,10 @@ Future<void> main(List<String> args) async {
     final localTrackingZipPath =
         (data['localTrackingZipPath'] as String?)?.trim();
     final currentPath = _sanitizePath(data['currentPath'] as String?);
+    final recursive = data['recursive'] == true;
 
     print(
-        'Debug: /pull request - repoPath: $repoPath, repoName: $repoName, targetRepoName: $targetRepoName, localTrackingZipPath: $localTrackingZipPath');
+        'Debug: /pull request - repoPath: $repoPath, repoName: $repoName, targetRepoName: $targetRepoName, localTrackingZipPath: $localTrackingZipPath, recursive: $recursive');
 
     final pathArg = repoPath.isNotEmpty ? repoPath : repoName;
 
@@ -2076,7 +2077,8 @@ Future<void> main(List<String> args) async {
           force: force,
           targetRepoName: targetRepoName,
           localTrackingZipPath: localTrackingZipPath,
-          currentPath: currentPath);
+          currentPath: currentPath,
+          recursive: recursive);
       print("pullResult=${result}");
       return _cors(Response.ok(jsonEncode(result),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
