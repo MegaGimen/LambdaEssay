@@ -3652,9 +3652,9 @@ Future<Map<String, dynamic>> pullFromRemote(
       
 
       try {
-        final parentDir = Directory(projDir).parent;
+        // final parentDir = Directory(projDir).parent;
         final globalMetaFile =
-            File(p.join(parentDir.path, '.tracking_workspace.json'));
+            File(p.join(projDir, '.tracking_workspace.json'));
         Map<String, dynamic> meta = {};
         if (await globalMetaFile.exists()) {
           meta = jsonDecode(await globalMetaFile.readAsString());
@@ -3674,7 +3674,7 @@ Future<Map<String, dynamic>> pullFromRemote(
 
         // Pack the tracking package immediately after cloning and setup
         print('Packing initial structure to $localTrackingZipPath');
-        await _exportFolderToTrackingPackage(parentDir.path, localTrackingZipPath);
+        await _exportFolderToTrackingPackage(projDir, localTrackingZipPath);
         print('Packing completed successfully');
 
       } catch (e, s) {
