@@ -3585,22 +3585,118 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
   Future<void> _fetchRepoBackground(String repoPath) async {
     try {
-      // Silent fetch
-      final result =
+      print('[BgFetch] Checking repo: $repoPath');
+      // 1. Silent fetch to update remote refs
+      final fetchRes =
           await Process.run('git', ['fetch'], workingDirectory: repoPath);
-      if (result.exitCode == 0) {
-        final output = result.stderr.toString();
-        // If fetch updated something, it usually prints "->" or "new tag" etc.
-        if (output.contains('->') ||
-            output.contains('new branch') ||
-            output.contains('new tag') ||
-            output.contains('FETCH_HEAD')) {
-          if (mounted) {
-            setState(() {
-              _repoUpdates[repoPath] = true;
-            });
+      if (fetchRes.exitCode != 0) {
+        print('[BgFetch] Fetch failed for $repoPath: ${fetchRes.stderr}');
+        return;
+      }
+
+      // 2. Check local branches and their upstreams/remotes for any SHA1 difference
+      // Get local branches: name, upstream, sha1
+      final localRes = await Process.run(
+          'git',
+          [
+            'for-each-ref',
+            '--format=%(refname:short)|%(upstream:short)|%(objectname)',
+            'refs/heads'
+          ],
+          workingDirectory: repoPath);
+
+      if (localRes.exitCode != 0) return;
+      final localOutput = localRes.stdout.toString().trim();
+      if (localOutput.isEmpty) return;
+
+      // Get remote branches: name, sha1
+      final remoteRes = await Process.run(
+          'git',
+          [
+            'for-each-ref',
+            '--format=%(refname:short)|%(objectname)',
+            'refs/remotes'
+          ],
+          workingDirectory: repoPath);
+      
+      final remoteMap = <String, String>{};
+      final Set<String> knownRemotes = {};
+
+      if (remoteRes.exitCode == 0) {
+        final remoteOutput = remoteRes.stdout.toString().trim();
+        if (remoteOutput.isNotEmpty) {
+           for (final line in LineSplitter.split(remoteOutput)) {
+             final parts = line.split('|');
+             if (parts.length >= 2) {
+               final rName = parts[0].trim();
+               remoteMap[rName] = parts[1].trim();
+               final splitIdx = rName.indexOf('/');
+               if (splitIdx > 0) {
+                 knownRemotes.add(rName.substring(0, splitIdx));
+               }
+             }
+           }
+        }
+      }
+
+      print('[BgFetch] Remote Map: $remoteMap');
+      print('[BgFetch] Known Remotes: $knownRemotes');
+
+      bool hasUpdate = false;
+      final localLines = LineSplitter.split(localOutput);
+
+      for (final line in localLines) {
+        final parts = line.split('|');
+        if (parts.length < 3) continue;
+        
+        final localBranch = parts[0].trim();
+        final upstream = parts[1].trim();
+        final localSha = parts[2].trim();
+
+        print('[BgFetch] Checking branch $localBranch (upstream: $upstream, sha: $localSha)');
+
+        String targetRemoteBranch = upstream;
+        if (targetRemoteBranch.isEmpty) {
+          // Fallback logic if no upstream is set
+          // Try to find a matching branch in ANY known remote
+          // Priority: origin, then others
+          if (knownRemotes.contains('origin') && remoteMap.containsKey('origin/$localBranch')) {
+            targetRemoteBranch = 'origin/$localBranch';
+          } else {
+             // If origin not found or branch not in origin, try other remotes
+             for (final r in knownRemotes) {
+               if (remoteMap.containsKey('$r/$localBranch')) {
+                 targetRemoteBranch = '$r/$localBranch';
+                 break;
+               }
+             }
           }
         }
+
+        if (targetRemoteBranch.isNotEmpty && remoteMap.containsKey(targetRemoteBranch)) {
+          final remoteSha = remoteMap[targetRemoteBranch]!;
+          print('[BgFetch] Comparing with $targetRemoteBranch (sha: $remoteSha)');
+          if (remoteSha != localSha) {
+            print('[BgFetch] Update detected! $localSha != $remoteSha');
+            hasUpdate = true;
+            break; 
+          } else {
+            print('[BgFetch] Up to date.');
+          }
+        } else {
+          print('[BgFetch] No matching remote branch found for $localBranch');
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          if (hasUpdate) {
+            _repoUpdates[repoPath] = true;
+          } else {
+            // Explicitly clear the update flag if no updates found
+            _repoUpdates.remove(repoPath);
+          }
+        });
       }
     } catch (e) {
       print('Bg fetch error: $e');
