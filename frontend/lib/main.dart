@@ -3699,7 +3699,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                                   size: 6, color: Colors.red),
                               const SizedBox(width: 4),
                               Expanded(
-                                  child: Text(p.basename(path),
+                                  child: Text(
+                                      p.relative(path, from: rootPath),
                                       overflow: TextOverflow.ellipsis,
                                       style: const TextStyle(fontSize: 12))),
                             ]),
