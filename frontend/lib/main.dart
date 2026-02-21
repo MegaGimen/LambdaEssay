@@ -6130,6 +6130,7 @@ class _GraphViewState extends State<_GraphView>
                     child: GestureDetector(
                       onDoubleTap: () {},
                       onDoubleTapDown: (d) {
+                        if (widget.readOnly) return;
                         final hit = _hitTest(d.localPosition, widget.data);
                         if (hit != null) {
                           _showNodeActionDialog(hit);
@@ -6491,7 +6492,7 @@ class _GraphViewState extends State<_GraphView>
                         const SizedBox(height: 6),
                         for (final b in widget.data.branches)
                           InkWell(
-                            onDoubleTap: () => _doSwitchBranch(b.name),
+                            onDoubleTap: widget.readOnly ? null : () => _doSwitchBranch(b.name),
                             child: Padding(
                               padding: const EdgeInsets.symmetric(vertical: 4),
                               child: Row(
