@@ -588,12 +588,13 @@ Future<void> main(List<String> args) async {
           body: jsonEncode({'error': 'path not found'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
-    final gitDir = Directory(p.join(normalized, '.git'));
-    if (!gitDir.existsSync()) {
+    if (!isGitRepo(normalized)) {
+      print('Debug: /branches - Path is not a git repo: $normalized');
       return _cors(Response(400,
           body: jsonEncode({'error': 'not a git repo'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
+    print('Debug: /branches - Fetching branches for $normalized');
     try {
       final branches = await getBranches(normalized);
       return _cors(Response.ok(
@@ -623,12 +624,13 @@ Future<void> main(List<String> args) async {
           body: jsonEncode({'error': 'path not found'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
-    final gitDir = Directory(p.join(normalized, '.git'));
-    if (!gitDir.existsSync()) {
+    if (!isGitRepo(normalized)) {
+      print('Debug: /graph - Path is not a git repo: $normalized');
       return _cors(Response(400,
           body: jsonEncode({'error': 'not a git repo'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
+    print('Debug: /graph - Fetching graph for $normalized (limit: $limit)');
     try {
       final resp = await getGraph(normalized, limit: limit);
       return _cors(Response.ok(jsonEncode(resp.toJson()),
