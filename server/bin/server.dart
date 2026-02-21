@@ -935,6 +935,8 @@ Future<void> main(List<String> args) async {
     final data = jsonDecode(body) as Map<String, dynamic>;
     final projectName = (data['projectName'] as String?)?.trim() ?? '';
     final branchName = (data['branchName'] as String?)?.trim() ?? '';
+    final repoPath = (data['repoPath'] as String?)?.trim() ?? '';
+
     if (branchName.contains(projectName + "/")) {
       //拒绝切换远程分支
       return _cors(Response(400,
@@ -948,7 +950,7 @@ Future<void> main(List<String> args) async {
     }
     try {
       final sw = Stopwatch()..start();
-      await switchBranch(projectName, branchName);
+      await switchBranch(projectName, branchName, repoPath: repoPath.isNotEmpty ? repoPath : null);
       sw.stop();
       print('[Perf][Server][SwitchBranch] Total: ${sw.elapsedMilliseconds}ms');
       return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
