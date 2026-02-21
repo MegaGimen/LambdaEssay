@@ -1,3 +1,11 @@
 {
     "cmake.ignoreCMakeListsMissing": true,
+    // 以下是禁用 Dart 自动格式化的核心配置
+    "[dart]": {
+        "editor.formatOnSave": false,    // 关闭保存时格式化
+        "editor.formatOnType": false,    // 关闭输入时格式化
+        "editor.formatOnPaste": false,   // 关闭粘贴时格式化
+        "editor.defaultFormatter": null  // 清空 Dart 默认格式化器，防止其他插件接管
+    },
+    "dart.enableSdkFormatter": false     // 彻底关闭 Dart 自带的格式化器
 }
