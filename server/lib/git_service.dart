@@ -3523,8 +3523,8 @@ Future<void> pushToRemote(String repoPath, String username, String token,
       print('Git push output: ${output.join('\n')}');
 
       // Automatically setup webhook
-      print('hook OK');
-      await _ensureWebhook(repoName, owner, token);
+      print('Configuring webhook for: $effectiveRemoteRepoName');
+      await _ensureWebhook(effectiveRemoteRepoName, owner, token);
 
       // Update parent submodule URL if applicable
       if (parentFolder != null && !p.equals(parentFolder, repoPath)) {
