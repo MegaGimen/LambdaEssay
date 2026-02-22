@@ -190,6 +190,14 @@ Future<void> _precacheSnapshots(String repoName, String repoPath) async {
     await checkoutRoot.create(recursive: true);
   }
 
+  // Enable longpaths to support deep nested paths in backup repos
+  try {
+    await Process.run('git', ['config', 'core.longpaths', 'true'],
+        workingDirectory: repoPath);
+  } catch (e) {
+    print('Failed to enable longpaths: $e');
+  }
+
   // Get all commit hashes
   final res = await Process.run('git', ['log', '--format=%H'],
       workingDirectory: repoPath);
