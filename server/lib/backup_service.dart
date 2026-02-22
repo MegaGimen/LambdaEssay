@@ -57,7 +57,16 @@ String _getBackupDir(String repoName) {
 Future<Map<String, dynamic>> listBackupCommits(
     String repoName, String AuthToken,
     {Function(double percent, int received, int total)? onProgress}) async {
-  final dirPath = _getBackupDir(repoName);
+  
+  // Fix: If repoName is a full path, convert to hash key to match server logic
+  String targetRepoName = repoName;
+  if (p.isAbsolute(repoName) || repoName.contains(p.separator)) {
+     final norm = p.normalize(repoName).toLowerCase();
+     targetRepoName = md5.convert(utf8.encode(norm)).toString();
+     print("Converted path '$repoName' to key '$targetRepoName'");
+  }
+
+  final dirPath = _getBackupDir(targetRepoName);
   final dir = Directory(dirPath);
   String LocalSha1 = "";
   if (await File('$dirPath.zip').exists()) {
@@ -65,7 +74,7 @@ Future<Map<String, dynamic>> listBackupCommits(
   }
 
   final zipUrl =
-      '$_backupBaseUrl/backups/$repoName/download?token=$AuthToken&LocalSha1=$LocalSha1';
+      '$_backupBaseUrl/backups/$targetRepoName/download?token=$AuthToken&LocalSha1=$LocalSha1';
   print("Debug,url=$zipUrl");
   
   bool cacheHit = false;

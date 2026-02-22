@@ -2328,7 +2328,12 @@ Future<void> _addDocxSubmodule(
   await _runGit(['add', '.'], fullSubmodulePath);
   await _runGit(['commit', '-m', 'first version'], fullSubmodulePath);
 
-  final remoteRepoName = _calculateHash(submodulePath);
+  // Fix: Use <rootName>-<relativePath> for remote repo name
+  final rootName = p.basename(rootPath);
+  // submodulePath is already relative and uses forward slashes (line 2309)
+  // We replace '/' with '-' to make it a safe repo name
+  final relativePathName = submodulePath.replaceAll('/', '-');
+  final remoteRepoName = '$rootName-$relativePathName';
   final remoteUrl = '../$remoteRepoName.git';
 
   final localUrl = './$submodulePath';
@@ -3391,11 +3396,7 @@ Future<String> _resolveRepoOwner(String repoName, String token) async {
       'Repository $repoName not found in your account access list. Available: ${accessibleRepos.join(", ")}');
 }
 
-String _calculateHash(String input) {
-  var bytes = utf8.encode(input);
-  var digest = md5.convert(bytes);
-  return digest.toString();
-}
+
 
 Future<String?> _findParentFolderProject(String path) async {
   try {

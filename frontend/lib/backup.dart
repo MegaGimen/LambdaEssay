@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/status.dart' as status;
+import 'package:crypto/crypto.dart';
+import 'package:path/path.dart' as p;
 import 'models.dart';
 import 'graph_view.dart'; // For SimpleGraphView
 
@@ -37,14 +39,50 @@ class _BackupPageState extends State<BackupPage> {
   final TransformationController _sharedTc = TransformationController();
   double _uiScale = 1.0;
 
+  List<String> _subRepos = [];
+  String _selectedRepo = 'Root';
+
   static const String backupBase = 'http://localhost:8080';
 
   @override
   void initState() {
     super.initState();
     _connectWebSocket();
+    _fetchSubRepos();
     // _sharedTc.addListener(_onScaleChanged);
     _loadBackups();
+  }
+
+  Future<void> _fetchSubRepos() async {
+    try {
+      final url = '$backupBase/track/repos';
+      final resp = await http.post(
+        Uri.parse(url),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'packagePath': widget.projectName}),
+      );
+      if (resp.statusCode == 200) {
+        final j = jsonDecode(resp.body);
+        final repos = (j['repos'] as List).cast<Map<String, dynamic>>();
+        setState(() {
+          _subRepos = repos.map((e) => e['relPath'] as String).toList();
+        });
+      }
+    } catch (e) {
+      debugPrint('Failed to fetch sub repos: $e');
+    }
+  }
+
+  String _getRemoteRepoName() {
+    final rootPath = widget.projectName;
+    final rootHash = md5.convert(utf8.encode(p.normalize(rootPath).toLowerCase())).toString();
+    
+    if (_selectedRepo == 'Root') {
+       return rootHash; 
+    } else {
+       final rel = _selectedRepo.replaceAll('/', '-').replaceAll('\\', '-');
+       return '$rootHash-$rel';
+    }
   }
 
   void _connectWebSocket() {
@@ -76,8 +114,8 @@ class _BackupPageState extends State<BackupPage> {
   }
 
   Future<void> _loadBackups() async {
-    final repo = widget.projectName;
-    if (repo.isEmpty) {
+    final repo = _getRemoteRepoName();
+    if (widget.projectName.isEmpty) {
       setState(() => _error = '项目名称为空');
       return;
     }
@@ -229,7 +267,6 @@ class _BackupPageState extends State<BackupPage> {
 
   @override
   Widget build(BuildContext context) {
-    final repo = widget.projectName;
     final commits = _commits;
     return Listener(
       onPointerSignal: (event) {
@@ -254,7 +291,31 @@ class _BackupPageState extends State<BackupPage> {
           appBar: AppBar(
             backgroundColor: const Color(0xFF000A3F),
             foregroundColor: Colors.white,
-            title: Text('历史备份预览: $repo'),
+            title: Row(
+              children: [
+                const Text('历史备份预览: '),
+                if (_subRepos.isNotEmpty)
+                  DropdownButton<String>(
+                    dropdownColor: const Color(0xFF000A3F),
+                    style: const TextStyle(color: Colors.white),
+                    value: _selectedRepo,
+                    items: [
+                      const DropdownMenuItem(value: 'Root', child: Text('Root')),
+                      ..._subRepos.map((r) => DropdownMenuItem(value: r, child: Text(r))),
+                    ],
+                    onChanged: (v) {
+                      if (v != null) {
+                        setState(() {
+                          _selectedRepo = v;
+                        });
+                        _loadBackups();
+                      }
+                    },
+                  )
+                else
+                  Expanded(child: Text(p.basename(widget.projectName))),
+              ],
+            ),
             actions: [
               SizedBox(
                 width: 150,
