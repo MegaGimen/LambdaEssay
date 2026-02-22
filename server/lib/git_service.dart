@@ -3454,8 +3454,10 @@ Future<void> pushToRemote(String repoPath, String username, String token,
     } else {
       final relativePath = p.relative(repoPath, from: parentFolder);
       final normalizedRelPath = relativePath.replaceAll(r'\', '/');
-      effectiveRemoteRepoName =
-          normalizedRelPath.replaceAll(r'\', '_').replaceAll('/', '_');
+      // Fix: Use <rootName>-<relativePath> for remote repo name to match server logic
+      final rootName = p.basename(parentFolder);
+      final relName = normalizedRelPath.replaceAll('/', '-');
+      effectiveRemoteRepoName = '$rootName-$relName';
       print(
           'Pushing sub-repo "$repoName" as remote: $effectiveRemoteRepoName (rel: $normalizedRelPath)');
     }
@@ -3636,8 +3638,10 @@ Future<Map<String, dynamic>> pullFromRemote(
       } else {
         final relativePath = p.relative(repoPath, from: parentFolder);
         final normalizedRelPath = relativePath.replaceAll(r'\', '/');
-        effectiveRemoteRepoName =
-            normalizedRelPath.replaceAll(r'\', '_').replaceAll('/', '_');
+        // Fix: Use <rootName>-<relativePath> for remote repo name to match push logic
+        final rootName = p.basename(parentFolder);
+        final relName = normalizedRelPath.replaceAll('/', '-');
+        effectiveRemoteRepoName = '$rootName-$relName';
         print(
             'Pulling sub-repo as remote: $effectiveRemoteRepoName (rel: $normalizedRelPath)');
       }
