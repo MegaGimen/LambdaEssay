@@ -652,6 +652,12 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   String? _token;
 
   double _uiScale = 1.0;
+  double _rowHeight = 160.0;
+  double _laneWidth = 120.0;
+
+  void _resetView() {
+    _sharedController.value = Matrix4.identity();
+  }
 
   static const String baseUrl = 'http://localhost:8080';
 
@@ -4231,6 +4237,81 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                 _buildActionButton(Icons.swap_horiz, '切换分支', _onSwitchBranch),
                 _buildActionButton(Icons.call_merge, '合并分支', _onMergeButton),
                 _buildActionButton(Icons.search, '查找相同版本', _findIdentical),
+                if (data != null) ...[
+                  const Divider(height: 32),
+                  const Text('视图设置',
+                      style: TextStyle(
+                          fontWeight: FontWeight.bold, color: Colors.grey)),
+                  const SizedBox(height: 8),
+                  _buildActionButton(Icons.home, '返回主视角', _resetView),
+                  _buildActionButton(Icons.history, '历史备份', () {
+                    if (currentProjectName == null || pathCtrl.text.isEmpty) {
+                      return;
+                    }
+                    Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => BackupPage(
+                                  projectName: currentProjectName!,
+                                  repoPath: pathCtrl.text,
+                                  token: _token ?? '',
+                                )));
+                  }),
+                  const SizedBox(height: 16),
+                  const Text('节点间距',
+                      style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  Slider(
+                    min: 40,
+                    max: 160,
+                    divisions: 24,
+                    value: _rowHeight,
+                    label: _rowHeight.round().toString(),
+                    onChanged: (v) => setState(() => _rowHeight = v),
+                  ),
+                  const Text('分支间距',
+                      style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  Slider(
+                    min: 60,
+                    max: 200,
+                    divisions: 28,
+                    value: _laneWidth,
+                    label: _laneWidth.round().toString(),
+                    onChanged: (v) => setState(() => _laneWidth = v),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('分支图例',
+                      style: TextStyle(
+                          fontWeight: FontWeight.bold, color: Colors.grey)),
+                  const SizedBox(height: 8),
+                  ...() {
+                    final branches = data!.branches;
+                    final palette = GraphPainter.lanePalette;
+                    return branches.asMap().entries.map((e) {
+                      final i = e.key;
+                      final b = e.value;
+                      final color = palette[i % palette.length];
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Row(
+                          children: [
+                            Container(
+                                width: 12,
+                                height: 12,
+                                decoration: BoxDecoration(
+                                    color: color, shape: BoxShape.circle)),
+                            const SizedBox(width: 8),
+                            Expanded(
+                                child: Text(Branch.decodeName(b.name),
+                                    overflow: TextOverflow.ellipsis)),
+                            if (b.name == data!.currentBranch)
+                              const Icon(Icons.check_circle,
+                                  size: 14, color: Colors.green),
+                          ],
+                        ),
+                      );
+                    });
+                  }(),
+                ],
               ],
             ),
           ),
@@ -4443,6 +4524,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                                               transformationController:
                                                   _sharedController,
                                               uiScale: _uiScale,
+                                              rowHeight: _rowHeight,
+                                              laneWidth: _laneWidth,
                                             ),
                                           ),
                                           Expanded(
@@ -4474,6 +4557,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                                               primaryBranchName: 'master',
                                               onNodeAction:
                                                   _showNodeActionDialog,
+                                              rowHeight: _rowHeight,
+                                              laneWidth: _laneWidth,
                                             ),
                                           ),
                                         ],
@@ -4503,6 +4588,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                                         primaryBranchName: 'master',
                                         onNodeAction: _showNodeActionDialog,
                                         onSwitchBranch: _doSwitchBranch,
+                                        rowHeight: _rowHeight,
+                                        laneWidth: _laneWidth,
                                       ),
                           ),
                         ],
@@ -4548,6 +4635,8 @@ class _GraphView extends StatefulWidget {
   final int? totalRows; // New
   final void Function(CommitNode)? onNodeAction;
   final void Function(String)? onSwitchBranch;
+  final double rowHeight;
+  final double laneWidth;
 
   const _GraphView({
     super.key,
@@ -4570,6 +4659,8 @@ class _GraphView extends StatefulWidget {
     this.totalRows,
     this.onNodeAction,
     this.onSwitchBranch,
+    this.rowHeight = 160.0,
+    this.laneWidth = 120.0,
   });
   @override
   State<_GraphView> createState() => _GraphViewState();
@@ -4587,8 +4678,6 @@ class _GraphViewState extends State<_GraphView>
   Map<String, Color>? _branchColors;
   Map<String, List<String>>? _pairBranches;
   Size? _canvasSize;
-  double _laneWidth = 120;
-  double _rowHeight = 160;
   static const Duration _rightPanDelay = Duration(milliseconds: 200);
   final Set<String> _selectedNodes = {};
   bool _comparing = false;
@@ -5735,8 +5824,8 @@ class _GraphViewState extends State<_GraphView>
                                 widget.data,
                                 _branchColors!,
                                 _hoverEdgeKey(),
-                                _laneWidth,
-                                _rowHeight,
+                                widget.laneWidth,
+                                widget.rowHeight,
                                 working: widget.working,
                                 selectedNodes: _selectedNodes,
                                 identicalCommitIds: widget.identicalCommitIds,
@@ -5862,265 +5951,7 @@ class _GraphViewState extends State<_GraphView>
                   ),
                 ),
               ),
-            MovableResizablePanel(
-              offset: _legendPanelOffset,
-              size: _legendPanelSize,
-              parentSize: parentSize,
-              scale: widget.uiScale,
-              title: '分支图例与设置',
-              minSize: const Size(220, 220),
-              maxSize: const Size(900, 1200),
-              elevation: 2,
-              borderRadius: BorderRadius.circular(6),
-              contentPadding: const EdgeInsets.all(8),
-              backgroundColor: const Color(0xFFFDFDFD),
-              onOffsetChanged: (v) => setState(() => _legendPanelOffset = v),
-              onSizeChanged: (v) => setState(() => _legendPanelSize = v),
-              isCollapsed: _legendPanelCollapsed,
-              onCollapseChanged: (v) {
-                setState(() => _legendPanelCollapsed = v);
-                _saveLayoutPrefs();
-              },
-              onInteractionEnd: _saveLayoutPrefs,
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final w = constraints.maxWidth;
-                  final sliderWidth = (w - 120).clamp(90.0, 180.0);
-                  final valueWidth = 42.0;
-                  final labelWidth = 56.0;
 
-                  return SingleChildScrollView(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              ElevatedButton.icon(
-                                onPressed: _resetView,
-                                icon: const Icon(Icons.home),
-                                label: const Text(
-                                  '返回主视角',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  softWrap: false,
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              ElevatedButton.icon(
-                                onPressed: () {
-                                  if (widget.projectName == null ||
-                                      widget.repoPath.isEmpty) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(content: Text('请先打开一个项目')),
-                                    );
-                                    return;
-                                  }
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                        builder: (_) => BackupPage(
-                                              projectName: widget.projectName!,
-                                              repoPath: widget.repoPath,
-                                              token: widget.token ??
-                                                  'No token there bro.',
-                                            )),
-                                  );
-                                },
-                                icon: const Icon(Icons.history),
-                                label: const Text(
-                                  '历史备份',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  softWrap: false,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        const Text(
-                          '间距调整',
-                          style: TextStyle(fontWeight: FontWeight.bold),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          softWrap: false,
-                        ),
-                        const SizedBox(height: 6),
-                        Row(
-                          mainAxisSize: MainAxisSize.max,
-                          children: [
-                            SizedBox(
-                              width: labelWidth,
-                              child: const Text(
-                                '节点间距',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                softWrap: false,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            SizedBox(
-                              width: sliderWidth,
-                              child: Slider(
-                                min: 40,
-                                max: 160,
-                                divisions: 24,
-                                value: _rowHeight,
-                                label: _rowHeight.round().toString(),
-                                onChanged: (v) {
-                                  setState(() {
-                                    _rowHeight = v;
-                                    _canvasSize =
-                                        _computeCanvasSize(widget.data);
-                                  });
-                                },
-                              ),
-                            ),
-                            SizedBox(
-                              width: valueWidth,
-                              child: Text(
-                                _rowHeight.round().toString(),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                softWrap: false,
-                              ),
-                            ),
-                          ],
-                        ),
-                        Row(
-                          mainAxisSize: MainAxisSize.max,
-                          children: [
-                            SizedBox(
-                              width: labelWidth,
-                              child: const Text(
-                                '分支间距',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                softWrap: false,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            SizedBox(
-                              width: sliderWidth,
-                              child: Slider(
-                                min: 60,
-                                max: 200,
-                                divisions: 28,
-                                value: _laneWidth,
-                                label: _laneWidth.round().toString(),
-                                onChanged: (v) {
-                                  setState(() {
-                                    _laneWidth = v;
-                                    _canvasSize =
-                                        _computeCanvasSize(widget.data);
-                                  });
-                                },
-                              ),
-                            ),
-                            SizedBox(
-                              width: valueWidth,
-                              child: Text(
-                                _laneWidth.round().toString(),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                softWrap: false,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        const Text(
-                          '分支图例',
-                          style: TextStyle(fontWeight: FontWeight.bold),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          softWrap: false,
-                        ),
-                        const SizedBox(height: 6),
-                        for (final b in widget.data.branches)
-                          InkWell(
-                            onDoubleTap: widget.readOnly ? null : () => widget.onSwitchBranch?.call(b.name),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 4),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.max,
-                                children: [
-                                  Container(
-                                    width: 12,
-                                    height: 12,
-                                    decoration: BoxDecoration(
-                                      color: _branchColors![b.name]!,
-                                      shape: BoxShape.circle,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Expanded(
-                                    child: Text(
-                                      Branch.decodeName(b.name),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      softWrap: false,
-                                      style: TextStyle(
-                                        fontWeight:
-                                            b.name == widget.data.currentBranch
-                                                ? FontWeight.bold
-                                                : FontWeight.normal,
-                                        color:
-                                            b.name == widget.data.currentBranch
-                                                ? Colors.blue[900]
-                                                : Colors.black,
-                                      ),
-                                    ),
-                                  ),
-                                  if (b.name == widget.data.currentBranch)
-                                    const Padding(
-                                      padding: EdgeInsets.only(left: 4),
-                                      child: Icon(
-                                        Icons.check_circle,
-                                        size: 14,
-                                        color: Colors.green,
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        if (_hasUnknownEdges())
-                          const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 2),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                SizedBox(
-                                  width: 12,
-                                  height: 12,
-                                  child: DecoratedBox(
-                                    decoration: BoxDecoration(
-                                      color: Color(0xFF9E9E9E),
-                                      shape: BoxShape.circle,
-                                    ),
-                                  ),
-                                ),
-                                SizedBox(width: 6),
-                                Text(
-                                  '其它',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  softWrap: false,
-                                ),
-                              ],
-                            ),
-                          ),
-                      ],
-                    ),
-                  );
-                },
-              ),
-            ),
             if (_hovered != null && _hoverPos != null)
               Positioned(
                 left: _hoverPos!.dx + 12,
@@ -6310,8 +6141,8 @@ class _GraphViewState extends State<_GraphView>
   }
 
   Size _computeCanvasSize(GraphData data) {
-    final laneWidth = _laneWidth;
-    final rowHeight = _rowHeight;
+    final laneWidth = widget.laneWidth;
+    final rowHeight = widget.rowHeight;
     final commits = data.commits;
     final laneOf = _laneOfByBranches(data);
     var maxLane = -1;
@@ -6409,8 +6240,8 @@ class _GraphViewState extends State<_GraphView>
   }
 
   CommitNode? _hitTest(Offset sceneP, GraphData data) {
-    final laneWidth = _laneWidth;
-    final rowHeight = _rowHeight;
+    final laneWidth = widget.laneWidth;
+    final rowHeight = widget.rowHeight;
     final commits = data.commits;
     final laneOf = _laneOfByBranches(data);
     final rowOf = <String, int>{};
@@ -6490,8 +6321,8 @@ class _GraphViewState extends State<_GraphView>
   }
 
   EdgeInfo? _hitEdge(Offset sceneP, GraphData data) {
-    final laneWidth = _laneWidth;
-    final rowHeight = _rowHeight;
+    final laneWidth = widget.laneWidth;
+    final rowHeight = widget.rowHeight;
     final commits = data.commits;
     final laneOf = _laneOfByBranches(data);
     final rowOf = <String, int>{};
