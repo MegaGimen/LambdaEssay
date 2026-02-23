@@ -2,7 +2,6 @@ import 'dart:io';
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
-import 'package:path/path.dart' as p;
 import 'package:file_picker/file_picker.dart';
 
 class LogEntry {

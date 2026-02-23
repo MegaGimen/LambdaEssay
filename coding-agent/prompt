@@ -1,0 +1,229 @@
+# 完整修改后的提示词
+
+我正在开发一个基于Flutter的Word文件版本追踪项目。本项目采用追踪包（.tracking文件）架构来管理文档版本。追踪包是单个压缩文件，内部结构为Git仓库（可以嵌套，每个追踪包可以包含多个文件或文件夹，也可以包含多个子追踪包），可以嵌套包含子追踪包。系统支持递归解析、自动子模块配置和动态展开。
+
+## 项目技术规范
+
+采用Windows环境开发
+
+查找文件时，如果搜索工具失败，可以使用ls命令
+代码修改完成后，只需用flutter analyze检查编译错误，不需要运行flutter run，除非我明确指示。如果你只修改了前端，就对frontend文件夹执行analyze，如果只修改了后端，就对server进行analyze，不要每次都同时analyze两个
+
+只要编译成功，就不需要进一步的系统调试，因为图形界面调试需要我亲自操作
+
+前端源代码文件夹是frontend/lib，下面是dart文件：
+- main.dart：入口文件，包含Flutter应用的初始化和路由配置
+- models.dart：定义数据模型，如Document、Version、TrackingPackage等
+- services.dart：包含与后端交互的服务，如文件上传、下载、版本比较等
+- views.dart：定义Flutter界面，如文档列表、版本比较、文件操作等
+
+后端源代码文件在server文件夹下。包含了git_service.dart，用于处理与Git相关的操作，如初始化仓库、添加文件、提交变更等。和server.dart，用于处理与前端对接的操作
+
+不要使用flutter build和flutter clean，只需用flutter analyze检查错误
+
+没有我的命令不要以任何形式启动代码，只能使用analyze。**必须同时对后端（server）和前端（frontend）进行analyze**
+
+在完成所有修改后，生成一个git commit message（用中文），格式为：
+feat/fix/refactor(<功能名称>，可多个)
+1. 修改小结
+2. <文件名>：<修改简介>
+...
+不执行实际的git commit
+
+服务器配置：
+- Git服务器：47.242.109.145:3000
+- Flask服务器：47.242.109.145:3920
+- 本地比较服务器：5000端口
+
+edges文件定义了需要渲染的合并边，格式为：第一行为零，后续每行包含两个sha1，表示两个commit节点间的合并边
+
+禁止进行过度修改，如一次删除上千行代码，严禁清空或删除文件
+
+注意：项目使用的Git与当前项目不同：
+- 追踪包为.tracking文件时，工作区位于：APPDATA/tracking_workspace/<md5>
+
+生成commit message但不执行git commit，格式如上
+
+严禁执行git命令
+
+不要做任何我未指定的修改，所有修改必须有明确目的
+
+修改代码前需检查是否有重复逻辑，避免重复代码
+
+如果发现问题，可适当添加调试信息，我会提供输出内容
+
+flutter analyze只能在修改后使用，不能在写代码过程中使用
+
+当我询问是否有某个功能时，如果没有，则自动添加
+
+修改代码时，严禁在注释中加入推理过程，注释应简洁明了
+
+如果修改的只有cpp文件，不需要执行flutter analyze，只需用g++编译（生成同名exe文件）：
+C:\Users\m1369>g++ --version
+g++ (Rev8, Built by MSYS2 project) 15.2.0
+Copyright (C) 2025 Free Software Foundation, Inc.
+
+严禁擅自执行git diff、git add等命令
+
+不要执行flutter pub add。修改后告知我在pubspec中需要添加的内容
+
+本项目采用统一的追踪包架构，支持嵌套结构：
+- 每个.tracking文件都是一个独立的追踪包
+- 支持嵌套：追踪包内可包含子追踪包
+- 前端左侧面板为"窥察镜"，支持递归解析和动态展开
+- 支持上传文档/文件夹自动转换为追踪包
+- 工作区：APPDATA/tracking_workspace/<md5>
+
+执行analyze后，只需处理编译错误，忽略警告和deprecated提示
+
+为调试错误，可适当加入调试代码，我会查看输出
+
+所有错误都应捕获并输出到控制台
+
+本项目分为两个概念：
+1. 追踪对象：要追踪的文档或文件夹
+2. 存储地点：追踪包对应的工作区，使用Git仓库临时存储版本
+   - 追踪包是.tracking文件时，工作区位于：APPDATA/tracking_workspace/<md5>
+
+对于复杂逻辑，可生成测试脚本；简单逻辑不需要
+
+如果中断了dart analyze/flutter analyze操作，不需要重新执行
+
+## 项目背景
+
+当我们需要管理文档版本时，通常会遇到多人同时编辑Word文档的场景。传统方法如微信传文件修改标题，或使用谷歌文档、金山文档等在线工具，都存在版本管理混乱、缺乏分支合并能力等问题。
+
+LambdaEssay项目通过类似Git的方式管理Word文档版本，但避免了Git管理二进制文件的局限性。我们使用.tracking压缩包格式，支持嵌套结构，提供直观的版本分支管理、合并、推送和拉取功能。
+
+### 关键优势：
+1. 支持多分支并行开发，避免版本冲突
+2. 只记录文档间的实际差异，避免重复存储
+3. 直观的图形化界面，展示分支关系和合并历史
+4. 支持嵌套追踪包，方便管理复杂文档结构
+5. 本地工作区与远程仓库同步，支持团队协作
+6. 使用仓库备份功能来自动备份每次推送时的仓库状态防止误推送或恶意推送。这些逻辑位于server/LambdaEssay_backup中
+
+### 核心功能：
+- 分支管理：创建、切换、合并分支
+- 版本追踪：提交、查看历史、比较差异
+- 团队协作：推送、拉取、解决冲突
+- 嵌套结构：支持复杂文档组织的递归管理
+- 直观界面：可视化展示分支关系和合并历史
+
+### 追踪包架构深度解析：
+
+本项目核心在于 `.tracking` 文件格式，它本质上是一个 ZIP 压缩包，但通过特殊的目录结构实现了**“文件即仓库”**的嵌套版本控制。
+
+#### 1. 物理结构 (Physical Structure)
+
+每个 `.docx` 文档在追踪包内都被“膨胀”为一个独立的 Git 仓库文件夹（以 `.tracking.zip` 结尾的文件夹，非压缩包）。
+
+```text
+[ example.tracking.zip ] (Root Archive)
+│
+├── .tracking_workspace.json     <-- 全局元数据 (Global Metadata)
+│
+└── example/                     <-- 根目录 (Root Directory)
+    │
+    ├── .gitmodules              <-- 子模块配置文件 (Submodule Config)
+    │
+    ├── doc1.tracking.zip/       <-- [子仓库] 文档 doc1.docx 对应的仓库文件夹
+    │   ├── .git/                <-- 独立的 Git 版本库
+    │   ├── tracking.json        <-- 仓库元数据 (type='file')
+    │   └── content.docx         <-- 文档实际内容
+    │
+    └── sub_folder/              <-- 普通子文件夹
+        │
+        └── doc2.tracking.zip/   <-- [子仓库] 文档 doc2.docx 对应的仓库文件夹
+            ├── .git/
+            ├── tracking.json
+            └── content.docx
+```
+
+#### 2. 同步机制 (Sync Mechanism)
+
+我们采用**分层同步 (Layered Sync)** 策略：**目录结构**与**文档内容**分离同步。
+
+*   **根仓库 (Root Repo)**: 仅同步目录结构 (`.gitmodules`)，不包含文档内容。
+*   **子仓库 (Sub Repo)**: 每个文档独立同步内容，远程仓库名经过哈希加密，保护隐私且实现隔离。
+
+```text
+      [本地 Local]                                             [远程 Remote Server]
+
+ ┌───────────────────────────┐                         (1) Push Structure
+ │  my_project.tracking.zip  │──────────────────────────────────────────────────> [ my_project.git ]
+ │ (Root)                    │                         (Sync .gitmodules)         (仅存储目录树结构)
+ │   .gitmodules             │
+ │                           │
+ │ ┌───────────────────────┐ │                         (2) Push Content
+ │ │ doc1.tracking.zip     │ │──────────────────────────────────────────────────> [ a1b2c3d4...git ]
+ │ │ (Sub-Repo)            │ │                         (Sync content.docx)        (独立存储文档历史)
+ │ │   content.docx        │ │
+ │ └───────────────────────┘ │
+ └───────────────────────────┘
+```
+
+#### 3. 关键特性
+
+*   **隔离性**: 一个文档的损坏或冲突不会影响其他文档。
+*   **按需加载**: 拉取项目时，首先只同步轻量级的结构信息。只有当用户打开文档时，才拉取该文档对应的沉重历史记录。
+*   **隐私保护**: 远程服务器只看到哈希命名的仓库，无法直接从文件名推断项目结构。
+*   **空追踪包**: 新建的追踪包默认为空，用户可随后导入内容。
+
+### 追踪包逻辑更新 (Git Submodules & Leaf Node Architecture)
+
+为明确父子仓库职责，系统架构进行了重构，核心原则是**“用户只操作叶子节点，根节点由系统自动维护”**：
+
+1.  **仓库层级与职责**：
+    *   **父仓库 (Root Repo)**：仅作为容器，管理目录结构和子模块 (`.gitmodules`)。禁止包含 `content.docx` 或 `doc_content`。
+        *   **约束**：用户**不可**直接对父仓库执行 Commit、Switch Branch、Push 或查看 Graph。
+        *   **目的**：仅用于维护项目结构和子仓库的指针。
+    *   **子仓库 (Leaf/Sub Repo)**：对应单个 `.docx` 文件。包含实际文档内容 (`content.docx`) 和 Git 历史。
+        *   **操作**：用户的所有版本控制操作（Commit, Branch, Push, Graph, History）均**只能**针对子仓库（叶子节点）。
+        *   **定义**：.tracking 文件是为了给这些叶子节点的 docx 追踪项目提供说明，告诉程序外部的 docx 文件在哪里。
+
+2.  **自动化联动 (Auto-Sync)**：
+    *   **Commit**: 当用户在子仓库提交变更时，系统自动更新父仓库中对应的 submodule 指针，并提交父仓库的变更（Message: "Update submodule..."）。
+    *   **Push**: 当用户 Push 子仓库时，系统自动先 Push 子仓库，然后 Push 父仓库，确保远程父仓库始终指向最新的子模块版本。
+    *   **Pull**: 拉取父仓库时，会自动执行 `git submodule update --init --recursive` 以拉取所有子模块。
+    *   **Branch**: 新建/切换分支只针对子仓库。父仓库始终保持在默认分支（通常是 master/main），或者由系统自动管理其指针更新。
+
+3.  **新建与导入流程**：
+    *   **新建项目**: `createTrackingProject` 创建一个空的 Git 父仓库，包含 `.gitignore` 和 `.gitmodules` (初始为空)。
+    *   **导入文件**: 用户导入 `.docx` 文件时，后端将其转换为 Git 仓库（`git init`, `commit`），并作为 submodule 添加到当前父仓库 (`git submodule add`)。
+    *   **导入文件夹**: 若用户导入文件夹，程序递归解析该文件夹，将其中每一个 `.docx` 文件都转换为一个独立的 Git 子仓库，并添加到父仓库中。
+
+4.  **远程交互**：
+    *   **拉取新项目**: `listRemoteRepos` 列出远程仓库时，**必须**过滤掉所有哈希命名的子仓库，只展示根仓库供用户选择。
+    *   **拉取逻辑**: 
+        *   若用户选择下载新项目 -> 拉取根仓库 -> 自动打包为 `.tracking.zip`。
+        *   若用户在已打开的项目中拉取特定文件 -> 执行子模块拉取 (`git pull` in submodule)。若子模块不存在或无权限，报错提示。
+
+### 备份与恢复系统 (Backup & Recovery System)
+
+备份系统旨在防止误操作（如Force Push）导致的数据丢失，采用“仓库的仓库”架构。
+
+#### 1. 后端架构 (Python - server/LambdaEssay_backup)
+- **核心逻辑**：位于 `backup_manager.py`。
+- **双层仓库结构**：
+  - **子仓库 (Son Repo)**：用户的原始Git仓库的镜像（Bare Repo, `--mirror`）。位于 `backups/{repo_name}_parent/{repo_name}_son`。
+  - **父仓库 (Parent Repo)**：一个普通的Git仓库，包含子仓库的所有文件。位于 `backups/{repo_name}_parent`。
+- **备份流程**：
+  1. 同步子仓库（`git fetch` / `git remote update`）。
+  2. 父仓库执行 `git add *` 和 `git commit`，将子仓库作为一个普通文件夹及其内容（Git对象、Refs等）进行版本控制。
+  3. 每次备份生成一个父仓库的Commit，代表子仓库在某一时刻的完整快照。
+  4. **区块链存证**：将备份的Hash链记录到区块链（或模拟区块链）中，确保不可篡改。
+
+#### 2. 客户端服务 (Dart - server/lib/backup_service.dart)
+- **职责**：负责与备份服务器交互，下载和还原备份。
+- **缓存机制**：
+  - 下载的备份存储在 `gitdocx_history_cache` 目录。
+  - 支持 `If-None-Match` 类似的缓存验证（通过 `LocalSha1`）。
+- **预缓存 (Pre-caching)**：
+  - 下载备份包（Parent Repo）后，会自动解析其中的 Commit 历史。
+  - 将每个历史版本的子仓库快照解压/Checkout到临时目录，以便快速查看和恢复。
+
+### 注意事项：
+1. 在增加新的功能时，要时刻加上每一步的调试信息，服务器返回500状态码的同时，后端必须定位到报错的位置
+2. 在debug的时候加入调试信息。为了更好地区分，当在修复一个bug时，用“=============”（*50）来隔开debug的区域和其它区域的输出
+3. 每次只需在所有修改结束后的最后才执行flutter analyze，中间不必执行，这样可以节省时间。

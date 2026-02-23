@@ -12,6 +12,7 @@ import '../lib/git_service.dart';
 import '../lib/backup_service.dart';
 import '../lib/diff/repocmp.dart';
 import '../lib/sumdiff.dart';
+import '../lib/ai_diff_service.dart';
 import 'package:http/http.dart' as http;
 
 import 'package:uuid/uuid.dart';
@@ -75,7 +76,10 @@ Future<void> _killPort(int port) async {
     print('Failed to clean up port $port: $e');
   }
 }
+
 final ProcessManager _processManager = const LocalProcessManager();
+
+
 Future<void> main(List<String> args) async {
   if (args.contains('--debugMode')) {
     setDebugMode(true);
@@ -97,21 +101,22 @@ Future<void> main(List<String> args) async {
       await _killPort(5000);
       print('Starting Heidegger service from $heideggerPath...');
       // 使用 PowerShell 启动 Heidegger.exe，完全隐藏窗口
-      await _processManager.start(
-        [
-          'powershell',
-          '-WindowStyle', 'Hidden',
-          '-Command', 'Start-Process -FilePath "$heideggerPath" -WindowStyle Hidden'
-        ],
-        mode: ProcessStartMode.normal,
-        runInShell: false
-      );
+      await _processManager.start([
+        'powershell',
+        '-WindowStyle',
+        'Hidden',
+        '-Command',
+        'Start-Process -FilePath "$heideggerPath" -WindowStyle Hidden'
+      ], mode: ProcessStartMode.normal, runInShell: false);
     } else {
       print('Heidegger.exe not found at $heideggerPath');
     }
   } catch (e) {
     print('Failed to start Heidegger: $e');
   }
+
+
+
   await initTrackingService();
   final router = Router();
 
@@ -128,60 +133,63 @@ Future<void> main(List<String> args) async {
       _activePluginSockets.add(channel);
 
       pluginSender = (Map<String, dynamic> message) async {
-         if (_activePluginSockets.isEmpty) return false;
-         final id = _uuid.v4();
-         message['id'] = id;
-         
-         // Send to all connected plugins
-         for (final socket in _activePluginSockets) {
-            try {
-               socket.sink.add(jsonEncode(message));
-            } catch (e) {
-               print('Failed to send to socket: $e');
-            }
-         }
+        if (_activePluginSockets.isEmpty) return false;
+        final id = _uuid.v4();
+        message['id'] = id;
 
-         final mainCompleter = Completer<dynamic>();
-         _pendingRequests[id] = mainCompleter;
-         
-         try {
-             // Wait for first success or timeout
-             final response = await mainCompleter.future.timeout(const Duration(seconds: 30));
-             if (response is Map && response['status'] == 'success') return true;
-             return false;
-         } catch (e) {
-             _pendingRequests.remove(id);
-             return false;
-         }
+        // Send to all connected plugins
+        for (final socket in _activePluginSockets) {
+          try {
+            socket.sink.add(jsonEncode(message));
+          } catch (e) {
+            print('Failed to send to socket: $e');
+          }
+        }
+
+        final mainCompleter = Completer<dynamic>();
+        _pendingRequests[id] = mainCompleter;
+
+        try {
+          // Wait for first success or timeout
+          final response =
+              await mainCompleter.future.timeout(const Duration(seconds: 30));
+          if (response is Map && response['status'] == 'success') return true;
+          return false;
+        } catch (e) {
+          _pendingRequests.remove(id);
+          return false;
+        }
       };
 
       channel.stream.listen((message) {
         // print('Raw WebSocket message: $message');
         try {
-           final data = jsonDecode(message as String);
-           if (data is Map) {
-             if (data['type'] == 'response' && data['id'] != null) {
-                final id = data['id'];
-                // Check if we have a pending request
-                if (_pendingRequests.containsKey(id)) {
-                   if (data['status'] == 'success') {
-                      // If success, complete the main completer immediately
-                      if (!_pendingRequests[id]!.isCompleted) {
-                         _pendingRequests[id]!.complete(data);
-                      }
-                   } else {
-                      print('Plugin reported error/mismatch: ${data['message']}');
-                      // Fail fast
-                      if (!_pendingRequests[id]!.isCompleted) {
-                         _pendingRequests[id]!.complete(data); // Complete with error data
-                      }
-                   }
+          final data = jsonDecode(message as String);
+          if (data is Map) {
+            if (data['type'] == 'response' && data['id'] != null) {
+              final id = data['id'];
+              // Check if we have a pending request
+              if (_pendingRequests.containsKey(id)) {
+                if (data['status'] == 'success') {
+                  // If success, complete the main completer immediately
+                  if (!_pendingRequests[id]!.isCompleted) {
+                    _pendingRequests[id]!.complete(data);
+                  }
+                } else {
+                  print('Plugin reported error/mismatch: ${data['message']}');
+                  // Fail fast
+                  if (!_pendingRequests[id]!.isCompleted) {
+                    _pendingRequests[id]!
+                        .complete(data); // Complete with error data
+                  }
                 }
-             } else if (data['type'] == 'event' && data['event'] == 'saved') {
-                final path = data['path'] as String?;
-                if (path != null) {
-                   print('Plugin reported save event for: $path. But we ignore it. ');
-                   /*
+              }
+            } else if (data['type'] == 'event' && data['event'] == 'saved') {
+              final path = data['path'] as String?;
+              if (path != null) {
+                print(
+                    'Plugin reported save event for: $path. But we ignore it. ');
+                /*
                    // Notify frontend to start loading immediately
                    for (final socket in _activeFrontendSockets) {
                      try {
@@ -206,15 +214,15 @@ Future<void> main(List<String> args) async {
                      }
                    }
                    */
-                } else {
-                   print('Plugin reported save event but path is null');
-                }
-             } else {
-               print('Received from plugin: $message');
-             }
-           }
-        } catch(e) {
-             print('WebSocket message error: $e');
+              } else {
+                print('Plugin reported save event but path is null');
+              }
+            } else {
+              print('Received from plugin: $message');
+            }
+          }
+        } catch (e) {
+          print('WebSocket message error: $e');
         }
       }, onDone: () {
         print('Word Plugin disconnected');
@@ -224,12 +232,10 @@ Future<void> main(List<String> args) async {
         }
         // Notify frontend
         for (final socket in _activeFrontendSockets) {
-           try {
-             socket.sink.add(jsonEncode({
-               'type': 'com_status',
-               'status': 'disconnected'
-             }));
-           } catch (_) {}
+          try {
+            socket.sink.add(
+                jsonEncode({'type': 'com_status', 'status': 'disconnected'}));
+          } catch (_) {}
         }
       }, onError: (e) {
         print('WebSocket error: $e');
@@ -239,12 +245,10 @@ Future<void> main(List<String> args) async {
         }
         // Notify frontend
         for (final socket in _activeFrontendSockets) {
-           try {
-             socket.sink.add(jsonEncode({
-               'type': 'com_status',
-               'status': 'disconnected'
-             }));
-           } catch (_) {}
+          try {
+            socket.sink.add(
+                jsonEncode({'type': 'com_status', 'status': 'disconnected'}));
+          } catch (_) {}
         }
       });
     })(req);
@@ -292,15 +296,12 @@ Future<void> main(List<String> args) async {
       if (body.isNotEmpty) {
         final data = jsonDecode(body) as Map<String, dynamic>;
         if (data['options'] != null) {
-           options = data['options'] as Map<String, dynamic>;
+          options = data['options'] as Map<String, dynamic>;
         }
       }
     } catch (_) {}
 
-    final success = await pluginSender!({
-      'action': 'save',
-      'options': options
-    });
+    final success = await pluginSender!({'action': 'save', 'options': options});
 
     if (success) {
       return _cors(Response.ok(jsonEncode({'message': 'Save command sent'}),
@@ -325,7 +326,7 @@ Future<void> main(List<String> args) async {
     Map<String, dynamic> options = {};
 
     final contentType = req.headers['content-type'] ?? '';
-    
+
     if (contentType.toLowerCase().contains('application/json')) {
       final body = await req.readAsString();
       try {
@@ -333,25 +334,25 @@ Future<void> main(List<String> args) async {
         content = data['content'] as String?;
         type = (data['type'] as String?) ?? 'text';
         if (data['options'] != null) {
-           if (data['options'] is String) {
-             try {
-                options = jsonDecode(data['options']) as Map<String, dynamic>;
-             } catch(_) {}
-           } else {
-             options = data['options'] as Map<String, dynamic>;
-           }
+          if (data['options'] is String) {
+            try {
+              options = jsonDecode(data['options']) as Map<String, dynamic>;
+            } catch (_) {}
+          } else {
+            options = data['options'] as Map<String, dynamic>;
+          }
         }
       } catch (e) {
-         return _cors(Response(400,
-          body: jsonEncode({'error': 'Invalid JSON'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+        return _cors(Response(400,
+            body: jsonEncode({'error': 'Invalid JSON'}),
+            headers: {'Content-Type': 'application/json; charset=utf-8'}));
       }
     } else if (contentType.toLowerCase().contains('multipart/form-data')) {
       final boundary = _boundaryOf(contentType);
       if (boundary == null) {
-         return _cors(Response(400,
-          body: jsonEncode({'error': 'Invalid multipart boundary'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+        return _cors(Response(400,
+            body: jsonEncode({'error': 'Invalid multipart boundary'}),
+            headers: {'Content-Type': 'application/json; charset=utf-8'}));
       }
       final bytesBuilder = BytesBuilder();
       await for (final chunk in req.read()) {
@@ -359,7 +360,7 @@ Future<void> main(List<String> args) async {
       }
       final bodyBytes = bytesBuilder.takeBytes();
       final parts = _parseMultipart(bodyBytes, boundary);
-      
+
       final filePart = parts.firstWhere(
         (p) => (p.name ?? '') == 'file',
         orElse: () => _MultipartPart(null, null, Uint8List(0)),
@@ -370,63 +371,58 @@ Future<void> main(List<String> args) async {
         type = 'base64';
       } else {
         // Try to find content in other parts if not file
-         final contentPart = parts.firstWhere(
+        final contentPart = parts.firstWhere(
           (p) => (p.name ?? '') == 'content',
           orElse: () => _MultipartPart(null, null, Uint8List(0)),
         );
         if (contentPart.data.isNotEmpty) {
-           content = utf8.decode(contentPart.data);
+          content = utf8.decode(contentPart.data);
         }
       }
 
       // Parse type if provided in form
-       final typePart = parts.firstWhere(
-          (p) => (p.name ?? '') == 'type',
-          orElse: () => _MultipartPart(null, null, Uint8List(0)),
-        );
-        if (typePart.data.isNotEmpty) {
-           type = utf8.decode(typePart.data);
-        }
+      final typePart = parts.firstWhere(
+        (p) => (p.name ?? '') == 'type',
+        orElse: () => _MultipartPart(null, null, Uint8List(0)),
+      );
+      if (typePart.data.isNotEmpty) {
+        type = utf8.decode(typePart.data);
+      }
 
       // Parse options
-       final optionsPart = parts.firstWhere(
-          (p) => (p.name ?? '') == 'options',
-          orElse: () => _MultipartPart(null, null, Uint8List(0)),
-        );
-        if (optionsPart.data.isNotEmpty) {
-           try {
-             options = jsonDecode(utf8.decode(optionsPart.data));
-           } catch (e) {
-             print('Failed to parse options: $e');
-           }
+      final optionsPart = parts.firstWhere(
+        (p) => (p.name ?? '') == 'options',
+        orElse: () => _MultipartPart(null, null, Uint8List(0)),
+      );
+      if (optionsPart.data.isNotEmpty) {
+        try {
+          options = jsonDecode(utf8.decode(optionsPart.data));
+        } catch (e) {
+          print('Failed to parse options: $e');
         }
-
+      }
     } else {
-       return _cors(Response(400,
+      return _cors(Response(400,
           body: jsonEncode({'error': 'Unsupported Content-Type'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
 
     if (content == null || content.isEmpty) {
-       return _cors(Response(400,
+      return _cors(Response(400,
           body: jsonEncode({'error': 'Content is required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
 
     final success = await pluginSender!({
       'action': 'replace',
-      'payload': {
-        'content': content,
-        'type': type,
-        'options': options
-      }
+      'payload': {'content': content, 'type': type, 'options': options}
     });
 
     if (success) {
       return _cors(Response.ok(jsonEncode({'message': 'Replace command sent'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     } else {
-       return _cors(Response(500,
+      return _cors(Response(500,
           body: jsonEncode({'error': 'Replace failed or timed out'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
@@ -465,28 +461,68 @@ Future<void> main(List<String> args) async {
   router.post('/project/delete', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
-    var gitdocxPath = _sanitizePath(data['gitdocxPath'] as String?);
-    var trackingPath= _sanitizePath(data['trackingPath'] as String?);
-    var trackingBase = _sanitizePath(data["trackingBase"] as String?);
+    var packagePath = _sanitizePath(data['packagePath'] as String?).trim();
+    if (packagePath.isEmpty) {
+      packagePath = _sanitizePath(data['gitdocxPath'] as String?);
+    }
+    final targetPath =
+        _sanitizePath(data['targetPath'] as String?).trim().isNotEmpty
+            ? _sanitizePath(data['targetPath'] as String?)
+            : _sanitizePath(data['trackingPath'] as String?);
 
-    if (gitdocxPath.isEmpty) {
+    if (packagePath.isEmpty) {
       return _cors(Response(400,
-          body: jsonEncode({'error': 'No gitdocxPath'}),
+          body: jsonEncode({'error': 'No packagePath'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
-    if(trackingPath.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'No trackingPath'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    if(trackingBase.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'No trackingBase'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-
     try {
-      await deleteProject(gitdocxPath,  trackingPath,  trackingBase);
+      await deleteProject(packagePath, targetPath);
+      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/project/save', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final packagePath = _sanitizePath(data['packagePath'] as String?);
+
+    if (packagePath.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'packagePath required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      await saveTrackingProject(packagePath);
+      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/project/save_as', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final packagePath = _sanitizePath(data['packagePath'] as String?);
+    final newPackagePath = _sanitizePath(data['newPackagePath'] as String?);
+
+    if (packagePath.isEmpty || newPackagePath.isEmpty) {
+      return _cors(Response(400,
+          body:
+              jsonEncode({'error': 'packagePath and newPackagePath required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      await saveTrackingProject(packagePath, newPackagePath);
       return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
         'Content-Type': 'application/json; charset=utf-8',
       }));
@@ -513,18 +549,19 @@ Future<void> main(List<String> args) async {
   router.post('/project/copy', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
-    final sourceName = _sanitizePath(data['sourceName'] as String?);
-    final targetRelPath = _sanitizePath(data['targetRelPath'] as String?);
-    final deleteSource = data['deleteSource'] == true;
+    final packagePath = _sanitizePath(data['packagePath'] as String?);
+    final targetDir = _sanitizePath(data['targetDir'] as String?);
+    final sourcePath = _sanitizePath(data['sourcePath'] as String?);
 
-    if (sourceName.isEmpty || targetRelPath.isEmpty) {
+    if (packagePath.isEmpty || targetDir.isEmpty || sourcePath.isEmpty) {
       return _cors(Response(400,
-          body: jsonEncode({'error': 'sourceName and targetRelPath required'}),
+          body: jsonEncode(
+              {'error': 'packagePath, targetDir, sourcePath required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
 
     try {
-      await copyTrackingProject(sourceName, targetRelPath, deleteSource);
+      await importTrackingSource(packagePath, targetDir, sourcePath);
       return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
         'Content-Type': 'application/json; charset=utf-8',
       }));
@@ -551,12 +588,13 @@ Future<void> main(List<String> args) async {
           body: jsonEncode({'error': 'path not found'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
-    final gitDir = Directory(p.join(normalized, '.git'));
-    if (!gitDir.existsSync()) {
+    if (!isGitRepo(normalized)) {
+      print('Debug: /branches - Path is not a git repo: $normalized');
       return _cors(Response(400,
           body: jsonEncode({'error': 'not a git repo'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
+    print('Debug: /branches - Fetching branches for $normalized');
     try {
       final branches = await getBranches(normalized);
       return _cors(Response.ok(
@@ -586,12 +624,13 @@ Future<void> main(List<String> args) async {
           body: jsonEncode({'error': 'path not found'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
-    final gitDir = Directory(p.join(normalized, '.git'));
-    if (!gitDir.existsSync()) {
+    if (!isGitRepo(normalized)) {
+      print('Debug: /graph - Path is not a git repo: $normalized');
       return _cors(Response(400,
           body: jsonEncode({'error': 'not a git repo'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
+    print('Debug: /graph - Fetching graph for $normalized (limit: $limit)');
     try {
       final resp = await getGraph(normalized, limit: limit);
       return _cors(Response.ok(jsonEncode(resp.toJson()),
@@ -616,7 +655,8 @@ Future<void> main(List<String> args) async {
     final normalized = p.normalize(repoPath);
     try {
       // Fetch remote graph: includeLocal=false, remoteNames=[] (all remotes)
-      final resp = await getGraph(normalized, limit: limit, includeLocal: false, remoteNames: []);
+      final resp = await getGraph(normalized,
+          limit: limit, includeLocal: false, remoteNames: []);
       return _cors(Response.ok(jsonEncode(resp.toJson()),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     } catch (e) {
@@ -692,35 +732,40 @@ Future<void> main(List<String> args) async {
       final appData = Platform.environment['APPDATA'];
       if (appData == null) throw Exception('APPDATA not found');
       final repoPath = p.join(appData, 'gitdocx', repoName);
-      
+
       if (!await Directory(repoPath).exists()) {
-         throw Exception('Repo $repoName not found at $repoPath');
+        throw Exception('Repo $repoName not found at $repoPath');
       }
 
       // Find parent
-      final parentRes = await Process.run('git', 
-          ['log', '-1', '--format=%P', commitId], 
+      final parentRes = await Process.run(
+          'git', ['log', '-1', '--format=%P', commitId],
           workingDirectory: repoPath);
-      
-      if (parentRes.exitCode != 0) throw Exception('Git log failed: ${parentRes.stderr}');
-      
-      final parentId = (parentRes.stdout as String).trim().split(' ').firstWhere((e) => e.isNotEmpty, orElse: () => '');
+
+      if (parentRes.exitCode != 0)
+        throw Exception('Git log failed: ${parentRes.stderr}');
+
+      final parentId = (parentRes.stdout as String)
+          .trim()
+          .split(' ')
+          .firstWhere((e) => e.isNotEmpty, orElse: () => '');
 
       tempDir = await Directory.systemTemp.createTemp('sum_commit_');
       final afterDocx = p.join(tempDir.path, 'after.docx');
-      
+
       // Extract commit docx
-      final afterRes = await Process.run('git', 
-          ['show', '$commitId:content.docx'], 
+      final afterRes = await Process.run(
+          'git', ['show', '$commitId:content.docx'],
           workingDirectory: repoPath, stdoutEncoding: null);
-          
+
       if (afterRes.exitCode != 0) {
         // Maybe file didn't exist in that commit?
         // Check if error is "pathspec ... did not match"
         final err = utf8.decode(afterRes.stderr as List<int>);
         if (err.contains('did not match')) {
-           return _cors(Response.ok(
-            jsonEncode({'output': 'File content.docx not found in this commit'}),
+          return _cors(Response.ok(
+            jsonEncode(
+                {'output': 'File content.docx not found in this commit'}),
             headers: {'Content-Type': 'application/json; charset=utf-8'},
           ));
         }
@@ -733,17 +778,17 @@ Future<void> main(List<String> args) async {
         result = "Initial commit (no parent)";
       } else {
         final beforeDocx = p.join(tempDir.path, 'before.docx');
-        final beforeRes = await Process.run('git', 
-            ['show', '$parentId:content.docx'], 
+        final beforeRes = await Process.run(
+            'git', ['show', '$parentId:content.docx'],
             workingDirectory: repoPath, stdoutEncoding: null);
-            
+
         if (beforeRes.exitCode != 0) {
-             // Parent might not have the file
-             // We can treat it as empty or new file
-             result = "New file created (parent did not have content.docx)";
+          // Parent might not have the file
+          // We can treat it as empty or new file
+          result = "New file created (parent did not have content.docx)";
         } else {
-             await File(beforeDocx).writeAsBytes(beforeRes.stdout as List<int>);
-             result = await summarizeDiff(beforeDocx, afterDocx);
+          await File(beforeDocx).writeAsBytes(beforeRes.stdout as List<int>);
+          result = await summarizeDiff(beforeDocx, afterDocx);
         }
       }
 
@@ -751,7 +796,6 @@ Future<void> main(List<String> args) async {
         jsonEncode({'output': result}),
         headers: {'Content-Type': 'application/json; charset=utf-8'},
       ));
-
     } catch (e) {
       return _cors(Response(500,
           body: jsonEncode({'error': e.toString()}),
@@ -838,7 +882,7 @@ Future<void> main(List<String> args) async {
           body: jsonEncode({'error': 'repoPath, author, message required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
-    
+
     // Attempt to save Word document if plugin is connected
     if (pluginSender != null) {
       print('Executing Word save before commit...');
@@ -891,7 +935,10 @@ Future<void> main(List<String> args) async {
     final data = jsonDecode(body) as Map<String, dynamic>;
     final projectName = (data['projectName'] as String?)?.trim() ?? '';
     final branchName = (data['branchName'] as String?)?.trim() ?? '';
-    if(branchName.contains(projectName+"/")){//拒绝切换远程分支
+    final repoPath = (data['repoPath'] as String?)?.trim() ?? '';
+
+    if (branchName.contains(projectName + "/")) {
+      //拒绝切换远程分支
       return _cors(Response(400,
           body: jsonEncode({'error': '禁止切换到远程分支'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
@@ -903,7 +950,7 @@ Future<void> main(List<String> args) async {
     }
     try {
       final sw = Stopwatch()..start();
-      await switchBranch(projectName, branchName);
+      await switchBranch(projectName, branchName, repoPath: repoPath.isNotEmpty ? repoPath : null);
       sw.stop();
       print('[Perf][Server][SwitchBranch] Total: ${sw.elapsedMilliseconds}ms');
       return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
@@ -960,11 +1007,93 @@ Future<void> main(List<String> args) async {
     }
   });
 
+  // 🔥 新增：AI 对比端点
+  router.post('/compare_ai', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+
+    final repoPath = _sanitizePath(data['repoPath'] as String?);
+    final commit1 = (data['commit1'] as String? ?? '').trim();
+    final commit2 = (data['commit2'] as String? ?? '').trim();
+    final docType = (data['docType'] as String? ?? 'word').trim();
+
+    if (repoPath.isEmpty || commit1.isEmpty || commit2.isEmpty) {
+      return _cors(Response.badRequest(
+        body: jsonEncode({'error': 'repoPath, commit1, commit2 不能为空'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+      ));
+    }
+
+    try {
+      print('[API] AI对比请求: $commit1 vs $commit2 ($docType)');
+
+      final result = await compareCommitsWithAI(
+        repoPath,
+        commit1,
+        commit2,
+        docType: docType,
+      );
+
+      return _cors(Response.ok(
+          jsonEncode({
+            'success': true,
+            'commit1': commit1,
+            'commit2': commit2,
+            'docType': docType,
+            'result': result,
+          }),
+          headers: {
+            'Content-Type': 'application/json; charset=utf-8',
+          }));
+    } catch (e) {
+      print('[API] AI对比失败: $e');
+      return _cors(Response.internalServerError(
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+      ));
+    }
+  });
+
+  // 🔥 新增：AI 缓存统计端点
+  router.get('/ai_cache/stats', (Request req) async {
+    try {
+      final stats = await AIDiffService.getCacheStats();
+      return _cors(Response.ok(jsonEncode(stats), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response.internalServerError(
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+      ));
+    }
+  });
+
+  // 🔥 新增：清空 AI 缓存端点
+  router.delete('/ai_cache', (Request req) async {
+    try {
+      final deleted = await AIDiffService.clearCache();
+      return _cors(Response.ok(
+          jsonEncode({
+            'success': true,
+            'deleted': deleted,
+          }),
+          headers: {
+            'Content-Type': 'application/json; charset=utf-8',
+          }));
+    } catch (e) {
+      return _cors(Response.internalServerError(
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+      ));
+    }
+  });
+
   router.post('/preview_cache', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
     final repoPath = _sanitizePath(data['repoPath'] as String?);
-    
+
     final ids = <String>{};
     if (data['commitIds'] != null) {
       for (final item in (data['commitIds'] as List)) {
@@ -982,7 +1111,8 @@ Future<void> main(List<String> args) async {
 
     if (repoPath.isEmpty || ids.isEmpty) {
       return _cors(Response(400,
-          body: jsonEncode({'error': 'repoPath and commitId/commitIds required'}),
+          body:
+              jsonEncode({'error': 'repoPath and commitId/commitIds required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
 
@@ -996,9 +1126,11 @@ Future<void> main(List<String> args) async {
       }
     }());
 
-    return _cors(Response.ok(jsonEncode({'status': 'scheduled', 'count': ids.length}), headers: {
-      'Content-Type': 'application/json; charset=utf-8',
-    }));
+    return _cors(Response.ok(
+        jsonEncode({'status': 'scheduled', 'count': ids.length}),
+        headers: {
+          'Content-Type': 'application/json; charset=utf-8',
+        }));
   });
 
   router.post('/rollback', (Request req) async {
@@ -1088,11 +1220,13 @@ Future<void> main(List<String> args) async {
   router.post('/track/create', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
-    final name = (data['name'] as String?)?.trim() ?? '';
+    final name = (data['packagePath'] as String?)?.trim() ??
+        (data['name'] as String?)?.trim() ??
+        '';
     final docxPath = data['docxPath'] as String?;
     if (name.isEmpty) {
       return _cors(Response(400,
-          body: jsonEncode({'error': 'name required'}),
+          body: jsonEncode({'error': 'packagePath required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
@@ -1132,10 +1266,12 @@ Future<void> main(List<String> args) async {
   router.post('/track/open', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
-    final name = (data['name'] as String?)?.trim() ?? '';
+    final name = (data['packagePath'] as String?)?.trim() ??
+        (data['name'] as String?)?.trim() ??
+        '';
     if (name.isEmpty) {
       return _cors(Response(400,
-          body: jsonEncode({'error': 'name required'}),
+          body: jsonEncode({'error': 'packagePath required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
@@ -1150,13 +1286,37 @@ Future<void> main(List<String> args) async {
     }
   });
 
+  router.post('/track/expand', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final filePath = (data['filePath'] as String?)?.trim() ?? '';
+
+    if (filePath.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'filePath required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      final resp = await expandLocalTrackingPackage(filePath);
+      return _cors(Response.ok(jsonEncode(resp), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
   router.post('/track/repos', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
-    final name = (data['name'] as String?)?.trim() ?? '';
+    final name = (data['packagePath'] as String?)?.trim() ??
+        (data['name'] as String?)?.trim() ??
+        '';
     if (name.isEmpty) {
       return _cors(Response(400,
-          body: jsonEncode({'error': 'name required'}),
+          body: jsonEncode({'error': 'packagePath required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
@@ -1174,18 +1334,21 @@ Future<void> main(List<String> args) async {
   router.post('/track/update', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
-    final name = (data['name'] as String?)?.trim() ?? '';
+    final name = (data['packagePath'] as String?)?.trim() ??
+        (data['name'] as String?)?.trim() ??
+        '';
     final opIdentical = (data['opIdentical'] as bool?) ?? false;
     final newDocxPath = data['newDocxPath'] as String?;
     final repoPath = data['repoPath'] as String?;
     final docxPath = data['docxPath'] as String?;
     if (name.isEmpty) {
       return _cors(Response(400,
-          body: jsonEncode({'error': 'name required'}),
+          body: jsonEncode({'error': 'packagePath required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
-      final resp = await updateTrackingProject(name,opIdentical, newDocxPath: newDocxPath, repoPath: repoPath, docxPath: docxPath);
+      final resp = await updateTrackingProject(name, opIdentical,
+          newDocxPath: newDocxPath, repoPath: repoPath, docxPath: docxPath);
       return _cors(Response.ok(jsonEncode(resp), headers: {
         'Content-Type': 'application/json; charset=utf-8',
       }));
@@ -1199,10 +1362,12 @@ Future<void> main(List<String> args) async {
   router.post('/track/sync_folder', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
-    final name = (data['name'] as String?)?.trim() ?? '';
+    final name = (data['packagePath'] as String?)?.trim() ??
+        (data['name'] as String?)?.trim() ??
+        '';
     if (name.isEmpty) {
       return _cors(Response(400,
-          body: jsonEncode({'error': 'name required'}),
+          body: jsonEncode({'error': 'packagePath required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
@@ -1362,23 +1527,47 @@ Future<void> main(List<String> args) async {
           uniqueRepos[name] = r;
         }
 
-        final repoNames = uniqueRepos.keys.toList();
+        final filteredRepoNames = <String>[];
 
-        // Check folder status for each repo
-        final results = await Future.wait(repoNames.map((name) async {
-           final r = uniqueRepos[name]!;
-           final owner = r['owner']['login'];
-           final checkUrl = '$giteaUrl/api/v1/repos/$owner/$name/contents/folder_meta.json';
-           bool isFolder = false;
-           try {
-             final checkResp = await http.get(Uri.parse(checkUrl), headers: headers);
-             if (checkResp.statusCode == 200) {
-               isFolder = true;
-             }
-           } catch (_) {}
-           return {'name': name, 'isFolder': isFolder};
+        // Filter by last commit message
+        await Future.wait(uniqueRepos.values.map((repo) async {
+          try {
+            final ownerObj = repo['owner'];
+            if (ownerObj == null) return;
+
+            final ownerName = ownerObj['login'];
+            final repoName = repo['name'];
+            // Prefer full_name if available, otherwise construct it
+            final fullName = repo['full_name'] ?? '$ownerName/$repoName';
+
+            final commitResp = await http.get(
+              Uri.parse('$giteaUrl/api/v1/repos/$fullName/commits?limit=1'),
+              headers: headers,
+            );
+
+            if (commitResp.statusCode == 200) {
+              final commits = jsonDecode(commitResp.body) as List;
+              if (commits.isNotEmpty) {
+                final msg = (commits[0]['commit']['message'] as String).trim();
+                if (msg.contains('[folder project213897]')) {
+                  filteredRepoNames.add((repoName as String).toLowerCase());
+                }
+              }
+            } else {
+              print(
+                  'Failed to fetch commits for $fullName: ${commitResp.statusCode}');
+            }
+          } catch (e) {
+            print('Error filtering repo ${repo['name']}: $e');
+          }
         }));
 
+        // Unify: Return all repositories without filtering by folder_meta.json
+        final results = filteredRepoNames.map((name) {
+          return {'name': name, 'isFolder': true};
+        }).toList();
+
+        // If repoPath is provided, add remotes (logic remains)
         if (repoPath != null && repoPath.isNotEmpty) {
           for (final r in uniqueRepos.values) {
             final name = (r['name'] as String).toLowerCase();
@@ -1410,6 +1599,52 @@ Future<void> main(List<String> args) async {
     } catch (e) {
       return _cors(Response(500,
           body: jsonEncode({'error': 'Remote list failed: $e'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/remote/add', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoPath = _sanitizePath(data['repoPath'] as String?);
+    final name = (data['name'] as String?)?.trim() ?? '';
+    final url = (data['url'] as String?)?.trim() ?? '';
+
+    if (repoPath.isEmpty || name.isEmpty || url.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoPath, name, url required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      await addRemote(repoPath, name, url);
+      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/get_remotes', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final repoPath = _sanitizePath(data['repoPath'] as String?);
+
+    if (repoPath.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'repoPath required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      final remotes = await getRemotes(repoPath);
+      return _cors(Response.ok(jsonEncode({'remotes': remotes}), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
   });
@@ -1741,33 +1976,40 @@ Future<void> main(List<String> args) async {
       final appData = Platform.environment['APPDATA'];
       if (appData == null) throw Exception('APPDATA not found');
       final repoPath = p.join(appData, 'gitdocx', repoName);
-      
+
       if (!await Directory(repoPath).exists()) {
-         throw Exception('Repo $repoName not found at $repoPath');
+        throw Exception('Repo $repoName not found at $repoPath');
       }
 
       // Find parent
-      final parentRes = await Process.run('git', 
-          ['log', '-1', '--format=%P', commitId], 
+      final parentRes = await Process.run(
+          'git', ['log', '-1', '--format=%P', commitId],
           workingDirectory: repoPath);
-      
-      if (parentRes.exitCode != 0) throw Exception('Git log failed: ${parentRes.stderr}');
-      
-      final parentId = (parentRes.stdout as String).trim().split(' ').firstWhere((e) => e.isNotEmpty, orElse: () => '');
+
+      if (parentRes.exitCode != 0)
+        throw Exception('Git log failed: ${parentRes.stderr}');
+
+      final parentId = (parentRes.stdout as String)
+          .trim()
+          .split(' ')
+          .firstWhere((e) => e.isNotEmpty, orElse: () => '');
 
       tempDir = await Directory.systemTemp.createTemp('sum_commit_');
       final afterDocx = p.join(tempDir.path, 'after.docx');
-      
+
       // Extract commit docx
-      final afterRes = await Process.run('git', 
-          ['show', '$commitId:content.docx'], 
+      final afterRes = await Process.run(
+          'git', ['show', '$commitId:content.docx'],
           workingDirectory: repoPath, stdoutEncoding: null);
-          
+
       if (afterRes.exitCode != 0) {
         final err = utf8.decode(afterRes.stderr as List<int>);
-        if (err.contains('did not match') || err.contains('exists on disk') || err.contains('pathspec')) {
-           return _cors(Response.ok(
-            jsonEncode({'output': 'File content.docx not found in this commit'}),
+        if (err.contains('did not match') ||
+            err.contains('exists on disk') ||
+            err.contains('pathspec')) {
+          return _cors(Response.ok(
+            jsonEncode(
+                {'output': 'File content.docx not found in this commit'}),
             headers: {'Content-Type': 'application/json; charset=utf-8'},
           ));
         }
@@ -1780,15 +2022,15 @@ Future<void> main(List<String> args) async {
         result = "Initial commit (no parent)";
       } else {
         final beforeDocx = p.join(tempDir.path, 'before.docx');
-        final beforeRes = await Process.run('git', 
-            ['show', '$parentId:content.docx'], 
+        final beforeRes = await Process.run(
+            'git', ['show', '$parentId:content.docx'],
             workingDirectory: repoPath, stdoutEncoding: null);
-            
+
         if (beforeRes.exitCode != 0) {
-             result = "New file created (parent did not have content.docx)";
+          result = "New file created (parent did not have content.docx)";
         } else {
-             await File(beforeDocx).writeAsBytes(beforeRes.stdout as List<int>);
-             result = await summarizeDiff(beforeDocx, afterDocx);
+          await File(beforeDocx).writeAsBytes(beforeRes.stdout as List<int>);
+          result = await summarizeDiff(beforeDocx, afterDocx);
         }
       }
 
@@ -1796,7 +2038,6 @@ Future<void> main(List<String> args) async {
         jsonEncode({'output': result}),
         headers: {'Content-Type': 'application/json; charset=utf-8'},
       ));
-
     } catch (e) {
       return _cors(Response(500,
           body: jsonEncode({'error': e.toString()}),
@@ -1819,17 +2060,29 @@ Future<void> main(List<String> args) async {
     final token = (data['token'] as String?)?.trim() ?? '';
     final force = data['force'] == true;
     final targetRepoName = (data['targetRepoName'] as String?)?.trim();
+    final localTrackingZipPath =
+        (data['localTrackingZipPath'] as String?)?.trim();
+    final currentPath = _sanitizePath(data['currentPath'] as String?);
+    final recursive = data['recursive'] == true;
+
+    print(
+        'Debug: /pull request - repoPath: $repoPath, repoName: $repoName, targetRepoName: $targetRepoName, localTrackingZipPath: $localTrackingZipPath, recursive: $recursive');
 
     final pathArg = repoPath.isNotEmpty ? repoPath : repoName;
 
     if (pathArg.isEmpty || username.isEmpty || token.isEmpty) {
       return _cors(Response(400,
-          body: jsonEncode({'error': 'repoPath (or repoName), username, token required'}),
+          body: jsonEncode(
+              {'error': 'repoPath (or repoName), username, token required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
       final result = await pullFromRemote(pathArg, username, token,
-          force: force, targetRepoName: targetRepoName);
+          force: force,
+          targetRepoName: targetRepoName,
+          localTrackingZipPath: localTrackingZipPath,
+          currentPath: currentPath,
+          recursive: recursive);
       print("pullResult=${result}");
       return _cors(Response.ok(jsonEncode(result),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
@@ -1928,8 +2181,23 @@ Future<void> main(List<String> args) async {
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
-      final commits = await listBackupCommits(repoName,token);
-      return _cors(Response.ok(jsonEncode({'commits': commits}), headers: {
+      final result = await listBackupCommits(repoName, token,
+          onProgress: (percent, received, total) {
+        final msg = jsonEncode({
+          'type': 'backup_progress',
+          'repo': repoName,
+          'percent': percent,
+          'received': received,
+          'total': total
+        });
+        for (final socket in _activeFrontendSockets) {
+          try {
+            socket.sink.add(msg);
+          } catch (_) {}
+        }
+      });
+      print("chainViewUrl: ${result['chainViewUrl']}");
+      return _cors(Response.ok(jsonEncode(result), headers: {
         'Content-Type': 'application/json; charset=utf-8',
       }));
     } catch (e) {
@@ -1945,6 +2213,12 @@ Future<void> main(List<String> args) async {
       InternetAddress.loopbackIPv4, 8080);
   stdout.writeln(
       'Server listening on http://${server.address.host}:${server.port}');
+
+  // 优雅退出处理
+  server.autoCompress = false;
+
+  // 监听服务器关闭
+  print('服务器启动完成，按 Ctrl+C 退出');
 }
 
 class _MultipartPart {

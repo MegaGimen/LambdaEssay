@@ -440,51 +440,6 @@ class GraphPainter extends CustomPainter {
     //   ..style = PaintingStyle.stroke
     //   ..strokeWidth = 1.5;
     */
-
-      double gx, gy;
-      bool drawEdge = false;
-      double hx = 0, hy = 0;
-
-      if (currentHeadId != null) {
-        final headRow = rowOf[currentHeadId];
-        final headLane = laneOf[currentHeadId];
-        if (headRow != null && headLane != null) {
-          final ghostRow = headRow - 1;
-          gx = headLane * laneWidth + laneWidth / 2;
-          gy = ghostRow * rowHeight + rowHeight / 2;
-          hx = headLane * laneWidth + laneWidth / 2;
-          hy = headRow * rowHeight + rowHeight / 2;
-          drawEdge = true;
-        } else {
-           gx = laneWidth / 2;
-           gy = rowHeight / 2;
-        }
-      } else {
-        gx = laneWidth / 2;
-        gy = rowHeight / 2;
-      }
-
-      final opacity = 0.3 + 0.7 * (flashValue ?? 1.0);
-      final ghostColor = const Color.fromARGB(255, 255, 0, 0).withValues(alpha: opacity);
-
-      if (drawEdge) {
-        final edgePaint = Paint()
-          ..color = ghostColor
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2.0;
-        
-        final path = Path();
-        path.moveTo(gx, gy);
-        path.lineTo(hx, hy);
-        _drawDashedPath(canvas, path, edgePaint);
-      }
-
-      final nodePaint = Paint()
-          ..color = ghostColor
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 3.0;
-        
-      canvas.drawCircle(Offset(gx, gy), nodeRadius, nodePaint);
   }
 
   void _drawChain(
@@ -549,9 +504,11 @@ class GraphPainter extends CustomPainter {
         path.moveTo(x, y);
         path.lineTo(px, py);
       } else {
-        path.moveTo(px, py);
-        path.lineTo(x, py);
-        path.lineTo(x, y);
+        final midY = (y + py) / 2;
+        path.moveTo(x, y);
+        path.lineTo(x, midY);
+        path.lineTo(px, midY);
+        path.lineTo(px, py);
       }
       
       if (isDashed) {
@@ -722,14 +679,32 @@ class _SimpleGraphViewState extends State<SimpleGraphView> {
     _cachedLaneOf = GraphPainter.calculateLaneOf(allCommits, effectiveBranches, primaryBranch: widget.primaryBranchName);
     
     _cachedRowOf = {};
-    for (var i = 0; i < allCommits.length; i++) {
-       final c = allCommits[i];
-       if (widget.customRowMapping != null && widget.customRowMapping!.containsKey(c.id)) {
-         _cachedRowOf![c.id] = widget.customRowMapping![c.id]!;
-       } else {
-         _cachedRowOf![c.id] = i;
-       }
+    final customMapping = widget.customRowMapping;
+    if (customMapping != null && customMapping.isNotEmpty) {
+      final orderedIds = customMapping.entries.toList()
+        ..sort((a, b) => a.value.compareTo(b.value));
+      final mappedIds = orderedIds.map((e) => e.key).toSet();
+      for (final entry in orderedIds) {
+        _cachedRowOf![entry.key] = entry.value;
+      }
+      var nextRow = orderedIds.isEmpty ? 0 : orderedIds.last.value + 1;
+      final missing = allCommits.where((c) => !mappedIds.contains(c.id)).toList()
+        ..sort((a, b) {
+          final d = b.date.compareTo(a.date);
+          if (d != 0) return d;
+          return b.id.compareTo(a.id);
+        });
+      for (final c in missing) {
+        _cachedRowOf![c.id] = nextRow++;
+      }
+    } else {
+      for (var i = 0; i < allCommits.length; i++) {
+        final c = allCommits[i];
+        _cachedRowOf![c.id] = i;
+      }
     }
+
+    _canvasSize = _computeCanvasSize();
     
     // Force repaint after layout update
     if (mounted) setState(() {});
@@ -747,6 +722,7 @@ class _SimpleGraphViewState extends State<SimpleGraphView> {
         widget.ghostNodes != oldWidget.ghostNodes || 
         widget.customRowMapping != oldWidget.customRowMapping ||
         widget.primaryBranchName != oldWidget.primaryBranchName) {
+       _canvasSize = null;
        _updateLayout();
     }
   }
@@ -758,7 +734,7 @@ class _SimpleGraphViewState extends State<SimpleGraphView> {
       _updateLayout();
     }
 
-    _canvasSize ??= _computeCanvasSize(widget.data);
+    _canvasSize ??= _computeCanvasSize();
     _branchColors ??= _assignBranchColors(widget.data.branches);
 
     final content = Listener(
@@ -893,9 +869,11 @@ class _SimpleGraphViewState extends State<SimpleGraphView> {
     return content;
   }
 
-  Size _computeCanvasSize(GraphData data) {
-    final commits = data.commits;
-    final total = widget.totalRows ?? commits.length;
+  Size _computeCanvasSize() {
+    final total = widget.totalRows ??
+        (widget.customRowMapping == null || widget.customRowMapping!.isEmpty
+            ? widget.data.commits.length + widget.ghostNodes.length
+            : (widget.customRowMapping!.values.reduce((a, b) => a > b ? a : b) + 1));
     return Size(2000, (total + 5) * _rowHeight);
   }
 
