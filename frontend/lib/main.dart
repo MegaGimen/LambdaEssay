@@ -4427,7 +4427,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       child: Column(
         children: [
           Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -4524,43 +4524,57 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                     label: _laneWidth.round().toString(),
                     onChanged: (v) => setState(() => _laneWidth = v),
                   ),
-                  const SizedBox(height: 16),
-                  const Text('分支图例',
-                      style: TextStyle(
-                          fontWeight: FontWeight.bold, color: Colors.grey)),
-                  const SizedBox(height: 8),
-                  ...() {
-                    final branches = data!.branches;
-                    final palette = GraphPainter.lanePalette;
-                    return branches.asMap().entries.map((e) {
-                      final i = e.key;
-                      final b = e.value;
-                      final color = palette[i % palette.length];
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 4),
-                        child: Row(
-                          children: [
-                            Container(
-                                width: 12,
-                                height: 12,
-                                decoration: BoxDecoration(
-                                    color: color, shape: BoxShape.circle)),
-                            const SizedBox(width: 8),
-                            Expanded(
-                                child: Text(Branch.decodeName(b.name),
-                                    overflow: TextOverflow.ellipsis)),
-                            if (b.name == data!.currentBranch)
-                              const Icon(Icons.check_circle,
-                                  size: 14, color: Colors.green),
-                          ],
-                        ),
-                      );
-                    });
-                  }(),
                 ],
               ],
             ),
           ),
+          if (data != null)
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('分支图例',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold, color: Colors.grey)),
+                    const SizedBox(height: 8),
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: data!.branches.length,
+                        itemBuilder: (context, i) {
+                          final b = data!.branches[i];
+                          final palette = GraphPainter.lanePalette;
+                          final color = palette[i % palette.length];
+                          return InkWell(
+                            onDoubleTap: () => _doSwitchBranch(b.name),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 4),
+                              child: Row(
+                                children: [
+                                  Container(
+                                      width: 12,
+                                      height: 12,
+                                      decoration: BoxDecoration(
+                                          color: color, shape: BoxShape.circle)),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                      child: Text(Branch.decodeName(b.name),
+                                          overflow: TextOverflow.ellipsis)),
+                                  if (b.name == data!.currentBranch)
+                                    const Icon(Icons.check_circle,
+                                        size: 14, color: Colors.green),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
         ],
       ),
     );
