@@ -7,6 +7,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
+import 'dart:ui' as ui;
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/io.dart';
@@ -622,8 +623,14 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   DateTime? _lastTapTime;
   String? _lastTappedPath;
 
+  bool _isDirty = false;
+  Timer? _dirtyCheckTimer;
+  late final AppLifecycleListener _listener;
+
   @override
   void dispose() {
+    _listener.dispose();
+    _dirtyCheckTimer?.cancel();
     _channel?.sink.close();
     _reconnectTimer?.cancel();
     _sidebarFlashCtrl.dispose();
@@ -668,13 +675,95 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    _listener = AppLifecycleListener(
+      onExitRequested: _onExitRequested,
+    );
     _sidebarFlashCtrl = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 1),
     )..repeat(reverse: true);
     _checkLogin();
     _connectWebSocket();
+    _startDirtyCheck();
   }
+
+  void _startDirtyCheck() {
+    _dirtyCheckTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
+      if (currentProjectName != null) {
+        _checkDirtyStatus();
+      }
+    });
+  }
+
+  Future<void> _checkDirtyStatus() async {
+    if (currentProjectName == null) return;
+    try {
+      final resp = await _postJson('$baseUrl/project/dirty_status', {
+        'packagePath': currentProjectName,
+      });
+      if (resp['isDirty'] == true) {
+        if (!_isDirty && mounted) {
+          setState(() => _isDirty = true);
+        }
+      } else {
+        if (_isDirty && mounted) {
+          setState(() => _isDirty = false);
+        }
+      }
+    } catch (e) {
+      // Ignore
+    }
+  }
+
+  Future<ui.AppExitResponse> _onExitRequested() async {
+    if (_isDirty) {
+      final result = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('未保存的更改'),
+          content: const Text('您有未保存到追踪包的更改，是否保存？'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop('cancel'),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop('discard'),
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              child: const Text('不保存'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop('save'),
+              child: const Text('保存'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop('save_as'),
+              child: const Text('另存为'),
+            ),
+          ],
+        ),
+      );
+
+      if (result == 'save') {
+        await _saveProject();
+        // Check if save was successful
+        await _checkDirtyStatus();
+        if (!_isDirty) return ui.AppExitResponse.exit;
+        return ui.AppExitResponse.cancel;
+      } else if (result == 'save_as') {
+        await _saveProjectAs();
+        await _checkDirtyStatus();
+        if (!_isDirty) return ui.AppExitResponse.exit;
+        return ui.AppExitResponse.cancel;
+      } else if (result == 'discard') {
+        return ui.AppExitResponse.exit;
+      } else {
+        return ui.AppExitResponse.cancel;
+      }
+    }
+    return ui.AppExitResponse.exit;
+  }
+
 
   Future<void> _connectWebSocket() async {
     if (!mounted) return;
@@ -3961,6 +4050,18 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                     child: const Text('打开'),
                   ),
                 ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: loading ? null : _saveProject,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green, // Green as requested (or just distinct)
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    child: const Text('保存'),
+                  ),
+                ),
               ],
             ),
           ),
@@ -3977,7 +4078,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                     const Icon(Icons.folder_open, size: 16, color: Colors.blue),
                     const SizedBox(width: 8),
                     Expanded(
-                        child: Text('当前: $currentProjectName',
+                        child: Text(
+                            '当前: $currentProjectName${_isDirty ? " *" : ""}',
                             style: const TextStyle(
                                 fontWeight: FontWeight.bold,
                                 color: Colors.blue,
@@ -4442,12 +4544,19 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             children: [
               Scaffold(
                 appBar: AppBar(
-                  title: const Text('LambdaEssay'),
+                  title: Text('LambdaEssay${_isDirty ? ' *' : ''}'),
                   backgroundColor: const Color(0xFFFFFFFF),
                   foregroundColor: const Color(0xFF6200EE),
                   elevation: 1,
                   shadowColor: Colors.black.withOpacity(0.1),
                   actions: [
+                    IconButton(
+                      icon: const Icon(Icons.save),
+                      tooltip: '保存追踪包 (Ctrl+S)',
+                      onPressed: _isDirty ? _saveProject : null, 
+                      color: _isDirty ? Colors.red : Colors.grey,
+                    ),
+                    const SizedBox(width: 16),
                     Row(
                       children: [
                         const Text('Server: ',

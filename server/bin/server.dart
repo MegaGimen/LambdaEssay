@@ -487,6 +487,28 @@ Future<void> main(List<String> args) async {
     }
   });
 
+  router.post('/project/dirty_status', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final packagePath = _sanitizePath(data['packagePath'] as String?);
+
+    if (packagePath.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'packagePath required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      final isDirty = await checkDirty(packagePath);
+      return _cors(Response.ok(jsonEncode({'isDirty': isDirty}), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
   router.post('/project/save', (Request req) async {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;

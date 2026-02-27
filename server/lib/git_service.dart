@@ -1011,11 +1011,13 @@ Future<void> commitChanges(
     // Auto-update parent repo (submodule pointer)
     await _updateParentSubmodule(repoPath, author, message);
 
-    try {
-      await _persistTrackingPackageForRepo(repoPath);
-    } catch (e) {
-      print('Persist tracking package failed: $e');
-    }
+    // Disable auto-pack
+    // try {
+    //   await _persistTrackingPackageForRepo(repoPath);
+    // } catch (e) {
+    //   print('Persist tracking package failed: $e');
+    // }
+    await _markDirty(repoPath);
 
     clearCache();
   });
@@ -1544,6 +1546,7 @@ Future<void> saveTrackingProject(String currentPackagePath,
     // Just pack
     await _exportFolderToTrackingPackage(workspaceDir, targetPath);
   }
+  await _clearDirty(workspaceDir);
   print('[saveTrackingProject] Done');
 }
 
@@ -2683,9 +2686,11 @@ Future<void> syncFolderProject(String name) async {
   final packagePath = tracking['packagePath'] as String?;
   if (packagePath != null && packagePath.isNotEmpty) {
     try {
-      await _exportFolderToTrackingPackage(projDir, packagePath);
+      // Disable auto-pack for folder sync
+      // await _exportFolderToTrackingPackage(projDir, packagePath);
+      await _markDirty(projDir);
     } catch (e) {
-      print('Failed to export tracking package: $e');
+      print('Failed to export tracking package (mark dirty): $e');
     }
   }
 
@@ -2887,11 +2892,13 @@ Future<Map<String, dynamic>> updateTrackingProject(
 
         await syncFolderProject(name);
 
-        try {
-          await _persistTrackingPackageForRepo(projDir);
-        } catch (e) {
-          print('Persist tracking package failed: $e');
-        }
+        // Disable auto-pack for root folder update
+        // try {
+        //   await _persistTrackingPackageForRepo(projDir);
+        // } catch (e) {
+        //   print('Persist tracking package failed: $e');
+        // }
+        await _markDirty(projDir);
 
         return {
           'repoPath': projDir,
@@ -3090,11 +3097,13 @@ Future<Map<String, dynamic>> updateTrackingProject(
       print(
           '[Perf] updateTrackingProject Total Time: ${totalSw.elapsedMilliseconds}ms');
 
-      try {
-        await _persistTrackingPackageForRepo(projDir);
-      } catch (e) {
-        print('Persist tracking package failed: $e');
-      }
+      // Disable auto-pack
+      // try {
+      //   await _persistTrackingPackageForRepo(projDir);
+      // } catch (e) {
+      //   print('Persist tracking package failed: $e');
+      // }
+      await _markDirty(projDir);
 
       return {
         'repoPath': projDir,
@@ -4306,9 +4315,11 @@ Future<void> deleteProject(String packagePath,
     }
 
     try {
-      await _persistTrackingPackageForRepo(normalizedTarget);
+      // Disable auto-pack on delete
+      // await _persistTrackingPackageForRepo(normalizedTarget);
+      await _markDirty(workspace);
     } catch (e) {
-      print('Persist tracking package failed: $e');
+      print('Persist tracking package (mark dirty) failed: $e');
     }
     return;
   }
@@ -4611,4 +4622,32 @@ Future<void> _ensureWebhook(String repoName, String owner, String token) async {
   } catch (e) {
     print('Error setting up webhook: $e');
   }
+}
+
+Future<void> _markDirty(String workspaceDir) async {
+  final file = File(p.join(workspaceDir, '.dirty'));
+  if (!file.existsSync()) {
+    try {
+      file.createSync();
+    } catch (e) {
+      print('Failed to mark dirty: $e');
+    }
+  }
+}
+
+Future<void> _clearDirty(String workspaceDir) async {
+  final file = File(p.join(workspaceDir, '.dirty'));
+  if (file.existsSync()) {
+    try {
+      file.deleteSync();
+    } catch (e) {
+      print('Failed to clear dirty: $e');
+    }
+  }
+}
+
+Future<bool> checkDirty(String packagePath) async {
+  final workspaceDir = _workspaceDirForPackage(packagePath);
+  final file = File(p.join(workspaceDir, '.dirty'));
+  return file.existsSync();
 }
