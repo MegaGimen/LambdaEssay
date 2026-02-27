@@ -26,9 +26,10 @@ class CommitNode {
 class Branch {
   final String name;
   final String head;
-  Branch({required this.name, required this.head});
+  final String? upstream;
+  Branch({required this.name, required this.head, this.upstream});
   factory Branch.fromJson(Map<String, dynamic> j) =>
-      Branch(name: j['name'], head: j['head']);
+      Branch(name: j['name'], head: j['head'], upstream: j['upstream']);
 
   static String encodeName(String text) {
     StringBuffer sb = StringBuffer();
@@ -72,12 +73,14 @@ class EdgeInfo {
 class GraphData {
   final List<CommitNode> commits;
   final List<Branch> branches;
+  final List<Branch> remoteBranches;
   final Map<String, List<String>> chains;
   final String? currentBranch;
   final List<List<String>> customEdges;
   GraphData({
     required this.commits,
     required this.branches,
+    this.remoteBranches = const [],
     required this.chains,
     this.currentBranch,
     this.customEdges = const [],
@@ -89,6 +92,11 @@ class GraphData {
         branches: ((j['branches'] as List).map(
           (e) => Branch.fromJson(e as Map<String, dynamic>),
         )).toList(),
+        remoteBranches: (j['remoteBranches'] as List?)
+                ?.cast<Map<String, dynamic>>()
+                .map(Branch.fromJson)
+                .toList() ??
+            [],
         chains: (j['chains'] as Map<String, dynamic>).map(
           (k, v) => MapEntry(k, (v as List).cast<String>()),
         ),

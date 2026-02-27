@@ -476,7 +476,7 @@ Future<List<String>> _runGit(List<String> args, String repoPath,
 Future<List<Branch>> getBranches(String repoPath) async {
   final lines = await _runGit([
     'for-each-ref',
-    '--format=%(refname:short)|%(objectname)',
+    '--format=%(refname:short)|%(objectname)|%(upstream:short)',
     'refs/heads',
   ], repoPath);
   final result = <Branch>[];
@@ -484,7 +484,11 @@ Future<List<Branch>> getBranches(String repoPath) async {
     if (l.trim().isEmpty) continue;
     final parts = l.split('|');
     if (parts.length >= 2) {
-      result.add(Branch(name: parts[0], head: parts[1]));
+      String? upstream;
+      if (parts.length > 2 && parts[2].isNotEmpty) {
+        upstream = parts[2];
+      }
+      result.add(Branch(name: parts[0], head: parts[1], upstream: upstream));
     }
   }
   return result;
@@ -650,6 +654,20 @@ Future<GraphResponse> _getGraphUnlocked(String repoPath,
     }
   }
 
+  // Always fetch remote branches for legend display
+  final remoteBranchesForLegend = <Branch>[];
+  try {
+    final remotes = await _runGit(['remote'], repoPath);
+    for (final r in remotes) {
+      if (r.trim().isNotEmpty) {
+        remoteBranchesForLegend
+            .addAll(await getRemoteBranches(repoPath, r.trim()));
+      }
+    }
+  } catch (e) {
+    print('Failed to fetch remote branches for legend: $e');
+  }
+
   final chains = await getBranchChains(repoPath, branches, limit: limit);
   final current = await getCurrentBranch(repoPath);
 
@@ -718,6 +736,7 @@ Future<GraphResponse> _getGraphUnlocked(String repoPath,
   final resp = GraphResponse(
       commits: commits,
       branches: branches,
+      remoteBranches: remoteBranchesForLegend,
       chains: chains,
       currentBranch: current,
       customEdges: customEdges);

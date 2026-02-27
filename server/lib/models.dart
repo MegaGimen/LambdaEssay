@@ -26,25 +26,30 @@ class CommitNode {
 class Branch {
   final String name;
   final String head;
-  Branch({required this.name, required this.head});
-  Map<String, dynamic> toJson() => {'name': name, 'head': head};
+  final String? upstream;
+  Branch({required this.name, required this.head, this.upstream});
+  Map<String, dynamic> toJson() =>
+      {'name': name, 'head': head, 'upstream': upstream};
 }
 
 class GraphResponse {
   final List<CommitNode> commits;
   final List<Branch> branches;
+  final List<Branch> remoteBranches;
   final Map<String, List<String>> chains;
   final String? currentBranch;
   final List<List<String>> customEdges;
   GraphResponse(
       {required this.commits,
       required this.branches,
+      this.remoteBranches = const [],
       required this.chains,
       this.currentBranch,
       this.customEdges = const []});
   Map<String, dynamic> toJson() => {
         'commits': commits.map((e) => e.toJson()).toList(),
         'branches': branches.map((e) => e.toJson()).toList(),
+        'remoteBranches': remoteBranches.map((e) => e.toJson()).toList(),
         'chains': chains,
         'currentBranch': currentBranch,
         'customEdges': customEdges,
