@@ -28,10 +28,14 @@ try:
 except ImportError:
     pass
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
+import shutil
+import tempfile
+import os
+import json
 
 # 加载环境变量
 load_dotenv(project_root / ".env")
@@ -126,30 +130,80 @@ async def health_check():
 
 
 @app.post("/compare", response_model=CompareResponse)
-async def compare_documents(req: CompareRequest):
-    """对比两个文档
-
-    Args:
-        req: 对比请求
-
-    Returns:
-        对比结果
-    """
-    logger.info(f"收到对比请求: {req.doc_type}, A={Path(req.file_a).name}, B={Path(req.file_b).name}, cache={req.use_cache}, commits={req.commit_a} vs {req.commit_b}")
-
-    # 验证文件存在
-    file_a = Path(req.file_a)
-    file_b = Path(req.file_b)
-
-    if not file_a.exists():
-        logger.error(f"文件不存在: {req.file_a}")
-        raise HTTPException(status_code=404, detail=f"文件不存在: {req.file_a}")
-
-    if not file_b.exists():
-        logger.error(f"文件不存在: {req.file_b}")
-        raise HTTPException(status_code=404, detail=f"文件不存在: {req.file_b}")
+async def compare_documents(request: Request):
+    """对比两个文档 (兼容模式：支持 JSON 路径传递 和 Multipart 文件上传)"""
+    
+    content_type = request.headers.get("content-type", "")
+    
+    file_a_path = None
+    file_b_path = None
+    doc_type = "word"
+    use_cache = True
+    use_mcp = True
+    commit_a = None
+    commit_b = None
+    
+    tmp_dir = None
 
     try:
+        # 模式 1: Multipart 文件上传
+        if "multipart/form-data" in content_type:
+            logger.info("收到对比请求 (模式: Multipart Upload)")
+            form = await request.form()
+            
+            # 提取字段
+            doc_type = form.get("doc_type", "word")
+            use_cache = str(form.get("use_cache", "true")).lower() == "true"
+            use_mcp = str(form.get("use_mcp", "true")).lower() == "true"
+            commit_a = form.get("commit_a")
+            commit_b = form.get("commit_b")
+            
+            file_a = form.get("file_a")
+            file_b = form.get("file_b")
+            
+            if not isinstance(file_a, UploadFile) or not isinstance(file_b, UploadFile):
+                raise HTTPException(status_code=400, detail="Multipart 请求必须包含 file_a 和 file_b 文件")
+
+            # 创建临时目录保存文件
+            tmp_dir = Path(tempfile.mkdtemp())
+            file_a_path = tmp_dir / (file_a.filename or "doc_a.docx")
+            file_b_path = tmp_dir / (file_b.filename or "doc_b.docx")
+            
+            # 保存文件流
+            with open(file_a_path, "wb") as buffer:
+                await file_a.seek(0)
+                shutil.copyfileobj(file_a.file, buffer)
+                
+            with open(file_b_path, "wb") as buffer:
+                await file_b.seek(0)
+                shutil.copyfileobj(file_b.file, buffer)
+
+        # 模式 2: JSON 路径传递 (向下兼容)
+        else:
+            logger.info("收到对比请求 (模式: JSON Path)")
+            try:
+                body = await request.json()
+                req = CompareRequest(**body)
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"无效的 JSON 请求体: {str(e)}")
+
+            file_a_path = Path(req.file_a)
+            file_b_path = Path(req.file_b)
+            doc_type = req.doc_type
+            use_cache = req.use_cache
+            use_mcp = req.use_mcp
+            commit_a = req.commit_a
+            commit_b = req.commit_b
+
+            # 验证本地文件存在
+            if not file_a_path.exists():
+                raise HTTPException(status_code=404, detail=f"文件不存在: {req.file_a}")
+            if not file_b_path.exists():
+                raise HTTPException(status_code=404, detail=f"文件不存在: {req.file_b}")
+
+        # === 通用对比逻辑 ===
+        logger.info(f"开始处理: {doc_type}, A={file_a_path}, B={file_b_path}")
+
         # 获取 LLM Agent
         llm_agent = default_agent_from_env()
 
@@ -158,48 +212,47 @@ async def compare_documents(req: CompareRequest):
         cached = False
         result = None
 
-        # 如果启用缓存，先尝试获取缓存结果（使用commit ID如果可用）
-        if req.use_cache:
-            cache_key = compute_pair_key(req.file_a, req.file_b, req.doc_type, req.commit_a, req.commit_b)
+        # 如果启用缓存，先尝试获取缓存结果
+        if use_cache:
+            cache_key = compute_pair_key(str(file_a_path), str(file_b_path), doc_type, commit_a, commit_b)
             cached_result = get_cache_manager().get(cache_key)
             if cached_result is not None:
                 cached = True
                 result = cached_result
                 logger.info(f"✅ 缓存命中: {cache_key}")
 
-        # 如果没有缓存，执行LLM对比（禁用内部缓存，由api_server统一管理）
+        # 如果没有缓存，执行LLM对比
         if result is None:
-            if req.doc_type == "word":
+            if doc_type == "word":
                 result = compare_word_docs(
-                    str(file_a),
-                    str(file_b),
+                    str(file_a_path),
+                    str(file_b_path),
                     llm_agent,
-                    use_mcp=req.use_mcp,
+                    use_mcp=use_mcp,
                     use_cache=False,  # 禁用内部缓存
                 )
-            elif req.doc_type == "ppt":
+            elif doc_type == "ppt":
                 result = compare_ppt_decks(
-                    str(file_a),
-                    str(file_b),
+                    str(file_a_path),
+                    str(file_b_path),
                     llm_agent,
-                    use_mcp=req.use_mcp,
+                    use_mcp=use_mcp,
                     use_cache=False,  # 禁用内部缓存
                 )
-            elif req.doc_type == "excel":
+            elif doc_type == "excel":
                 result = compare_excel_docs(
-                    str(file_a),
-                    str(file_b),
+                    str(file_a_path),
+                    str(file_b_path),
                     llm_agent,
-                    use_mcp=req.use_mcp,
+                    use_mcp=use_mcp,
                     use_cache=False,  # 禁用内部缓存
                 )
             else:
-                logger.error(f"不支持的文档类型: {req.doc_type}")
-                raise HTTPException(status_code=400, detail=f"不支持的文档类型: {req.doc_type}")
+                raise HTTPException(status_code=400, detail=f"不支持的文档类型: {doc_type}")
 
-            # 保存结果到缓存（使用commit ID）
-            if req.use_cache and (req.commit_a or req.commit_b):
-                cache_key = compute_pair_key(req.file_a, req.file_b, req.doc_type, req.commit_a, req.commit_b)
+            # 保存结果到缓存
+            if use_cache and (commit_a or commit_b):
+                cache_key = compute_pair_key(str(file_a_path), str(file_b_path), doc_type, commit_a, commit_b)
                 get_cache_manager().set(cache_key, result)
                 logger.info(f"✅ 缓存已保存: {cache_key}")
 
@@ -207,14 +260,23 @@ async def compare_documents(req: CompareRequest):
         
         return CompareResponse(
             success=True,
-            doc_type=req.doc_type,
+            doc_type=doc_type,
             cached=cached,
             result=result
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"对比失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # 仅在 Multipart 模式下清理临时文件
+        if tmp_dir and os.path.exists(tmp_dir):
+            try:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+            except Exception as e:
+                logger.error(f"清理临时文件失败: {e}")
 
 
 @app.get("/cache/stats", response_model=CacheStatsResponse)
