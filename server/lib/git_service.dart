@@ -3701,6 +3701,19 @@ Future<void> pushToRemote(String repoPath, String username, String token,
         } catch (e) {
           print('Warning: Failed to update parent submodule URL: $e');
         }
+
+        // Auto-push parent repository if needed
+        // Logic: If the parent repo hasn't been pushed or can be fast-forwarded, push it.
+        // pushToRemote handles checking remote existence and fast-forward check (via standard git push).
+        print('Checking if parent repository needs to be pushed: $parentFolder');
+        try {
+          await pushToRemote(parentFolder, username, token);
+          print('Successfully auto-pushed parent repository.');
+        } catch (e) {
+          // If push fails (e.g. non-fast-forward), we just log it and continue.
+          // This prevents blocking the child push if the parent push isn't trivial.
+          print('Auto-push of parent repository skipped/failed: $e');
+        }
       }
     } catch (e) {
       print('Git push failed with error: $e');
