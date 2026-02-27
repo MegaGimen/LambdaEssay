@@ -4503,55 +4503,82 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                                     ? Row(
                                         children: [
                                           Expanded(
-                                            child: _GraphView(
-                                              data: remoteData!,
-                                              repoPath: pathCtrl.text.trim(),
-                                              projectName: currentProjectName,
-                                              token: _token,
-                                              readOnly: true,
-                                              primaryBranchName:
-                                                  'origin/master',
-                                              customRowMapping:
-                                                  remoteRowMapping,
-                                              totalRows: totalRows,
-                                              transformationController:
-                                                  _sharedController,
-                                              uiScale: _uiScale,
-                                              rowHeight: _rowHeight,
-                                              laneWidth: _laneWidth,
+                                            child: Column(
+                                              children: [
+                                                Container(
+                                                  padding: const EdgeInsets.all(8.0),
+                                                  color: Colors.grey[200],
+                                                  width: double.infinity,
+                                                  alignment: Alignment.center,
+                                                  child: const Text(
+                                                    '远程文档仓库',
+                                                    style: TextStyle(fontWeight: FontWeight.bold),
+                                                  ),
+                                                ),
+                                                Expanded(
+                                                  child: _GraphView(
+                                                    data: remoteData!,
+                                                    repoPath: pathCtrl.text.trim(),
+                                                    projectName: currentProjectName,
+                                                    token: _token,
+                                                    readOnly: true,
+                                                    primaryBranchName: 'origin/master',
+                                                    customRowMapping: remoteRowMapping,
+                                                    totalRows: totalRows,
+                                                    transformationController: _sharedController,
+                                                    uiScale: _uiScale,
+                                                    rowHeight: _rowHeight,
+                                                    laneWidth: _laneWidth,
+                                                  ),
+                                                ),
+                                              ],
                                             ),
                                           ),
+                                          Container(
+                                            width: 1,
+                                            color: Colors.grey[300],
+                                          ),
                                           Expanded(
-                                            child: _GraphView(
-                                              key: _localGraphKey,
-                                              data: data!,
-                                              working: (data!.commits.isEmpty &&
-                                                      working != null)
-                                                  ? WorkingState(
-                                                      changed: true,
-                                                      baseId: working!.baseId)
-                                                  : working,
-                                              repoPath: pathCtrl.text.trim(),
-                                              projectName: currentProjectName,
-                                              token: _token,
-                                              onRefresh: _load,
-                                              onUpdate: _onUpdateRepoAction,
-                                              onMerge: _performMerge,
-                                              onFindIdentical: _findIdentical,
-                                              identicalCommitIds:
-                                                  identicalCommitIds,
-                                              onLoading: (v) =>
-                                                  setState(() => loading = v),
-                                              transformationController:
-                                                  _sharedController,
-                                              uiScale: _uiScale,
-                                              customRowMapping: localRowMapping,
-                                              totalRows: totalRows,
-                                              primaryBranchName: 'master',
-                                              onNodeAction:
-                                                  _showNodeActionDialog,
-                                              rowHeight: _rowHeight,
-                                              laneWidth: _laneWidth,
+                                            child: Column(
+                                              children: [
+                                                Container(
+                                                  padding: const EdgeInsets.all(8.0),
+                                                  color: Colors.grey[200],
+                                                  width: double.infinity,
+                                                  alignment: Alignment.center,
+                                                  child: const Text(
+                                                    '本地文档仓库',
+                                                    style: TextStyle(fontWeight: FontWeight.bold),
+                                                  ),
+                                                ),
+                                                Expanded(
+                                                  child: _GraphView(
+                                                    key: _localGraphKey,
+                                                    data: data!,
+                                                    working: (data!.commits.isEmpty && working != null)
+                                                        ? WorkingState(
+                                                            changed: true, baseId: working!.baseId)
+                                                        : working,
+                                                    repoPath: pathCtrl.text.trim(),
+                                                    projectName: currentProjectName,
+                                                    token: _token,
+                                                    onRefresh: _load,
+                                                    onUpdate: _onUpdateRepoAction,
+                                                    onMerge: _performMerge,
+                                                    onFindIdentical: _findIdentical,
+                                                    identicalCommitIds: identicalCommitIds,
+                                                    onLoading: (v) => setState(() => loading = v),
+                                                    transformationController: _sharedController,
+                                                    uiScale: _uiScale,
+                                                    customRowMapping: localRowMapping,
+                                                    totalRows: totalRows,
+                                                    primaryBranchName: 'master',
+                                                    onNodeAction: _showNodeActionDialog,
+                                                    rowHeight: _rowHeight,
+                                                    laneWidth: _laneWidth,
+                                                  ),
+                                                ),
+                                              ],
                                             ),
                                           ),
                                         ],
