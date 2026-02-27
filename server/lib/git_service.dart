@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:archive/archive_io.dart';
 import 'package:path/path.dart' as p;
+import 'package:uuid/uuid.dart';
 import 'models.dart';
 import 'ai_diff_service.dart'; // 🔥 新增：AI 对比服务
 
@@ -1035,7 +1036,7 @@ Future<void> createBranch(String repoPath, String branchName) async {
 
 Future<void> switchBranch(String projectName, String branchName,
     {String? repoPath}) async {
-  final targetPath = repoPath ?? _projectDir(projectName);
+  final targetPath = repoPath ?? await _projectDir(projectName);
   print(
       "Debug, switchBranch target: $targetPath (repoPath: $repoPath, projectName: $projectName)");
 
@@ -1339,19 +1340,96 @@ String _workspaceBaseDir() {
   return p.join(Directory.systemTemp.path, 'tracking_workspace');
 }
 
-String _packageKey(String packagePath) {
+String _getLegacyPackageKey(String packagePath) {
   final norm = p.normalize(packagePath).toLowerCase();
   return md5.convert(utf8.encode(norm)).toString();
 }
 
-String _workspaceDirForPackage(String packagePath) {
-  return p.join(_workspaceBaseDir(), _packageKey(packagePath));
+String _workspaceDirForId(String workspaceId) {
+  return p.join(_workspaceBaseDir(), workspaceId);
+}
+
+Future<String?> getWorkspaceId(String packagePath) async {
+  return await _readWorkspaceIdFromZip(packagePath);
+}
+
+Future<String?> _readWorkspaceIdFromZip(String zipPath) async {
+  if (!File(zipPath).existsSync()) return null;
+  try {
+    final bytes = await File(zipPath).readAsBytes();
+    final archive = ZipDecoder().decodeBytes(bytes);
+    final file = archive.findFile(kWorkspaceMetaFile);
+    if (file != null) {
+      final content = utf8.decode(file.content as List<int>);
+      final json = jsonDecode(content) as Map<String, dynamic>;
+      return json['workspaceId'] as String?;
+    }
+  } catch (e) {
+    print('Error reading workspace ID from zip $zipPath: $e');
+  }
+  return null;
+}
+
+Future<String?> _findWorkspaceForPackage(String packagePath) async {
+  final base = Directory(_workspaceBaseDir());
+  if (!base.existsSync()) return null;
+
+  final normalized = _sanitizeFsPath(packagePath);
+
+  try {
+    await for (final entity in base.list()) {
+      if (entity is Directory) {
+        final metaFile = File(p.join(entity.path, kWorkspaceMetaFile));
+        if (metaFile.existsSync()) {
+          try {
+            final json = jsonDecode(await metaFile.readAsString());
+            final path = json['packagePath'] as String?;
+            if (path != null && _sanitizeFsPath(path) == normalized) {
+              return entity.path;
+            }
+          } catch (e) {
+            // ignore bad json
+          }
+        }
+      }
+    }
+  } catch (e) {
+    print('Error scanning workspaces: $e');
+  }
+  return null;
+}
+
+Future<String> _resolveWorkspaceDir(String packagePath) async {
+  // 1. Try to find existing workspace by package path
+  final existing = await _findWorkspaceForPackage(packagePath);
+  if (existing != null) return existing;
+
+  // 2. Try to read ID from zip
+  final id = await _readWorkspaceIdFromZip(packagePath);
+  if (id != null) return _workspaceDirForId(id);
+
+  // 3. Fallback to legacy MD5
+  return _workspaceDirForId(_getLegacyPackageKey(packagePath));
 }
 
 Future<void> _writeWorkspaceMeta(
-    String workspaceDir, String packagePath) async {
+    String workspaceDir, String packagePath, {String? workspaceId}) async {
   final f = File(p.join(workspaceDir, kWorkspaceMetaFile));
-  await f.writeAsString(jsonEncode({'packagePath': packagePath}));
+  final data = {'packagePath': packagePath};
+  if (workspaceId != null) {
+    data['workspaceId'] = workspaceId;
+  } else {
+    // Try to preserve existing ID if any
+    if (f.existsSync()) {
+      try {
+        final old = jsonDecode(await f.readAsString());
+        if (old['workspaceId'] != null) {
+          data['workspaceId'] = old['workspaceId'];
+        }
+      } catch (_) {}
+    }
+  }
+  await f.writeAsString(jsonEncode(data));
 }
 
 Future<String?> _readWorkspacePackagePath(String workspaceDir) async {
@@ -1499,7 +1577,7 @@ Future<void> saveTrackingProject(String currentPackagePath,
   print(
       '[saveTrackingProject] Start: current=$currentPackagePath, new=$newPackagePath');
   final normalizedCurrent = _sanitizeFsPath(currentPackagePath);
-  final workspaceDir = _workspaceDirForPackage(normalizedCurrent);
+  final workspaceDir = await _resolveWorkspaceDir(normalizedCurrent);
 
   if (!Directory(workspaceDir).existsSync()) {
     print('[saveTrackingProject] Workspace not found at $workspaceDir');
@@ -1516,14 +1594,22 @@ Future<void> saveTrackingProject(String currentPackagePath,
   if (newPackagePath != null && newPackagePath.trim().isNotEmpty) {
     targetPath = _sanitizeFsPath(newPackagePath);
 
+    // Get current ID
+    String? currentId;
+    try {
+        final f = File(p.join(workspaceDir, kWorkspaceMetaFile));
+        final j = jsonDecode(await f.readAsString());
+        currentId = j['workspaceId'];
+    } catch (_) {}
+
     // Update metadata
-    await _writeWorkspaceMeta(workspaceDir, targetPath);
+    await _writeWorkspaceMeta(workspaceDir, targetPath, workspaceId: currentId);
 
     // Pack to new location
     await _exportFolderToTrackingPackage(workspaceDir, targetPath);
 
     // Attempt rename
-    final newWorkspaceDir = _workspaceDirForPackage(targetPath);
+    final newWorkspaceDir = await _resolveWorkspaceDir(targetPath);
     if (workspaceDir != newWorkspaceDir) {
       try {
         if (Directory(newWorkspaceDir).existsSync()) {
@@ -1613,7 +1699,7 @@ Future<void> _packTrackingDirectory(
 
 Future<String> _ensureWorkspace(String packagePath) async {
   final normalized = _sanitizeFsPath(packagePath);
-  final workspaceDir = _workspaceDirForPackage(normalized);
+  final workspaceDir = await _resolveWorkspaceDir(normalized);
   final dir = Directory(workspaceDir);
 
   if (dir.existsSync()) {
@@ -1630,7 +1716,29 @@ Future<String> _ensureWorkspace(String packagePath) async {
 
   dir.createSync(recursive: true);
   await _extractTrackingPackage(normalized, workspaceDir);
-  await _writeWorkspaceMeta(workspaceDir, normalized);
+  
+  // Try to read ID from the extracted package (if it was in the zip)
+  // Actually _resolveWorkspaceDir tried to read from zip.
+  // If the zip had an ID, _resolveWorkspaceDir used it.
+  // We should make sure we preserve it in the workspace meta.
+  // The zip extraction overwrites .tracking_workspace.json inside workspaceDir.
+  // But we want to ensure it's correct.
+  // If the zip has .tracking_workspace.json, extraction puts it there.
+  // If it has the ID, great.
+  // If it doesn't (legacy), we might want to write the ID we decided on (if we decided on one).
+  // But if we used legacy MD5, we don't have a new ID.
+  
+  // Re-read meta from disk after extraction
+  String? id;
+  try {
+     final f = File(p.join(workspaceDir, kWorkspaceMetaFile));
+     if (f.existsSync()) {
+       final j = jsonDecode(await f.readAsString());
+       id = j['workspaceId'];
+     }
+  } catch (_) {}
+
+  await _writeWorkspaceMeta(workspaceDir, normalized, workspaceId: id);
   return workspaceDir;
 }
 
@@ -1847,8 +1955,8 @@ Future<Map<String, bool>> ensureCommitPreviewAssets(
   }
 }
 
-File _trackingFile(String name) {
-  final dir = _projectDir(name);
+Future<File> _trackingFile(String name) async {
+  final dir = await _projectDir(name);
   final rootFile = File(p.join(dir, 'tracking.json'));
   if (rootFile.existsSync()) return rootFile;
 
@@ -1962,7 +2070,7 @@ Future<Map<String, dynamic>> _resolveTrackingInfo(String repoPath) async {
 }
 
 Future<Map<String, dynamic>> _readTracking(String name) async {
-  final f = _trackingFile(name);
+  final f = await _trackingFile(name);
   if (f.existsSync()) {
     try {
       final s = await f.readAsString();
@@ -2003,7 +2111,7 @@ Future<Map<String, dynamic>> _readTrackingFromZip(String zipPath) async {
 }
 
 Future<void> _writeTracking(String name, Map<String, dynamic> data) async {
-  final f = _trackingFile(name);
+  final f = await _trackingFile(name);
   final dir = Directory(p.dirname(f.path));
   if (!dir.existsSync()) {
     dir.createSync(recursive: true);
@@ -2011,7 +2119,7 @@ Future<void> _writeTracking(String name, Map<String, dynamic> data) async {
   await f.writeAsString(jsonEncode(data));
 }
 
-String _projectDir(String name) {
+Future<String> _projectDir(String name) async {
   final normalized = _sanitizeFsPath(name);
   if (p.isAbsolute(normalized)) {
     if (normalized.toLowerCase().endsWith(kTrackingExt)) {
@@ -2019,7 +2127,7 @@ String _projectDir(String name) {
       if (expandedDir.existsSync()) {
         return normalized;
       }
-      return _workspaceDirForPackage(normalized);
+      return await _resolveWorkspaceDir(normalized);
     }
     return normalized;
   }
@@ -2027,7 +2135,7 @@ String _projectDir(String name) {
 }
 
 String _getPreviewDir(String name) {
-  final key = p.isAbsolute(name) ? _packageKey(name) : name;
+  final key = p.isAbsolute(name) ? _getLegacyPackageKey(name) : name;
   return p.normalize(p.join(_baseDir(), 'preview', key));
 }
 
@@ -2244,7 +2352,11 @@ Future<Map<String, dynamic>> createTrackingProject(
     String name, String? docxPath) async {
   print('[createTrackingProject] 开始创建项目，name=$name, docxPath=$docxPath');
   final packagePath = _sanitizeFsPath(name);
-  final projDir = _projectDir(packagePath);
+  
+  // Custom logic for new project creation to ensure random ID
+  final workspaceId = Uuid().v4();
+  final projDir = _workspaceDirForId(workspaceId);
+  
   final dir = Directory(projDir);
 
   if (dir.existsSync()) {
@@ -2270,7 +2382,7 @@ Future<Map<String, dynamic>> createTrackingProject(
     await importTrackingSource(packagePath, '.', docxPath);
   }
 
-  await _writeWorkspaceMeta(projDir, packagePath);
+  await _writeWorkspaceMeta(projDir, packagePath, workspaceId: workspaceId);
 
   // Mark as folder project (empty container)
   // if (!File(p.join(projDir, 'folder_meta.json')).existsSync()) {
@@ -2297,7 +2409,7 @@ Future<Map<String, dynamic>> docx2package(
 Future<Map<String, dynamic>> importTrackingSource(
     String packagePath, String targetDir, String sourcePath) async {
   final pkg = _sanitizeFsPath(packagePath);
-  final workspace = _projectDir(pkg);
+  final workspace = await _projectDir(pkg);
 
   String relTargetDir = targetDir;
   if (p.isAbsolute(targetDir)) {
@@ -2447,7 +2559,7 @@ Future<void> _initSingleRepo(String repoPath, String? sourceDocxPath) async {
 }
 
 Future<List<Map<String, dynamic>>> listProjectRepos(String name) async {
-  final projDir = _projectDir(name);
+  final projDir = await _projectDir(name);
   final tracking = await _readTracking(name);
   final isFolder = await _isFolderProject(projDir);
   if (!isFolder) {
@@ -2550,7 +2662,7 @@ Future<List<Map<String, dynamic>>> listProjectRepos(String name) async {
 Future<void> syncFolderProject(String name) async {
   print('[Debug][syncFolderProject] Start for name: $name');
 
-  final projDir = _projectDir(name);
+  final projDir = await _projectDir(name);
   print('[Debug][syncFolderProject] projDir: $projDir');
 
   // Detect Workspace Root
@@ -2699,7 +2811,7 @@ Future<Map<String, dynamic>> openTrackingProject(String name) async {
       ? (Directory(packagePath).existsSync()
           ? packagePath
           : await _ensureWorkspace(packagePath))
-      : _projectDir(name);
+      : await _projectDir(name);
 
   var repoPath = projDir;
   final subName = _trackingBaseName(packagePath);
@@ -2830,7 +2942,7 @@ Future<Map<String, dynamic>> updateTrackingProject(
     String name, bool opIdentical,
     {String? newDocxPath, String? repoPath, String? docxPath}) async {
   final normalizedName = _sanitizeFsPath(name);
-  var projDir = repoPath ?? _projectDir(normalizedName);
+  var projDir = repoPath ?? await _projectDir(normalizedName);
   if (repoPath == null && normalizedName.toLowerCase().endsWith(kTrackingExt)) {
     if (Directory(normalizedName).existsSync()) {
       projDir = normalizedName;
@@ -3272,7 +3384,7 @@ Future<Uint8List> previewVersion(String repoPath, String commitId) async {
 }
 
 Future<void> resetBranch(String projectName, String commitId) async {
-  final repoPath = _projectDir(projectName);
+  final repoPath = await _projectDir(projectName);
   return _withRepoLock(repoPath, () async {
     if (await _isFolderProject(repoPath)) {
       final repos = await listProjectRepos(projectName);
@@ -3296,7 +3408,7 @@ Future<void> resetBranch(String projectName, String commitId) async {
 }
 
 Future<void> rollbackVersion(String projectName, String commitId) async {
-  final repoPath = _projectDir(projectName);
+  final repoPath = await _projectDir(projectName);
   return _withRepoLock(repoPath, () async {
     if (await _isFolderProject(repoPath)) {
       final repos = await listProjectRepos(projectName);
@@ -3668,10 +3780,19 @@ Future<Map<String, dynamic>> pullFromRemote(
     bool recursive = false}) async {
   print(
       'Debug: pullFromRemote - nameOrPath: $nameOrPath, targetRepoName: $targetRepoName, localTrackingZipPath: $localTrackingZipPath, recursive: $recursive');
-  final repoPath =
-      (localTrackingZipPath != null && localTrackingZipPath.isNotEmpty)
-          ? _workspaceDirForPackage(localTrackingZipPath)
-          : (p.isAbsolute(nameOrPath) ? nameOrPath : _projectDir(nameOrPath));
+  String repoPath;
+  String? newWorkspaceId;
+
+  if (localTrackingZipPath != null && localTrackingZipPath.isNotEmpty) {
+    if (File(localTrackingZipPath).existsSync()) {
+      repoPath = await _resolveWorkspaceDir(localTrackingZipPath);
+    } else {
+      newWorkspaceId = Uuid().v4();
+      repoPath = _workspaceDirForId(newWorkspaceId);
+    }
+  } else {
+    repoPath = p.isAbsolute(nameOrPath) ? nameOrPath : await _projectDir(nameOrPath);
+  }
   return _withRepoLock(repoPath, () async {
     String effectiveRemoteRepoName;
     if (targetRepoName != null && targetRepoName.isNotEmpty) {
@@ -3871,6 +3992,9 @@ Future<Map<String, dynamic>> pullFromRemote(
         }
         meta['externalPath'] = localTrackingZipPath;
         meta['packagePath'] = localTrackingZipPath;
+        if (newWorkspaceId != null) {
+          meta['workspaceId'] = newWorkspaceId;
+        }
         await globalMetaFile.writeAsString(jsonEncode(meta));
         print(
             'Updated global metadata with externalPath: $localTrackingZipPath');
@@ -3966,7 +4090,7 @@ Future<Map<String, dynamic>> pullFromRemote(
 
 Future<Map<String, dynamic>> checkPullStatus(
     String repoName, String username, String token) async {
-  final projDir = _projectDir(repoName);
+  final projDir = await _projectDir(repoName);
   return _withRepoLock(projDir, () async {
     // Folder project check removed to allow root pull status check
 
@@ -4086,7 +4210,7 @@ Future<String?> findProjectByDocxPath(String docxPath) async {
 }
 
 Future<void> rebasePull(String repoName, String username, String token) async {
-  final projDir = _projectDir(repoName);
+  final projDir = await _projectDir(repoName);
   // Removed explicit folder check to allow rebasing root container if needed (unify logic)
 
   String effectiveRemoteRepoName;
@@ -4136,7 +4260,7 @@ Future<void> cancelPull(String repoName) async {
 
 Future<PullPreviewResult> previewPull(
     String repoName, String username, String token, String type) async {
-  final projDir = _projectDir(repoName);
+  final projDir = await _projectDir(repoName);
   // Lock projDir to ensure consistent snapshot for copy
   return _withRepoLock(projDir, () async {
     final previewDir = _getPreviewDir(repoName);
@@ -4334,7 +4458,7 @@ Future<void> copyTrackingProject(
 // }
 
 Future<void> forkLocal(String repoName, String newBranchName) async {
-  final repoPath = _projectDir(repoName);
+  final repoPath = await _projectDir(repoName);
   return _withRepoLock(repoPath, () async {
     // Removed folder check to allow forking root branch
 
@@ -4368,7 +4492,7 @@ Future<void> forkLocal(String repoName, String newBranchName) async {
 }
 
 Future<void> prepareMerge(String repoName, String targetBranch) async {
-  final projDir = _projectDir(repoName);
+  final projDir = await _projectDir(repoName);
   return _withRepoLock(projDir, () async {
     if (await _isFolderProject(projDir)) {
       throw Exception('Cannot merge on Folder Project Root.');
@@ -4445,7 +4569,7 @@ Future<void> prepareMerge(String repoName, String targetBranch) async {
 }
 
 Future<void> restoreDocx(String repoName) async {
-  final projDir = _projectDir(repoName);
+  final projDir = await _projectDir(repoName);
   await _ensureRepoDocx(projDir);
   final sourcePath = p.join(projDir, kRepoDocxName);
   print(sourcePath);
@@ -4454,7 +4578,7 @@ Future<void> restoreDocx(String repoName) async {
 }
 
 Future<void> completeMerge(String repoName, String targetBranch) async {
-  final projDir = _projectDir(repoName);
+  final projDir = await _projectDir(repoName);
   return _withRepoLock(projDir, () async {
     if (await _isFolderProject(projDir)) {
       throw Exception('Cannot complete merge on Folder Project Root.');
@@ -4529,7 +4653,7 @@ Future<void> completeMerge(String repoName, String targetBranch) async {
 }
 
 Future<List<String>> findIdenticalCommit(String name) async {
-  final projDir = _projectDir(name);
+  final projDir = await _projectDir(name);
   final tracking = await _readTracking(name);
   // We assume repo has doc_content
 
@@ -4643,7 +4767,7 @@ Future<void> _clearDirty(String workspaceDir) async {
 }
 
 Future<bool> checkDirty(String packagePath) async {
-  final workspaceDir = _workspaceDirForPackage(packagePath);
+  final workspaceDir = await _resolveWorkspaceDir(packagePath);
   final file = File(p.join(workspaceDir, '.dirty'));
   return file.existsSync();
 }

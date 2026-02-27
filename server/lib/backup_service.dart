@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:path/path.dart' as p;
 import 'package:http/http.dart' as http;
 import 'models.dart';
+import 'git_service.dart';
 
 import 'package:crypto/crypto.dart';
 
@@ -61,8 +62,13 @@ Future<Map<String, dynamic>> listBackupCommits(
   // Fix: If repoName is a full path, convert to hash key to match server logic
   String targetRepoName = repoName;
   if (p.isAbsolute(repoName) || repoName.contains(p.separator)) {
-     final norm = p.normalize(repoName).toLowerCase();
-     targetRepoName = md5.convert(utf8.encode(norm)).toString();
+     final id = await getWorkspaceId(repoName);
+     if (id != null) {
+        targetRepoName = id;
+     } else {
+        final norm = p.normalize(repoName).toLowerCase();
+        targetRepoName = md5.convert(utf8.encode(norm)).toString();
+     }
      print("Converted path '$repoName' to key '$targetRepoName'");
   }
 
