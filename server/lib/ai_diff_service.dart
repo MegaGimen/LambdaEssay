@@ -45,58 +45,31 @@ class AIDiffService {
 
     try {
       print('[AIDiff] 开始对比: $docType (cache=$useCache, commits=$commitA vs $commitB)');
-      print('[AIDiff] 上传文件: $fileAPath, $fileBPath');
+      print('[AIDiff] 使用 Base64 模式上传: $fileAPath, $fileBPath');
 
-      final request = http.MultipartRequest('POST', url);
+      final bytesA = await File(fileAPath).readAsBytes();
+      final bytesB = await File(fileBPath).readAsBytes();
+      final base64A = base64Encode(bytesA);
+      final base64B = base64Encode(bytesB);
+
+      final requestBody = {
+        'file_a': fileAPath, // 保留路径/文件名
+        'file_b': fileBPath,
+        'file_a_base64': base64A,
+        'file_b_base64': base64B,
+        'doc_type': docType,
+        'use_cache': useCache,
+        'use_mcp': useMcp,
+        if (commitA != null) 'commit_a': commitA,
+        if (commitB != null) 'commit_b': commitB,
+      };
+
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json; charset=utf-8'},
+        body: jsonEncode(requestBody),
+      ).timeout(_timeout);
       
-      // 添加字段
-      request.fields['doc_type'] = docType;
-      request.fields['use_cache'] = useCache.toString();
-      request.fields['use_mcp'] = useMcp.toString();
-      if (commitA != null) request.fields['commit_a'] = commitA;
-      if (commitB != null) request.fields['commit_b'] = commitB;
-
-      // 添加文件
-      request.files.add(await http.MultipartFile.fromPath('file_a', fileAPath));
-      request.files.add(await http.MultipartFile.fromPath('file_b', fileBPath));
-
-      final streamedResponse = await request.send().timeout(_timeout);
-      final response = await http.Response.fromStream(streamedResponse);
-      
-      // ⚠️ 如果 Multipart 失败（500/400），尝试 JSON Base64 回退
-      // 这里的逻辑可以进一步优化：如果 Multipart 失败，回退到 Base64
-      if (response.statusCode == 500 || response.statusCode == 400) {
-        print('[AIDiff] ⚠️ Multipart 上传失败 (${response.statusCode})，尝试 JSON Base64 回退...');
-        final bytesA = await File(fileAPath).readAsBytes();
-        final bytesB = await File(fileBPath).readAsBytes();
-        final base64A = base64Encode(bytesA);
-        final base64B = base64Encode(bytesB);
-
-        final requestBody = {
-          'file_a': fileAPath, // 保留路径/文件名
-          'file_b': fileBPath,
-          'file_a_base64': base64A,
-          'file_b_base64': base64B,
-          'doc_type': docType,
-          'use_cache': useCache,
-          'use_mcp': useMcp,
-          if (commitA != null) 'commit_a': commitA,
-          if (commitB != null) 'commit_b': commitB,
-        };
-
-        final jsonResponse = await http.post(
-          url,
-          headers: {'Content-Type': 'application/json; charset=utf-8'},
-          body: jsonEncode(requestBody),
-        ).timeout(_timeout);
-
-        if (jsonResponse.statusCode == 200) {
-           final data = jsonDecode(utf8.decode(jsonResponse.bodyBytes)) as Map<String, dynamic>;
-           return data['result'] as Map<String, dynamic>;
-        }
-        // 如果还是失败，抛出原始错误
-      }
-
       if (response.statusCode == 200) {
         final data = jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
         

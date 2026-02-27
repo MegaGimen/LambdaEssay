@@ -129,7 +129,11 @@ async def health_check():
     return {"status": "healthy", "service": "lambdalinker"}
 
 
-import base64
+import hashlib
+
+def compute_content_hash(content_bytes: bytes) -> str:
+    """计算内容的MD5哈希"""
+    return hashlib.md5(content_bytes).hexdigest()
 
 @app.post("/compare", response_model=CompareResponse)
 async def compare_documents(request: Request):
@@ -146,6 +150,10 @@ async def compare_documents(request: Request):
     commit_b = None
     
     tmp_dir = None
+    
+    # 用于缓存键的内容哈希
+    hash_a = None
+    hash_b = None
 
     try:
         # 模式 1: Multipart 文件上传
@@ -166,6 +174,12 @@ async def compare_documents(request: Request):
             if not isinstance(file_a, UploadFile) or not isinstance(file_b, UploadFile):
                 raise HTTPException(status_code=400, detail="Multipart 请求必须包含 file_a 和 file_b 文件")
 
+            # 读取内容以计算哈希（如果需要）
+            content_a = await file_a.read()
+            content_b = await file_b.read()
+            hash_a = compute_content_hash(content_a)
+            hash_b = compute_content_hash(content_b)
+
             # 创建临时目录保存文件
             tmp_dir = Path(tempfile.mkdtemp())
             file_a_path = tmp_dir / (file_a.filename or "doc_a.docx")
@@ -173,12 +187,10 @@ async def compare_documents(request: Request):
             
             # 保存文件流
             with open(file_a_path, "wb") as buffer:
-                await file_a.seek(0)
-                shutil.copyfileobj(file_a.file, buffer)
+                buffer.write(content_a)
                 
             with open(file_b_path, "wb") as buffer:
-                await file_b.seek(0)
-                shutil.copyfileobj(file_b.file, buffer)
+                buffer.write(content_b)
 
         # 模式 2 & 3: JSON 请求
         else:
@@ -204,6 +216,15 @@ async def compare_documents(request: Request):
                 logger.info("收到对比请求 (模式: JSON Base64)")
                 tmp_dir = Path(tempfile.mkdtemp())
                 
+                # 解码内容
+                try:
+                    content_a = base64.b64decode(file_a_base64)
+                    content_b = base64.b64decode(file_b_base64)
+                    hash_a = compute_content_hash(content_a)
+                    hash_b = compute_content_hash(content_b)
+                except Exception as e:
+                     raise HTTPException(status_code=400, detail=f"Base64 解码失败: {str(e)}")
+                
                 # 使用传入的文件名（如果有），否则用默认名
                 name_a = Path(file_a_str).name if file_a_str else "doc_a.docx"
                 name_b = Path(file_b_str).name if file_b_str else "doc_b.docx"
@@ -211,13 +232,10 @@ async def compare_documents(request: Request):
                 file_a_path = tmp_dir / name_a
                 file_b_path = tmp_dir / name_b
                 
-                try:
-                    with open(file_a_path, "wb") as f:
-                        f.write(base64.b64decode(file_a_base64))
-                    with open(file_b_path, "wb") as f:
-                        f.write(base64.b64decode(file_b_base64))
-                except Exception as e:
-                     raise HTTPException(status_code=400, detail=f"Base64 解码失败: {str(e)}")
+                with open(file_a_path, "wb") as f:
+                    f.write(content_a)
+                with open(file_b_path, "wb") as f:
+                    f.write(content_b)
 
             # 模式 3: 本地路径传递 (旧兼容模式)
             else:
@@ -248,7 +266,15 @@ async def compare_documents(request: Request):
 
         # 如果启用缓存，先尝试获取缓存结果
         if use_cache:
-            cache_key = compute_pair_key(str(file_a_path), str(file_b_path), doc_type, commit_a, commit_b)
+            # 优先使用内容哈希作为缓存键的一部分（如果有），否则回退到 commit ID 或文件路径
+            # 这里的 compute_pair_key 需要能够处理 hash 参数，或者我们构造一个特殊的 key
+            # 为了不破坏现有逻辑，我们可以将 hash 作为 commit_a/b 传递（如果没有 commit ID）
+            
+            key_part_a = commit_a if commit_a else (hash_a if hash_a else str(file_a_path))
+            key_part_b = commit_b if commit_b else (hash_b if hash_b else str(file_b_path))
+            
+            cache_key = compute_pair_key(str(file_a_path), str(file_b_path), doc_type, key_part_a, key_part_b)
+            
             cached_result = get_cache_manager().get(cache_key)
             if cached_result is not None:
                 cached = True
@@ -285,10 +311,13 @@ async def compare_documents(request: Request):
                 raise HTTPException(status_code=400, detail=f"不支持的文档类型: {doc_type}")
 
             # 保存结果到缓存
-            if use_cache and (commit_a or commit_b):
-                cache_key = compute_pair_key(str(file_a_path), str(file_b_path), doc_type, commit_a, commit_b)
-                get_cache_manager().set(cache_key, result)
-                logger.info(f"✅ 缓存已保存: {cache_key}")
+            if use_cache:
+                 key_part_a = commit_a if commit_a else (hash_a if hash_a else str(file_a_path))
+                 key_part_b = commit_b if commit_b else (hash_b if hash_b else str(file_b_path))
+                 cache_key = compute_pair_key(str(file_a_path), str(file_b_path), doc_type, key_part_a, key_part_b)
+                 
+                 get_cache_manager().set(cache_key, result)
+                 logger.info(f"✅ 缓存已保存: {cache_key}")
 
         logger.info(f"对比完成: {'使用缓存' if cached else '调用LLM'}")
         
