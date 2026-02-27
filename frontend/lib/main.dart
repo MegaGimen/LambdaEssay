@@ -4116,13 +4116,6 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                 ],
               ),
             ),
-          const SizedBox(width: 16),
-          ElevatedButton.icon(
-            onPressed:
-                loading ? null : () => _onUpdateRepoAction(opIdentical: false),
-            icon: const Icon(Icons.sync, size: 16),
-            label: const Text('同步'),
-          ),
           const SizedBox(width: 8),
           ElevatedButton.icon(
             onPressed: loading ? null : _onPush,
