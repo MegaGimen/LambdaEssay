@@ -2233,8 +2233,16 @@ Future<void> main(List<String> args) async {
     }
   });
 
-  final handler =
-      const Pipeline().addMiddleware(logRequests()).addHandler(router);
+  final handler = const Pipeline()
+      .addMiddleware(logRequests(logger: (String msg, bool isError) {
+        if (msg.contains('/project/dirty_status')) return;
+        if (isError) {
+          print('[ERROR] $msg');
+        } else {
+          print(msg);
+        }
+      }))
+      .addHandler(router);
   final server = await serve((req) async => _cors(await handler(req)),
       InternetAddress.loopbackIPv4, 8080);
   stdout.writeln(
