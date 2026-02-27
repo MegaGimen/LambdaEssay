@@ -1049,12 +1049,20 @@ Future<void> main(List<String> args) async {
     try {
       print('[API] AI对比请求: $commit1 vs $commit2 ($docType)');
 
-      final result = await compareCommitsWithAI(
-        repoPath,
-        commit1,
-        commit2,
-        docType: docType,
-      );
+      // 🔥 优化：优先检查本地缓存，避免无需的文件提取
+      final cachedResult = await AIDiffService.checkLocalCache(commit1, commit2, docType);
+      Map<String, dynamic> result;
+
+      if (cachedResult != null) {
+        result = cachedResult;
+      } else {
+        result = await compareCommitsWithAI(
+          repoPath,
+          commit1,
+          commit2,
+          docType: docType,
+        );
+      }
 
       return _cors(Response.ok(
           jsonEncode({
