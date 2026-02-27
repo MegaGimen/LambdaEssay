@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
+import 'dart:math';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:archive/archive_io.dart';
@@ -1338,8 +1339,11 @@ String _workspaceBaseDir() {
 }
 
 String _packageKey(String packagePath) {
-  final norm = p.normalize(packagePath).toLowerCase();
-  return md5.convert(utf8.encode(norm)).toString();
+  final rnd = Random();
+  final bytes = List<int>.generate(16, (_) => rnd.nextInt(256));
+  final key = md5.convert(bytes).toString();
+  print('[Debug] Generated random key for $packagePath: $key');
+  return key;
 }
 
 String _workspaceDirForPackage(String packagePath) {
