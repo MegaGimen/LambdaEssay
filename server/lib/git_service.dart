@@ -331,6 +331,42 @@ Future<void> _gitArchiveToDocx(
   // ⚠️ 重要：使用 git archive --format=tar 提取，然后用 archive 包转为 zip (docx)
   // 避免使用 PowerShell Compress-Archive 导致的损坏问题
 
+  // Check if doc_content exists in commit
+  bool hasDocContent = false;
+  try {
+    final res = await Process.run(
+      'git',
+      ['ls-tree', commitId, kContentDirName],
+      workingDirectory: repoPath,
+    );
+    if (res.exitCode == 0 && res.stdout.toString().trim().isNotEmpty) {
+      hasDocContent = true;
+    }
+  } catch (e) {
+    print('Error checking doc_content: $e');
+  }
+
+  if (!hasDocContent) {
+    // Fallback: try to get content.docx directly
+    print(
+        'Warning: $kContentDirName not found in $commitId, trying $kRepoDocxName');
+    final res = await Process.run(
+      'git',
+      ['show', '$commitId:$kRepoDocxName'], // content.docx
+      workingDirectory: repoPath,
+      stdoutEncoding: null, // Binary output
+    );
+
+    if (res.exitCode == 0) {
+      final bytes = res.stdout as List<int>;
+      await File(outDocxPath).writeAsBytes(bytes);
+      return;
+    }
+
+    throw Exception(
+        'Failed to extract document: neither $kContentDirName nor $kRepoDocxName found in $commitId');
+  }
+
   final tmpDir =
       Directory.systemTemp.createTempSync('git_archive_${commitId}_');
   try {

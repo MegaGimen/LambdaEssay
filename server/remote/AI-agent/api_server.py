@@ -129,9 +129,11 @@ async def health_check():
     return {"status": "healthy", "service": "lambdalinker"}
 
 
+import base64
+
 @app.post("/compare", response_model=CompareResponse)
 async def compare_documents(request: Request):
-    """对比两个文档 (兼容模式：支持 JSON 路径传递 和 Multipart 文件上传)"""
+    """对比两个文档 (兼容模式：支持 JSON 路径传递、Multipart 文件上传、以及 JSON Base64 文件内容)"""
     
     content_type = request.headers.get("content-type", "")
     
@@ -178,28 +180,60 @@ async def compare_documents(request: Request):
                 await file_b.seek(0)
                 shutil.copyfileobj(file_b.file, buffer)
 
-        # 模式 2: JSON 路径传递 (向下兼容)
+        # 模式 2 & 3: JSON 请求
         else:
-            logger.info("收到对比请求 (模式: JSON Path)")
             try:
                 body = await request.json()
-                req = CompareRequest(**body)
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"无效的 JSON 请求体: {str(e)}")
 
-            file_a_path = Path(req.file_a)
-            file_b_path = Path(req.file_b)
-            doc_type = req.doc_type
-            use_cache = req.use_cache
-            use_mcp = req.use_mcp
-            commit_a = req.commit_a
-            commit_b = req.commit_b
+            doc_type = body.get("doc_type", "word")
+            use_cache = body.get("use_cache", True)
+            use_mcp = body.get("use_mcp", True)
+            commit_a = body.get("commit_a")
+            commit_b = body.get("commit_b")
 
-            # 验证本地文件存在
-            if not file_a_path.exists():
-                raise HTTPException(status_code=404, detail=f"文件不存在: {req.file_a}")
-            if not file_b_path.exists():
-                raise HTTPException(status_code=404, detail=f"文件不存在: {req.file_b}")
+            file_a_str = body.get("file_a")
+            file_b_str = body.get("file_b")
+            
+            file_a_base64 = body.get("file_a_base64")
+            file_b_base64 = body.get("file_b_base64")
+
+            # 模式 2: Base64 内容传递 (新兼容模式)
+            if file_a_base64 and file_b_base64:
+                logger.info("收到对比请求 (模式: JSON Base64)")
+                tmp_dir = Path(tempfile.mkdtemp())
+                
+                # 使用传入的文件名（如果有），否则用默认名
+                name_a = Path(file_a_str).name if file_a_str else "doc_a.docx"
+                name_b = Path(file_b_str).name if file_b_str else "doc_b.docx"
+                
+                file_a_path = tmp_dir / name_a
+                file_b_path = tmp_dir / name_b
+                
+                try:
+                    with open(file_a_path, "wb") as f:
+                        f.write(base64.b64decode(file_a_base64))
+                    with open(file_b_path, "wb") as f:
+                        f.write(base64.b64decode(file_b_base64))
+                except Exception as e:
+                     raise HTTPException(status_code=400, detail=f"Base64 解码失败: {str(e)}")
+
+            # 模式 3: 本地路径传递 (旧兼容模式)
+            else:
+                logger.info("收到对比请求 (模式: JSON Path)")
+                # 兼容 CompareRequest 模型验证
+                if not file_a_str or not file_b_str:
+                     raise HTTPException(status_code=400, detail="JSON 请求必须包含 file_a 和 file_b")
+
+                file_a_path = Path(file_a_str)
+                file_b_path = Path(file_b_str)
+
+                # 验证本地文件存在
+                if not file_a_path.exists():
+                    raise HTTPException(status_code=404, detail=f"文件不存在: {file_a_str}")
+                if not file_b_path.exists():
+                    raise HTTPException(status_code=404, detail=f"文件不存在: {file_b_str}")
 
         # === 通用对比逻辑 ===
         logger.info(f"开始处理: {doc_type}, A={file_a_path}, B={file_b_path}")
