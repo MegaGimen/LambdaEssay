@@ -3600,7 +3600,7 @@ Future<void> _ensureUniqueRemote(
 }
 
 Future<void> pushToRemote(String repoPath, String username, String token,
-    {bool force = false}) async {
+    {bool force = false, String? branch}) async {
   return _withRepoLock(repoPath, () async {
     final repoName = p.basename(repoPath);
     String effectiveRemoteRepoName;
@@ -3636,31 +3636,24 @@ Future<void> pushToRemote(String repoPath, String username, String token,
 
     final args = ['push'];
     if (force) args.add('--force');
-    args.add(remoteUrl);
+    args.add(remoteName); // Use remote alias instead of URL for push
 
-    final localBranches = <String>[];
-    try {
-      final lines = await _runGit(
-          ['for-each-ref', '--format=%(refname:short)', 'refs/heads'],
-          repoPath);
-      for (final l in lines) {
-        if (l.trim().isNotEmpty) localBranches.add(l.trim());
-      }
-    } catch (e) {
-      print('Failed to list local branches: $e');
-    }
-
-    if (localBranches.isEmpty) {
-      args.add('refs/heads/*:refs/heads/*');
+    if (branch != null) {
+      args.add(branch);
     } else {
-      for (final b in localBranches) {
-        args.add('refs/heads/$b:refs/heads/$b');
+      final current = await getCurrentBranch(repoPath);
+      if (current != null) {
+        args.add(current);
+      } else {
+        throw Exception('Cannot push: Detached HEAD and no branch specified.');
       }
     }
 
+    print('Executing git push with args: $args');
     List<String> output = [];
     try {
       output = await _runGit(args, repoPath);
+      print('Git push output: ${output.join('\n')}');
     } catch (e) {
       if (!force) {
         await _checkIfBehind(repoPath, remoteUrl);
@@ -3674,54 +3667,40 @@ Future<void> pushToRemote(String repoPath, String username, String token,
       print('Fetch after push failed: $e');
     }
 
-    print('Executing git push with args: $args');
-    try {
-      output = await _runGit(args, repoPath);
-      print('Git push output: ${output.join('\n')}');
+    // Automatically setup webhook
+    print('Configuring webhook for: $effectiveRemoteRepoName');
+    await _ensureWebhook(effectiveRemoteRepoName, owner, token);
 
-      // Automatically setup webhook
-      print('Configuring webhook for: $effectiveRemoteRepoName');
-      await _ensureWebhook(effectiveRemoteRepoName, owner, token);
-
-      // Update parent submodule URL if applicable
-      if (parentFolder != null && !p.equals(parentFolder, repoPath)) {
-        final relativePath = p.relative(repoPath, from: parentFolder);
-        final submodulePath = relativePath.replaceAll(r'\', '/');
-        print(
-            'Updating parent submodule URL for $submodulePath in $parentFolder');
-        try {
-          await _runGit(
-              ['submodule', 'set-url', submodulePath, remoteUrl], parentFolder);
-          await _runGit(['add', '.gitmodules'], parentFolder);
-          await _runGit([
-            'commit',
-            '-m',
-            'Update submodule remote url for $submodulePath [folder project213897]'
-          ], parentFolder, throwOnError: false);
-        } catch (e) {
-          print('Warning: Failed to update parent submodule URL: $e');
-        }
-
-        // Auto-push parent repository if needed
-        // Logic: If the parent repo hasn't been pushed or can be fast-forwarded, push it.
-        // pushToRemote handles checking remote existence and fast-forward check (via standard git push).
-        print('Checking if parent repository needs to be pushed: $parentFolder');
-        try {
-          await pushToRemote(parentFolder, username, token);
-          print('Successfully auto-pushed parent repository.');
-        } catch (e) {
-          // If push fails (e.g. non-fast-forward), we just log it and continue.
-          // This prevents blocking the child push if the parent push isn't trivial.
-          print('Auto-push of parent repository skipped/failed: $e');
-        }
+    // Update parent submodule URL if applicable
+    if (parentFolder != null && !p.equals(parentFolder, repoPath)) {
+      final relativePath = p.relative(repoPath, from: parentFolder);
+      final submodulePath = relativePath.replaceAll(r'\', '/');
+      print(
+          'Updating parent submodule URL for $submodulePath in $parentFolder');
+      try {
+        await _runGit(
+            ['submodule', 'set-url', submodulePath, remoteUrl], parentFolder);
+        await _runGit(['add', '.gitmodules'], parentFolder);
+        await _runGit([
+          'commit',
+          '-m',
+          'Update submodule remote url for $submodulePath [folder project213897]'
+        ], parentFolder, throwOnError: false);
+      } catch (e) {
+        print('Warning: Failed to update parent submodule URL: $e');
       }
-    } catch (e) {
-      print('Git push failed with error: $e');
-      if (!force) {
-        final outStr = output.join('\n');
-        if (outStr.contains('Everything up-to-date')) {
-          await _checkIfBehind(repoPath, remoteUrl);
-        }
+
+      // Auto-push parent repository if needed
+      // Logic: If the parent repo hasn't been pushed or can be fast-forwarded, push it.
+      // pushToRemote handles checking remote existence and fast-forward check (via standard git push).
+      print('Checking if parent repository needs to be pushed: $parentFolder');
+      try {
+        await pushToRemote(parentFolder, username, token);
+        print('Successfully auto-pushed parent repository.');
+      } catch (e) {
+        // If push fails (e.g. non-fast-forward), we just log it and continue.
+        // This prevents blocking the child push if the parent push isn't trivial.
+        print('Auto-push of parent repository skipped/failed: $e');
       }
     }
   });
@@ -3790,9 +3769,10 @@ Future<Map<String, dynamic>> pullFromRemote(
     String? targetRepoName,
     String? localTrackingZipPath,
     String? currentPath,
-    bool recursive = false}) async {
+    bool recursive = false,
+    String? branch}) async {
   print(
-      'Debug: pullFromRemote - nameOrPath: $nameOrPath, targetRepoName: $targetRepoName, localTrackingZipPath: $localTrackingZipPath, recursive: $recursive');
+      'Debug: pullFromRemote - nameOrPath: $nameOrPath, targetRepoName: $targetRepoName, localTrackingZipPath: $localTrackingZipPath, recursive: $recursive, branch: $branch');
   String repoPath;
   String? newWorkspaceId;
 
@@ -3868,10 +3848,27 @@ Future<Map<String, dynamic>> pullFromRemote(
         // Folder Project Pull Logic: Pull Container + Update Submodules
         try {
           await _ensureUniqueRemote(projDir, remoteName, remoteUrl);
-          await _runGit(['fetch', remoteName], projDir);
+          // If branch is provided, try to fetch that branch
+          String? targetBranch = branch;
+          if (targetBranch == null) {
+            targetBranch = await getCurrentBranch(projDir);
+          }
 
-          // For folder projects (containers), we generally just want to sync the structure (gitmodules)
-          // We can try to fast-forward merge or reset hard to remote master if we treat it as a pure container.
+          if (targetBranch != null) {
+            await _runGit(['fetch', remoteName, targetBranch], projDir);
+            
+            // If user specified a branch different from current, maybe we should warn?
+            // But here we just fetch it.
+            // Wait, if it's a folder project, we typically stay on master or current.
+            // If user explicitly asked for 'branch', we should probably try to checkout it?
+            // But for now, let's keep existing logic: fetch and merge/reset.
+            
+            // Existing logic uses 'current'. If 'branch' is provided, we should probably switch to it?
+            // BUT, for folder project, we usually don't switch branches easily as it affects all submodules.
+            // Let's stick to 'fetch' logic for now.
+          } else {
+            await _runGit(['fetch', remoteName], projDir);
+          }
 
           final current = await getCurrentBranch(projDir);
           if (current != null) {
@@ -3944,20 +3941,40 @@ Future<Map<String, dynamic>> pullFromRemote(
         // savedTracking = await _readTracking(repoName);
 
         try {
-          await _ensureUniqueRemote(projDir, remoteName, remoteUrl);
-          await _runGit(['fetch', remoteName], projDir);
-          final current = await getCurrentBranch(projDir);
+            await _ensureUniqueRemote(projDir, remoteName, remoteUrl);
+            
+            String? targetBranch = branch;
+            if (targetBranch == null) {
+              targetBranch = await getCurrentBranch(projDir);
+            }
 
-          if (current != null) {
-            await _runGit(['reset', '--hard', '$remoteName/$current'], projDir);
-          } else {
-            await _runGit(['checkout', 'master'], projDir);
-            await _runGit(['reset', '--hard', '$remoteName/master'], projDir);
+            if (targetBranch != null) {
+              await _runGit(['fetch', remoteName, targetBranch], projDir);
+              
+              final current = await getCurrentBranch(projDir);
+              if (current != null) {
+                 if (branch != null && branch != current) {
+                   // If pulling a different branch, merge it
+                   await _runGit(['merge', '$remoteName/$branch'], projDir);
+                 } else {
+                   // If pulling current branch, reset hard to match remote (as per original logic)
+                   await _runGit(['reset', '--hard', '$remoteName/$current'], projDir);
+                 }
+              } else {
+                 // Detached?
+                 if (branch != null) {
+                   await _runGit(['reset', '--hard', '$remoteName/$branch'], projDir);
+                 }
+              }
+            } else {
+              await _runGit(['fetch', remoteName], projDir);
+              await _runGit(['checkout', 'master'], projDir);
+              await _runGit(['reset', '--hard', '$remoteName/master'], projDir);
+            }
+            await _runGit(['remote', 'prune', remoteName], projDir);
+          } catch (e) {
+            throw Exception('Standard pull failed: $e');
           }
-          await _runGit(['remote', 'prune', remoteName], projDir);
-        } catch (e) {
-          throw Exception('Standard pull failed: $e');
-        }
       }
     } else {
       final parentDir = Directory(projDir).parent;

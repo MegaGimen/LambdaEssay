@@ -1489,13 +1489,15 @@ Future<void> main(List<String> args) async {
     final username = (data['username'] as String?)?.trim() ?? '';
     final token = (data['token'] as String?)?.trim() ?? '';
     final force = data['force'] == true;
+    final branch = (data['branch'] as String?)?.trim();
+
     if (repoPath.isEmpty || username.isEmpty || token.isEmpty) {
       return _cors(Response(400,
           body: jsonEncode({'error': 'repoPath, username, token required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
-      await pushToRemote(repoPath, username, token, force: force);
+      await pushToRemote(repoPath, username, token, force: force, branch: branch);
       return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
         'Content-Type': 'application/json; charset=utf-8',
       }));
@@ -2086,9 +2088,10 @@ Future<void> main(List<String> args) async {
         (data['localTrackingZipPath'] as String?)?.trim();
     final currentPath = _sanitizePath(data['currentPath'] as String?);
     final recursive = data['recursive'] == true;
+    final branch = (data['branch'] as String?)?.trim();
 
     print(
-        'Debug: /pull request - repoPath: $repoPath, repoName: $repoName, targetRepoName: $targetRepoName, localTrackingZipPath: $localTrackingZipPath, recursive: $recursive');
+        'Debug: /pull request - repoPath: $repoPath, repoName: $repoName, targetRepoName: $targetRepoName, localTrackingZipPath: $localTrackingZipPath, recursive: $recursive, branch: $branch');
 
     final pathArg = repoPath.isNotEmpty ? repoPath : repoName;
 
@@ -2104,7 +2107,8 @@ Future<void> main(List<String> args) async {
           targetRepoName: targetRepoName,
           localTrackingZipPath: localTrackingZipPath,
           currentPath: currentPath,
-          recursive: recursive);
+          recursive: recursive,
+          branch: branch);
       print("pullResult=${result}");
       return _cors(Response.ok(jsonEncode(result),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));

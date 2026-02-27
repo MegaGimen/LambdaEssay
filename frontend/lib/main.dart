@@ -1573,7 +1573,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
 
 
-  Future<void> _onPush({bool force = false}) async {
+  Future<void> _onPush({bool force = false, String? branch}) async {
     if (!await _ensureToken()) {
       setState(() => error = '请先登录');
       return;
@@ -1584,17 +1584,83 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       return;
     }
 
+    String? selectedBranch = branch;
+    if (!force && selectedBranch == null) {
+      // Fetch branches for selection
+      List<String> branches = [];
+      String? currentBranch;
+      try {
+        if (data != null) {
+           branches = data!.branches.map((b) => b.name).toList();
+           currentBranch = data!.currentBranch;
+        }
+      } catch (e) {
+        print('Error getting branches: $e');
+      }
+
+      if (branches.isNotEmpty) {
+        selectedBranch = await showDialog<String>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('选择要推送的分支'),
+            content: SizedBox(
+              width: 300,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('请选择要推送到远程的分支：'),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    height: 200,
+                    child: ListView.builder(
+                      itemCount: branches.length,
+                      itemBuilder: (context, index) {
+                        final b = branches[index];
+                        final isCurrent = b == currentBranch;
+                        return ListTile(
+                          title: Text(b),
+                          trailing: isCurrent ? const Icon(Icons.check, size: 16) : null,
+                          selected: isCurrent,
+                          onTap: () => Navigator.pop(ctx, b),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+               TextButton(
+                onPressed: () => Navigator.pop(ctx, null), // Cancel
+                child: const Text('取消'),
+              ),
+               TextButton(
+                onPressed: () => Navigator.pop(ctx, currentBranch), // Default
+                child: const Text('推送当前分支'),
+              ),
+            ],
+          ),
+        );
+        if (selectedBranch == null) return; // Cancelled
+      } else {
+        selectedBranch = currentBranch;
+      }
+    }
+
     setState(() {
       loading = true;
       error = null;
     });
     try {
-      await _postJson('http://localhost:8080/push', {
+      final body = {
         'repoPath': repoPath,
         'username': _username,
         'token': _token,
         'force': force,
-      });
+      };
+      if (selectedBranch != null) body['branch'] = selectedBranch;
+
+      await _postJson('http://localhost:8080/push', body);
       if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('推送成功 (已同步所有父文件夹)')));
@@ -1606,7 +1672,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       final msg = e.toString();
       if (msg.contains('non-fast-forward') || msg.contains('fetch first')) {
         if (!mounted) return;
-        await _showPushRejectedDialog(msg);
+        await _showPushRejectedDialog(msg, branch: selectedBranch);
         return;
       }
       if (!mounted) return;
@@ -1616,7 +1682,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     }
   }
 
-  Future<void> _showPushRejectedDialog(String message) async {
+  Future<void> _showPushRejectedDialog(String message, {String? branch}) async {
     final choice = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1653,13 +1719,13 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       // Let's reuse the triple confirmation by just returning 'force' to caller?
       // But caller is _onPush which is async.
       // Let's implement the sub-dialogs here.
-      await _confirmForcePush();
+      await _confirmForcePush(branch: branch);
     } else if (choice == 'resolve') {
       await _showResolveConflictDialog(isPush: true);
     }
   }
 
-  Future<void> _confirmForcePush() async {
+  Future<void> _confirmForcePush({String? branch}) async {
     // 第一重确认
     final ok1 = await showDialog<bool>(
       context: context,
@@ -1709,7 +1775,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     if (!mounted) return;
 
     if (ok2 == true) {
-      await _onPush(force: true);
+      await _onPush(force: true, branch: branch);
     }
   }
 
@@ -2070,6 +2136,90 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         return;
       }
 
+      // Show branch selection dialog
+      final repoPath = pathCtrl.text.trim();
+      if (repoPath.isEmpty) {
+        setState(() => error = '未选择具体追踪节点');
+        return;
+      }
+      
+      // Fetch branches for selection
+      List<String> branches = [];
+      String? currentBranch;
+      try {
+        // We can use the graph data if available, or fetch fresh
+        // If we want fresh remote branches, we should probably fetch first?
+        // But fetch requires network.
+        // Let's use the branches we know from graph (which includes local and some remote refs)
+        // Or we can list remote branches via API?
+        // Actually, let's just use the branches present in the graph for now.
+        // Wait, graph only has what we loaded.
+        
+        // Let's rely on data from graph if available
+        if (data != null) {
+           branches = data!.branches.map((b) => b.name).toList();
+           currentBranch = data!.currentBranch;
+        }
+      } catch (e) {
+        print('Error getting branches: $e');
+      }
+
+      // If no branches found, default to 'master' or just text input
+      String? selectedBranch;
+      
+      if (branches.isNotEmpty) {
+        selectedBranch = await showDialog<String>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('选择要拉取的分支'),
+            content: SizedBox(
+              width: 300,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('请选择要从远程拉取的分支：'),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    height: 200,
+                    child: ListView.builder(
+                      itemCount: branches.length,
+                      itemBuilder: (context, index) {
+                        final b = branches[index];
+                        final isCurrent = b == currentBranch;
+                        return ListTile(
+                          title: Text(b),
+                          trailing: isCurrent ? const Icon(Icons.check, size: 16) : null,
+                          selected: isCurrent,
+                          onTap: () => Navigator.pop(ctx, b),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+               TextButton(
+                onPressed: () => Navigator.pop(ctx, null), // Cancel
+                child: const Text('取消'),
+              ),
+               TextButton(
+                onPressed: () => Navigator.pop(ctx, currentBranch), // Default
+                child: const Text('使用当前分支'),
+              ),
+            ],
+          ),
+        );
+      } else {
+        // Fallback if no branches list available (e.g. graph not loaded)
+        // Just proceed with current (null)
+        selectedBranch = currentBranch;
+      }
+
+      if (selectedBranch == null && branches.isNotEmpty) return; // User cancelled dialog
+      
+      // If branches was empty, selectedBranch is null, which is fine (defaults to current in backend)
+      
       if (isFolderProject &&
           packageRootCtrl.text.isNotEmpty &&
           pathCtrl.text.isNotEmpty &&
@@ -2085,17 +2235,17 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
               repoName: pathCtrl.text.trim(),
               repoPath: pathCtrl.text.trim(),
               targetRepoName: hash,
-              currentPath: pathCtrl.text.trim());
+              currentPath: pathCtrl.text.trim(),
+              branch: selectedBranch);
           return;
         }
       }
 
-      final repoPath = pathCtrl.text.trim();
-      if (repoPath.isEmpty) {
-        setState(() => error = '未选择具体追踪节点');
-        return;
-      }
-      await _executePull(repoName: repoPath, repoPath: repoPath, currentPath: pathCtrl.text.trim());
+      await _executePull(
+          repoName: repoPath, 
+          repoPath: repoPath, 
+          currentPath: pathCtrl.text.trim(),
+          branch: selectedBranch);
       return;
     }
 
@@ -2123,7 +2273,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   }
 
   Future<void> _executePull(
-      {String? repoName, String? repoPath, String? targetRepoName, String? localTrackingZipPath, String? currentPath}) async {
+      {String? repoName, String? repoPath, String? targetRepoName, String? localTrackingZipPath, String? currentPath, String? branch}) async {
     setState(() {
       loading = true;
       error = null;
@@ -2138,6 +2288,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       if (repoPath != null) body['repoPath'] = repoPath;
       if (localTrackingZipPath != null) body['localTrackingZipPath'] = localTrackingZipPath;
       if (currentPath != null) body['currentPath'] = currentPath;
+      if (branch != null) body['branch'] = branch;
       
       print('==================================================');
       print('Debug: Sending pull request: $body');
