@@ -7,7 +7,7 @@ import 'package:http/http.dart' as http;
 /// 通过调用 Python LambdaLinker API 实现智能文档对比
 /// 自动使用缓存机制，提升性能
 class AIDiffService {
-  static const String _pythonApiUrl = 'http://127.0.0.1:8765';
+  static const String _pythonApiUrl = 'https://llinker.com/LambdaEssay_agent';
   static const Duration _timeout = Duration(seconds: 120);
   
   /// 检查 Python API 服务是否可用
