@@ -36,6 +36,7 @@ import shutil
 import tempfile
 import os
 import json
+import base64
 
 # 加载环境变量
 load_dotenv(project_root / ".env")
