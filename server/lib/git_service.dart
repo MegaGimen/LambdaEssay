@@ -2720,19 +2720,6 @@ Future<void> syncFolderProject(String name) async {
   }
 
   var targetBaseDir = projDir;
-  if (isWorkspaceRoot) {
-    // Fix: Use package name instead of source filename for project root
-    String pkgPath = tracking['packagePath'] as String? ?? '';
-    if (pkgPath.isEmpty) pkgPath = name;
-    final projectName = _trackingBaseName(pkgPath);
-
-    targetBaseDir = p.join(projDir, projectName);
-    if (!Directory(targetBaseDir).existsSync()) {
-      Directory(targetBaseDir).createSync(recursive: true);
-    }
-    print(
-        '[Debug][syncFolderProject] Redirecting sync to subdirectory: $targetBaseDir');
-  }
 
   if (sourceRoot != null) {
     // 1. Scan source folder for .docx files
