@@ -153,7 +153,7 @@ Future<void> main(List<String> args) async {
 
       comSender = (Map<String, dynamic> message) async {
         if (_activePluginSockets.isEmpty) return false;
-        final id = _uuid.v4();
+        final id = _uuid.v4().replaceAll('-', '');
         message['id'] = id;
 
         // Send to all connected plugins

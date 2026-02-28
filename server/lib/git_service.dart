@@ -2378,7 +2378,7 @@ Future<Map<String, dynamic>> createTrackingProject(
   final packagePath = _sanitizeFsPath(name);
   
   // Custom logic for new project creation to ensure random ID
-  final workspaceId = Uuid().v4();
+  final workspaceId = Uuid().v4().replaceAll('-', '');
   final projDir = _workspaceDirForId(workspaceId);
   
   final dir = Directory(projDir);
@@ -3791,7 +3791,7 @@ Future<Map<String, dynamic>> pullFromRemote(
     if (File(localTrackingZipPath).existsSync()) {
       repoPath = await _resolveWorkspaceDir(localTrackingZipPath);
     } else {
-      newWorkspaceId = Uuid().v4();
+      newWorkspaceId = Uuid().v4().replaceAll('-', '');
       repoPath = _workspaceDirForId(newWorkspaceId);
     }
   } else {
