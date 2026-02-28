@@ -2459,8 +2459,8 @@ Future<Map<String, dynamic>> importTrackingSource(
     // We want to preserve the directory name itself as a container.
     // e.g. Importing "FolderA" into root -> "FolderA/..."
 
-    // We want to flatten the structure, so we import directly into relTargetDir
-    final importBaseDir = relTargetDir;
+    // Fix: Append the folder name to importBaseDir so we import AS the folder
+    final importBaseDir = p.join(relTargetDir, p.basename(source));
 
     final files = Directory(source)
         .listSync(recursive: true)
