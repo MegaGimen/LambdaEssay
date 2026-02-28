@@ -114,7 +114,26 @@ Future<void> main(List<String> args) async {
   } catch (e) {
     print('Failed to start Heidegger: $e');
   }
-
+  // Start COM service in background
+  try {
+    final scriptDir = p.dirname(Platform.script.toFilePath());
+    final comPath = p.join(scriptDir, 'COM.exe');
+    if (File(comPath).existsSync()) {
+      print('Starting COM service from $comPath...');
+      // 使用 PowerShell 启动 COM.exe，完全隐藏窗口
+      await _processManager.start([
+        'powershell',
+        '-WindowStyle',
+        'Hidden',
+        '-Command',
+        'Start-Process -FilePath "$comPath" -WindowStyle Hidden'
+      ], mode: ProcessStartMode.normal, runInShell: false);
+    } else {
+      print('COM.exe not found at $comPath');
+    }
+  } catch (e) {
+    print('Failed to start COM: $e');
+  }
 
 
   await initTrackingService();

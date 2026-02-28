@@ -224,6 +224,11 @@ Future<void> _writeExternalDocx(String repoPath, String sourcePath) async {
   if (diskWriteSuccess) return;
   // 2. If disk write failed, try COM if source is a file
   bool handled = false;
+
+  if (comSender == null) {
+    print('[Warn] comSender is null. Is WordCOM.exe running and connected to ws://localhost:8080/ws?');
+  }
+
   if (comSender != null && File(sourcePath).existsSync()) {
     print('Attempting update via COM due to disk write failure...');
     try {
