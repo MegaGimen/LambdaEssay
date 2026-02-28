@@ -57,6 +57,13 @@ class Branch {
   String get displayName => decodeName(name);
 }
 
+enum RepoStatus {
+  upToDate,
+  remoteAhead, // Remote has changes local doesn't have
+  localAhead,  // Local has changes remote doesn't have
+  diverged     // Both have changes
+}
+
 class EdgeInfo {
   final String child;
   final String parent;

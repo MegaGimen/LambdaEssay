@@ -614,7 +614,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   late AnimationController _sidebarFlashCtrl;
 
   final Set<String> _fetchingPaths = {};
-  final Map<String, bool> _repoUpdates = {};
+  final Map<String, RepoStatus> _repoUpdates = {};
   String? _selectedFilePath;
   bool _comConnected = false;
   // path -> true if updated
@@ -4118,7 +4118,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       print('[BgFetch] Remote Map: $remoteMap');
       print('[BgFetch] Known Remotes: $knownRemotes');
 
-      bool hasUpdate = false;
+      RepoStatus repoStatus = RepoStatus.upToDate;
       final localLines = LineSplitter.split(localOutput);
 
       for (final line in localLines) {
@@ -4153,9 +4153,41 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           final remoteSha = remoteMap[targetRemoteBranch]!;
           print('[BgFetch] Comparing with $targetRemoteBranch (sha: $remoteSha)');
           if (remoteSha != localSha) {
-            print('[BgFetch] Update detected! $localSha != $remoteSha');
-            hasUpdate = true;
-            break; 
+            bool localIsBehind = false;
+            bool remoteIsBehind = false;
+            
+            try {
+               final res = await Process.run('git', ['merge-base', '--is-ancestor', localSha, remoteSha], workingDirectory: repoPath);
+               if (res.exitCode == 0) localIsBehind = true;
+            } catch (_) {}
+             
+            try {
+               final res = await Process.run('git', ['merge-base', '--is-ancestor', remoteSha, localSha], workingDirectory: repoPath);
+               if (res.exitCode == 0) remoteIsBehind = true;
+            } catch (_) {}
+
+            RepoStatus branchStatus;
+            if (localIsBehind) {
+               branchStatus = RepoStatus.remoteAhead;
+            } else if (remoteIsBehind) {
+               branchStatus = RepoStatus.localAhead;
+            } else {
+               branchStatus = RepoStatus.diverged;
+            }
+            
+            print('[BgFetch] Update detected! $localSha != $remoteSha (Status: $branchStatus)');
+            
+            // Priority: Diverged > RemoteAhead > LocalAhead
+            if (branchStatus == RepoStatus.diverged) {
+               repoStatus = RepoStatus.diverged;
+               break; 
+            }
+            if (branchStatus == RepoStatus.remoteAhead) {
+               repoStatus = RepoStatus.remoteAhead;
+            }
+            if (branchStatus == RepoStatus.localAhead && repoStatus != RepoStatus.remoteAhead && repoStatus != RepoStatus.diverged) {
+               repoStatus = RepoStatus.localAhead;
+            }
           } else {
             print('[BgFetch] Up to date.');
           }
@@ -4166,8 +4198,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
       if (mounted) {
         setState(() {
-          if (hasUpdate) {
-            _repoUpdates[repoPath] = true;
+          if (repoStatus != RepoStatus.upToDate) {
+            _repoUpdates[repoPath] = repoStatus;
           } else {
             // Explicitly clear the update flag if no updates found
             _repoUpdates.remove(repoPath);
@@ -4284,7 +4316,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
               ),
             ),
 
-          if (_repoUpdates.isNotEmpty)
+          if (_repoUpdates.entries.any((e) => e.value == RepoStatus.remoteAhead || e.value == RepoStatus.diverged))
             Container(
               width: double.infinity,
               color: Colors.red.withValues(alpha: 0.05),
@@ -4296,20 +4328,59 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                     Icon(Icons.notifications_active,
                         color: Colors.red, size: 14),
                     SizedBox(width: 8),
-                    Text('发现更新:',
+                    Text('远程有本地没有的更改:',
                         style: TextStyle(
                             color: Colors.red,
                             fontWeight: FontWeight.bold,
                             fontSize: 13)),
                   ]),
                   ..._repoUpdates.entries
-                      .where((e) => e.value)
+                      .where((e) => e.value == RepoStatus.remoteAhead || e.value == RepoStatus.diverged)
                       .map((e) => e.key)
                       .map((path) => Padding(
                             padding: const EdgeInsets.only(left: 22, top: 4),
                             child: Row(children: [
                               const Icon(Icons.circle,
                                   size: 6, color: Colors.red),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                  child: Text(
+                                      p.relative(path, from: rootPath),
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(fontSize: 12))),
+                            ]),
+                          ))
+                      .take(5),
+                ],
+              ),
+            ),
+
+          if (_repoUpdates.entries.any((e) => e.value == RepoStatus.localAhead))
+            Container(
+              width: double.infinity,
+              color: Colors.green.withValues(alpha: 0.05),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(children: [
+                    Icon(Icons.upload,
+                        color: Colors.green, size: 14),
+                    SizedBox(width: 8),
+                    Text('有未推送的更改:',
+                        style: TextStyle(
+                            color: Colors.green,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13)),
+                  ]),
+                  ..._repoUpdates.entries
+                      .where((e) => e.value == RepoStatus.localAhead)
+                      .map((e) => e.key)
+                      .map((path) => Padding(
+                            padding: const EdgeInsets.only(left: 22, top: 4),
+                            child: Row(children: [
+                              const Icon(Icons.circle,
+                                  size: 6, color: Colors.green),
                               const SizedBox(width: 4),
                               Expanded(
                                   child: Text(
@@ -4336,10 +4407,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                     child: FoldableDirectoryTree(
                       rootPath: rootPath,
                       selectedPath: _selectedFilePath,
-                      updatedPaths: _repoUpdates.entries
-                          .where((e) => e.value)
-                          .map((e) => e.key)
-                          .toSet(),
+                      updatedPaths: _repoUpdates.keys.toSet(),
                       filter: (entity) {
                         final name = p.basename(entity.path);
                         if (entity is Directory &&
