@@ -1375,9 +1375,36 @@ String _workspaceDirForId(String workspaceId) {
 
 Future<String?> getWorkspaceId(String packagePath) async {
   if (await FileSystemEntity.isDirectory(packagePath)) {
+    // Try to find root first
+    final root = await findWorkspaceRoot(packagePath);
+    if (root != null) {
+      return _readWorkspaceIdFromDir(root);
+    }
+    // If no root found, try current dir just in case
     return _readWorkspaceIdFromDir(packagePath);
   }
   return await _readWorkspaceIdFromZip(packagePath);
+}
+
+Future<String?> findWorkspaceRoot(String startPath) async {
+  var dir = Directory(startPath);
+  if (!await dir.exists()) return null;
+  
+  String currentPath = dir.path;
+  
+  while (true) {
+    final meta = File(p.join(currentPath, kWorkspaceMetaFile));
+    if (await meta.exists()) {
+      return currentPath;
+    }
+    
+    final parent = Directory(currentPath).parent;
+    if (p.equals(parent.path, currentPath)) {
+      break; 
+    }
+    currentPath = parent.path;
+  }
+  return null;
 }
 
 Future<String?> _readWorkspaceIdFromDir(String dirPath) async {
@@ -2993,9 +3020,10 @@ Future<bool> _isWorkspaceRoot(String path) async {
 
 Future<Map<String, dynamic>?> getTrackingInfo(String repoPath) async {
   final normalized = p.normalize(repoPath);
-  final root = await _findWorkspaceRoot(normalized);
+  final root = await findWorkspaceRoot(normalized);
   if (root == null) return null;
   final packagePath = await _readWorkspacePackagePath(root) ?? '';
+  final workspaceId = await getWorkspaceId(root);
   final info = await _resolveTrackingInfo(normalized);
   final tracking = info.isNotEmpty
       ? (info['rawTracking'] as Map<String, dynamic>? ?? <String, dynamic>{})
@@ -3011,6 +3039,7 @@ Future<Map<String, dynamic>?> getTrackingInfo(String repoPath) async {
     'repoDocxPath': tracking['repoDocxPath'],
     'packagePath': resolvedPackagePath,
     'trackingRoot': trackingRoot,
+    'workspaceId': workspaceId,
   };
 }
 

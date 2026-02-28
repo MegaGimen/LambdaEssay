@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'package:path/path.dart' as p;
 import 'package:http/http.dart' as http;
 import 'models.dart';
-import 'git_service.dart';
 
 import 'package:crypto/crypto.dart';
 
@@ -61,15 +60,49 @@ Future<Map<String, dynamic>> listBackupCommits(
   
   // Fix: If repoName is a full path, convert to hash key to match server logic
   String targetRepoName = repoName;
+
   if (p.isAbsolute(repoName) || repoName.contains(p.separator)) {
-     final id = await getWorkspaceId(repoName);
-     if (id != null) {
-        targetRepoName = id;
-     } else {
+     print("==========================================================");
+     print("Debug: resolving repoName: $repoName");
+     
+     // Method: Try to get remote URL directly from git config
+     // This is the most reliable way as it reflects the actual remote repo name
+     bool foundViaGit = false;
+     if (await Directory(repoName).exists() || await File(repoName).exists()) { // File check for bare repo/submodule file
+        try {
+           final res = await Process.run('git', ['remote', 'get-url', 'origin'], 
+              workingDirectory: repoName);
+           print("Debug: git remote get-url origin result: exitCode=${res.exitCode}, stdout=${res.stdout}");
+           
+           if (res.exitCode == 0) {
+              final url = (res.stdout as String).trim();
+              if (url.isNotEmpty) {
+                 // Extract repo name from URL
+                 // e.g., http://host:port/47f25aed...-document.git -> 47f25aed...-document
+                 final uri = Uri.parse(url);
+                 String lastSegment = uri.pathSegments.last;
+                 if (lastSegment.endsWith('.git')) {
+                    targetRepoName = lastSegment.substring(0, lastSegment.length - 4);
+                 } else {
+                    targetRepoName = lastSegment;
+                 }
+                 print("Debug: Found targetRepoName via git remote: $targetRepoName");
+                 foundViaGit = true;
+              }
+           }
+        } catch (e) {
+           print("Debug: Failed to get git remote url: $e");
+        }
+     }
+
+     if (!foundViaGit) {
+        // Fallback: MD5 hash of normalized path (legacy behavior)
         final norm = p.normalize(repoName).toLowerCase();
         targetRepoName = md5.convert(utf8.encode(norm)).toString();
+        print("Debug: Git remote not found, fallback MD5: $targetRepoName");
      }
      print("Converted path '$repoName' to key '$targetRepoName'");
+     print("==========================================================");
   }
 
   final dirPath = _getBackupDir(targetRepoName);
