@@ -434,7 +434,7 @@ Future<ComparisonResult> compareReposWithLocal(
     pathA = localPath;
     graphA = await getGraph(localPath, limit: 100);
   } else {
-    pathA = await getSnapshotPath(repoName, commitA);
+    pathA = await resolveSnapshotGitPath(repoName, commitA);
     graphA = await getBackupGraph(repoName, commitA);
   }
 
@@ -445,7 +445,7 @@ Future<ComparisonResult> compareReposWithLocal(
     pathB = localPath;
     graphB = await getGraph(localPath, limit: 100);
   } else {
-    pathB = await getSnapshotPath(repoName, commitB);
+    pathB = await resolveSnapshotGitPath(repoName, commitB);
     graphB = await getBackupGraph(repoName, commitB);
   }
 

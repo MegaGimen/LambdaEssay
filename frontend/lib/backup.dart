@@ -37,6 +37,7 @@ class _BackupPageState extends State<BackupPage> {
   List<CommitNode> _commits = [];
   // Store comparison results for each backup commit vs local
   final Map<String, ComparisonData> _comparisons = {};
+  final Set<String> _failedComparisons = {};
   final TransformationController _sharedTc = TransformationController();
   double _uiScale = 1.0;
 
@@ -153,6 +154,7 @@ class _BackupPageState extends State<BackupPage> {
       _error = null;
       _commits = [];
       _comparisons.clear();
+      _failedComparisons.clear();
       _downloadProgress = 0.0;
     });
     try {
@@ -189,6 +191,11 @@ class _BackupPageState extends State<BackupPage> {
       for (final c in commits) {
         _ensureComparison(repo, c.id).catchError((e) {
           debugPrint('Failed to load comparison for ${c.id}: $e');
+          if (mounted) {
+            setState(() {
+              _failedComparisons.add(c.id);
+            });
+          }
         });
       }
     } catch (e) {
@@ -528,6 +535,13 @@ class _BackupPageState extends State<BackupPage> {
                                           ),
                                         ),
                                       ],
+                                    )
+                                  else if (_failedComparisons.contains(sha))
+                                    const SizedBox(
+                                      height: 100,
+                                      child: Center(
+                                          child: Text('加载对比失败',
+                                              style: TextStyle(color: Colors.red))),
                                     )
                                   else
                                     const SizedBox(

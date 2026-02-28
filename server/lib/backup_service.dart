@@ -417,18 +417,14 @@ Future<String> _findEffectiveRepoPath(String repoName) async {
   throw Exception('Parent repository not found in $repoDir');
 }
 
-Future<Map<String, dynamic>> getBackupChildGraph(
-    String repoName, String commitId) async {
-  // Use cached snapshot
+Future<String> resolveSnapshotGitPath(String repoName, String commitId) async {
   final snapshotPath = p.join(_checkoutBaseDir, repoName, commitId);
   final snapshotDir = Directory(snapshotPath);
 
   if (!await snapshotDir.exists()) {
-    throw Exception('Snapshot not found for $commitId. Try refreshing list.');
+    throw Exception('Snapshot not found for $commitId');
   }
 
-  // The snapshot directory contains the child repo contents directly
-  // It might be a normal repo (with .git) or bare-ish
   String gitDir = snapshotPath;
   
   // First check for inner bare repo, as it is the most specific content
@@ -461,7 +457,12 @@ Future<Map<String, dynamic>> getBackupChildGraph(
         }
       }
   }
+  return gitDir;
+}
 
+Future<Map<String, dynamic>> getBackupChildGraph(
+    String repoName, String commitId) async {
+  final gitDir = await resolveSnapshotGitPath(repoName, commitId);
   return (await _getGraphFromGitDir(gitDir)).toJson();
 }
 
@@ -558,49 +559,7 @@ Future<List<Branch>> _getBranchesFromGitDir(String gitDir) async {
 }
 
 Future<GraphResponse> getBackupGraph(String repoName, String commitId) async {
-  // Use cached snapshot
-  final snapshotPath = p.join(_checkoutBaseDir, repoName, commitId);
-  final snapshotDir = Directory(snapshotPath);
-
-  if (!await snapshotDir.exists()) {
-    throw Exception('Snapshot not found for $commitId. Try refreshing list.');
-  }
-
-  // The snapshot directory contains the child repo contents directly
-  // It might be a normal repo (with .git) or bare-ish
-  String gitDir = snapshotPath;
-  
-  // First check for inner bare repo, as it is the most specific content
-  bool foundInner = false;
-  final subs = snapshotDir.listSync().whereType<Directory>();
-  for (final s in subs) {
-      if (p.basename(s.path) == '.git') continue;
-      if (await File(p.join(s.path, 'HEAD')).exists() && 
-          await File(p.join(s.path, 'config')).exists() && 
-          await Directory(p.join(s.path, 'refs')).exists()) {
-        gitDir = s.path;
-        foundInner = true;
-        break;
-      }
-  }
-
-  if (!foundInner) {
-      if (await Directory(p.join(snapshotPath, '.git')).exists()) {
-        gitDir = p.join(snapshotPath, '.git');
-      } else {
-        // Check if it looks like a bare repo/embedded git dir
-        if (!await File(p.join(snapshotPath, 'HEAD')).exists()) {
-          // Maybe inside a subdir?
-          for (final s in subs) {
-            if (await Directory(p.join(s.path, '.git')).exists()) {
-              gitDir = p.join(s.path, '.git');
-              break;
-            }
-          }
-        }
-      }
-  }
-
+  final gitDir = await resolveSnapshotGitPath(repoName, commitId);
   return _getGraphFromGitDir(gitDir);
 }
 
