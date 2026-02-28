@@ -132,7 +132,7 @@ Future<void> main(List<String> args) async {
       print('Word Plugin connected');
       _activePluginSockets.add(channel);
 
-      pluginSender = (Map<String, dynamic> message) async {
+      comSender = (Map<String, dynamic> message) async {
         if (_activePluginSockets.isEmpty) return false;
         final id = _uuid.v4();
         message['id'] = id;
@@ -228,7 +228,7 @@ Future<void> main(List<String> args) async {
         print('Word Plugin disconnected');
         _activePluginSockets.remove(channel);
         if (_activePluginSockets.isEmpty) {
-          pluginSender = null;
+          comSender = null;
         }
         // Notify frontend
         for (final socket in _activeFrontendSockets) {
@@ -241,7 +241,7 @@ Future<void> main(List<String> args) async {
         print('WebSocket error: $e');
         _activePluginSockets.remove(channel);
         if (_activePluginSockets.isEmpty) {
-          pluginSender = null;
+          comSender = null;
         }
         // Notify frontend
         for (final socket in _activeFrontendSockets) {
@@ -284,9 +284,9 @@ Future<void> main(List<String> args) async {
 
   // Word Plugin API: Trigger Save
   router.post('/api/save', (Request req) async {
-    if (pluginSender == null) {
+    if (comSender == null) {
       return _cors(Response(503,
-          body: jsonEncode({'error': 'Plugin not connected'}),
+          body: jsonEncode({'error': 'COM not connected'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
 
@@ -301,7 +301,7 @@ Future<void> main(List<String> args) async {
       }
     } catch (_) {}
 
-    final success = await pluginSender!({'action': 'save', 'options': options});
+    final success = await comSender!({'action': 'save', 'options': options});
 
     if (success) {
       return _cors(Response.ok(jsonEncode({'message': 'Save command sent'}),
@@ -315,9 +315,9 @@ Future<void> main(List<String> args) async {
 
   // Word Plugin API: Replace Document
   router.post('/api/document', (Request req) async {
-    if (pluginSender == null) {
+    if (comSender == null) {
       return _cors(Response(503,
-          body: jsonEncode({'error': 'Plugin not connected'}),
+          body: jsonEncode({'error': 'COM not connected'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
 
@@ -413,7 +413,7 @@ Future<void> main(List<String> args) async {
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
 
-    final success = await pluginSender!({
+    final success = await comSender!({
       'action': 'replace',
       'payload': {'content': content, 'type': type, 'options': options}
     });
@@ -905,10 +905,10 @@ Future<void> main(List<String> args) async {
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
 
-    // Attempt to save Word document if plugin is connected
-    if (pluginSender != null) {
+    // Attempt to save Word document if COM is connected
+    if (comSender != null) {
       print('Executing Word save before commit...');
-      await pluginSender!({'action': 'save'});
+      await comSender!({'action': 'save'});
       //if (!saved) {
       //  return _cors(Response(500,
       //      body: jsonEncode({'error': 'Word save failed. Commit aborted.'}),

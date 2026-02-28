@@ -59,7 +59,7 @@ class PullPreviewResult {
       };
 }
 
-Future<dynamic> Function(Map<String, dynamic>)? pluginSender;
+Future<dynamic> Function(Map<String, dynamic>)? comSender;
 
 class Mutex {
   Future<void> _last = Future.value();
@@ -222,15 +222,15 @@ Future<void> _writeExternalDocx(String repoPath, String sourcePath) async {
   }
 
   if (diskWriteSuccess) return;
-  // 2. If disk write failed, try plugin if source is a file
+  // 2. If disk write failed, try COM if source is a file
   bool handled = false;
-  if (pluginSender != null && File(sourcePath).existsSync()) {
-    print('Attempting update via plugin due to disk write failure...');
+  if (comSender != null && File(sourcePath).existsSync()) {
+    print('Attempting update via COM due to disk write failure...');
     try {
       final bytes = await File(sourcePath).readAsBytes();
       final base64Content = base64Encode(bytes);
 
-      final result = await pluginSender!({
+      final result = await comSender!({
         'action': 'replace',
         'payload': {
           'content': base64Content,
@@ -241,12 +241,12 @@ Future<void> _writeExternalDocx(String repoPath, String sourcePath) async {
 
       if (result == true) {
         handled = true;
-        print('Updated external docx via plugin: $targetPath');
+        print('Updated external docx via COM: $targetPath');
       } else {
-        print('Plugin update skipped/failed (result: $result)');
+        print('COM update skipped/failed (result: $result)');
       }
     } catch (e) {
-      print('Plugin write attempt failed: $e');
+      print('COM write attempt failed: $e');
     }
   }
 
