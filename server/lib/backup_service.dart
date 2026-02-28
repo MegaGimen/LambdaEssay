@@ -178,11 +178,11 @@ Future<Map<String, dynamic>> listBackupCommits(
   }
 
   // Pre-cache all snapshots logic
-  print('Pre-caching snapshots for $repoName...');
-  final effectiveRepoPath = await _findEffectiveRepoPath(repoName);
-  await _precacheSnapshots(repoName, effectiveRepoPath);
+  print('Pre-caching snapshots for $targetRepoName...');
+  final effectiveRepoPath = await _findEffectiveRepoPath(targetRepoName);
+  await _precacheSnapshots(targetRepoName, effectiveRepoPath);
 
-  final commits = await _getCommitsFromDir(effectiveRepoPath, repoName);
+  final commits = await _getCommitsFromDir(effectiveRepoPath, targetRepoName);
   return {
     'commits': commits,
     'cacheHit': cacheHit,

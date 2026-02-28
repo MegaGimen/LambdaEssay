@@ -1374,7 +1374,72 @@ String _workspaceDirForId(String workspaceId) {
 }
 
 Future<String?> getWorkspaceId(String packagePath) async {
+  if (await FileSystemEntity.isDirectory(packagePath)) {
+    return _readWorkspaceIdFromDir(packagePath);
+  }
   return await _readWorkspaceIdFromZip(packagePath);
+}
+
+Future<String?> _readWorkspaceIdFromDir(String dirPath) async {
+  // 1. Try reading from .tracking_workspace.json
+  final f = File(p.join(dirPath, kWorkspaceMetaFile));
+  if (f.existsSync()) {
+    try {
+      final content = await f.readAsString();
+      final json = jsonDecode(content) as Map<String, dynamic>;
+      if (json['workspaceId'] != null) {
+        return json['workspaceId'] as String;
+      }
+    } catch (e) {
+      print('Error reading workspace ID from dir meta $dirPath: $e');
+    }
+  }
+
+  // 2. Try reading from git config remote url
+  // Assuming 'origin' or the first remote contains the ID
+  final gitDir = p.join(dirPath, '.git');
+  if (Directory(gitDir).existsSync()) {
+    try {
+      final res = await Process.run('git', ['remote', 'get-url', 'origin'],
+          workingDirectory: dirPath);
+      if (res.exitCode == 0) {
+        final url = (res.stdout as String).trim();
+        if (url.isNotEmpty) {
+          // Extract ID from URL: http://.../ID.git or similar
+          // Example: http://47.242.109.145:3000/47f25aed42cc466299993254645ace02.git
+          try {
+            final uri = Uri.parse(url);
+            if (uri.pathSegments.isNotEmpty) {
+              var last = uri.pathSegments.last;
+              if (last.endsWith('.git')) {
+                last = last.substring(0, last.length - 4);
+              }
+              // Check if it looks like an md5 hash (32 hex chars)
+              if (RegExp(r'^[a-f0-9]{32}$').hasMatch(last)) {
+                return last;
+              }
+            }
+          } catch (_) {}
+
+          // Fallback: simple string manipulation if Uri parsing fails or is weird
+          final parts = url.split('/');
+          if (parts.isNotEmpty) {
+            var last = parts.last;
+            if (last.endsWith('.git')) {
+              last = last.substring(0, last.length - 4);
+            }
+            if (RegExp(r'^[a-f0-9]{32}$').hasMatch(last)) {
+              return last;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      print('Error reading remote url from dir $dirPath: $e');
+    }
+  }
+
+  return null;
 }
 
 Future<String?> _readWorkspaceIdFromZip(String zipPath) async {
