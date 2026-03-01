@@ -1,14 +1,58 @@
 import 'dart:io';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:path/path.dart' as p;
+import 'package:crypto/crypto.dart';
 
 /// AI 文档对比服务
 /// 
 /// 通过调用 Python LambdaLinker API 实现智能文档对比
-/// 自动使用缓存机制，提升性能
+/// 自动使用缓存机制（本地 + 远程），提升性能
 class AIDiffService {
-  static const String _pythonApiUrl = 'http://127.0.0.1:8765';
+  static const String _pythonApiUrl = 'https://llinker.com/LambdaEssay_agent';
   static const Duration _timeout = Duration(seconds: 120);
+  
+  /// 获取本地缓存目录
+  static Directory _getLocalCacheDir() {
+    String cachePath;
+    if (Platform.isWindows) {
+      final appData = Platform.environment['APPDATA'];
+      if (appData != null && appData.isNotEmpty) {
+        cachePath = p.join(appData, 'gitdocx_ai_cache');
+      } else {
+        cachePath = p.join(Directory.systemTemp.path, 'gitdocx_ai_cache');
+      }
+    } else {
+      final home = Platform.environment['HOME'] ?? Directory.systemTemp.path;
+      cachePath = p.join(home, '.gitdocx_ai_cache');
+    }
+    final dir = Directory(cachePath);
+    if (!dir.existsSync()) {
+      dir.createSync(recursive: true);
+    }
+    return dir;
+  }
+
+  /// 计算文件哈希
+  static Future<String> _computeFileHash(String filePath) async {
+    final file = File(filePath);
+    if (!file.existsSync()) return '';
+    final bytes = await file.readAsBytes();
+    return sha1.convert(bytes).toString();
+  }
+
+  /// 生成缓存键
+  static Future<String> _generateCacheKey(
+    String fileAPath,
+    String fileBPath,
+    String docType,
+    String? commitA,
+    String? commitB,
+  ) async {
+    final keyA = commitA ?? await _computeFileHash(fileAPath);
+    final keyB = commitB ?? await _computeFileHash(fileBPath);
+    return '${keyA}_vs_${keyB}_$docType';
+  }
   
   /// 检查 Python API 服务是否可用
   static Future<bool> isAvailable() async {
@@ -19,6 +63,30 @@ class AIDiffService {
     } catch (e) {
       return false;
     }
+  }
+
+  /// 检查本地缓存（无需文件路径，仅需 commit ID）
+  static Future<Map<String, dynamic>?> checkLocalCache(
+    String commitA,
+    String commitB,
+    String docType,
+  ) async {
+    try {
+      // 当提供 commit ID 时，文件路径可以是任意值
+      final cacheKey = await _generateCacheKey('', '', docType, commitA, commitB);
+      final cacheDir = _getLocalCacheDir();
+      final localCacheFile = File(p.join(cacheDir.path, '$cacheKey.json'));
+      
+      if (localCacheFile.existsSync()) {
+        final content = await localCacheFile.readAsString();
+        final data = jsonDecode(content) as Map<String, dynamic>;
+        print('[AIDiff] ✅ 本地缓存命中 (预检查): $cacheKey');
+        return data;
+      }
+    } catch (e) {
+      print('[AIDiff] 本地缓存预检查失败: $e');
+    }
+    return null;
   }
   
   /// 对比两个文档（自动使用缓存）
@@ -41,21 +109,50 @@ class AIDiffService {
     String? commitA,
     String? commitB,
   }) async {
+    // 1. 尝试读取本地缓存
+    String? cacheKey;
+    File? localCacheFile;
+    
+    if (useCache) {
+      try {
+        cacheKey = await _generateCacheKey(fileAPath, fileBPath, docType, commitA, commitB);
+        final cacheDir = _getLocalCacheDir();
+        localCacheFile = File(p.join(cacheDir.path, '$cacheKey.json'));
+        
+        if (localCacheFile.existsSync()) {
+          final content = await localCacheFile.readAsString();
+          final data = jsonDecode(content) as Map<String, dynamic>;
+          print('[AIDiff] ✅ 本地缓存命中: $cacheKey');
+          return data;
+        }
+      } catch (e) {
+        print('[AIDiff] 读取本地缓存失败: $e');
+      }
+    }
+
     final url = Uri.parse('$_pythonApiUrl/compare');
 
     try {
       print('[AIDiff] 开始对比: $docType (cache=$useCache, commits=$commitA vs $commitB)');
+      print('[AIDiff] 使用 Base64 模式上传: $fileAPath, $fileBPath');
+
+      final bytesA = await File(fileAPath).readAsBytes();
+      final bytesB = await File(fileBPath).readAsBytes();
+      final base64A = base64Encode(bytesA);
+      final base64B = base64Encode(bytesB);
 
       final requestBody = {
-        'file_a': fileAPath,
+        'file_a': fileAPath, // 保留路径/文件名
         'file_b': fileBPath,
+        'file_a_base64': base64A,
+        'file_b_base64': base64B,
         'doc_type': docType,
         'use_cache': useCache,
         'use_mcp': useMcp,
         if (commitA != null) 'commit_a': commitA,
         if (commitB != null) 'commit_b': commitB,
       };
-      
+
       final response = await http.post(
         url,
         headers: {'Content-Type': 'application/json; charset=utf-8'},
@@ -67,17 +164,36 @@ class AIDiffService {
         
         final cached = data['cached'] as bool? ?? false;
         if (cached) {
-          print('[AIDiff] ✅ 缓存命中: $docType');
+          print('[AIDiff] ✅ 远程缓存命中: $docType');
         } else {
           print('[AIDiff] ⏱️  AI分析完成（新结果）: $docType');
         }
         
-        return data['result'] as Map<String, dynamic>;
+        final result = data['result'] as Map<String, dynamic>;
+        
+        // 保存到本地缓存
+        if (useCache && localCacheFile != null) {
+          try {
+            await localCacheFile.writeAsString(jsonEncode(result));
+            print('[AIDiff] ✅ 结果已保存到本地缓存: ${localCacheFile.path}');
+          } catch (e) {
+            print('[AIDiff] 保存本地缓存失败: $e');
+          }
+        }
+        
+        return result;
       } else if (response.statusCode == 404) {
         throw Exception('文件不存在');
       } else {
-        final error = jsonDecode(response.body);
-        throw Exception('AI服务调用失败: ${error['detail'] ?? response.statusCode}');
+        // 尝试解析错误信息，如果不是 JSON 则直接返回 body
+        String errorMsg;
+        try {
+          final error = jsonDecode(response.body);
+          errorMsg = error['detail'] ?? response.statusCode.toString();
+        } catch (_) {
+          errorMsg = response.body;
+        }
+        throw Exception('AI服务调用失败 ($errorMsg)');
       }
     } on http.ClientException catch (e) {
       print('[AIDiff] ❌ 网络错误: $e');

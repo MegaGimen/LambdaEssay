@@ -1,0 +1,1 @@
+g++ -static -static-libgcc -static-libstdc++ -mwindows main.cpp -o ../bin/COM.exe -lwinhttp -lole32 -loleaut32 -luuid -lcrypt32

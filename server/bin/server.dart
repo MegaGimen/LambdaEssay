@@ -114,7 +114,26 @@ Future<void> main(List<String> args) async {
   } catch (e) {
     print('Failed to start Heidegger: $e');
   }
-
+  // Start COM service in background
+  try {
+    final scriptDir = p.dirname(Platform.script.toFilePath());
+    final comPath = p.join(scriptDir, 'COM.exe');
+    if (File(comPath).existsSync()) {
+      print('Starting COM service from $comPath...');
+      // 使用 PowerShell 启动 COM.exe，完全隐藏窗口
+      await _processManager.start([
+        'powershell',
+        '-WindowStyle',
+        'Hidden',
+        '-Command',
+        'Start-Process -FilePath "$comPath" -WindowStyle Hidden'
+      ], mode: ProcessStartMode.normal, runInShell: false);
+    } else {
+      print('COM.exe not found at $comPath');
+    }
+  } catch (e) {
+    print('Failed to start COM: $e');
+  }
 
 
   await initTrackingService();
@@ -132,9 +151,9 @@ Future<void> main(List<String> args) async {
       print('Word Plugin connected');
       _activePluginSockets.add(channel);
 
-      pluginSender = (Map<String, dynamic> message) async {
+      comSender = (Map<String, dynamic> message) async {
         if (_activePluginSockets.isEmpty) return false;
-        final id = _uuid.v4();
+        final id = _uuid.v4().replaceAll('-', '');
         message['id'] = id;
 
         // Send to all connected plugins
@@ -228,7 +247,7 @@ Future<void> main(List<String> args) async {
         print('Word Plugin disconnected');
         _activePluginSockets.remove(channel);
         if (_activePluginSockets.isEmpty) {
-          pluginSender = null;
+          comSender = null;
         }
         // Notify frontend
         for (final socket in _activeFrontendSockets) {
@@ -241,7 +260,7 @@ Future<void> main(List<String> args) async {
         print('WebSocket error: $e');
         _activePluginSockets.remove(channel);
         if (_activePluginSockets.isEmpty) {
-          pluginSender = null;
+          comSender = null;
         }
         // Notify frontend
         for (final socket in _activeFrontendSockets) {
@@ -284,9 +303,9 @@ Future<void> main(List<String> args) async {
 
   // Word Plugin API: Trigger Save
   router.post('/api/save', (Request req) async {
-    if (pluginSender == null) {
+    if (comSender == null) {
       return _cors(Response(503,
-          body: jsonEncode({'error': 'Plugin not connected'}),
+          body: jsonEncode({'error': 'COM not connected'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
 
@@ -301,7 +320,7 @@ Future<void> main(List<String> args) async {
       }
     } catch (_) {}
 
-    final success = await pluginSender!({'action': 'save', 'options': options});
+    final success = await comSender!({'action': 'save', 'options': options});
 
     if (success) {
       return _cors(Response.ok(jsonEncode({'message': 'Save command sent'}),
@@ -315,9 +334,9 @@ Future<void> main(List<String> args) async {
 
   // Word Plugin API: Replace Document
   router.post('/api/document', (Request req) async {
-    if (pluginSender == null) {
+    if (comSender == null) {
       return _cors(Response(503,
-          body: jsonEncode({'error': 'Plugin not connected'}),
+          body: jsonEncode({'error': 'COM not connected'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
 
@@ -413,7 +432,7 @@ Future<void> main(List<String> args) async {
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
 
-    final success = await pluginSender!({
+    final success = await comSender!({
       'action': 'replace',
       'payload': {'content': content, 'type': type, 'options': options}
     });
@@ -478,6 +497,28 @@ Future<void> main(List<String> args) async {
     try {
       await deleteProject(packagePath, targetPath);
       return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } catch (e) {
+      return _cors(Response(500,
+          body: jsonEncode({'error': e.toString()}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  });
+
+  router.post('/project/dirty_status', (Request req) async {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final packagePath = _sanitizePath(data['packagePath'] as String?);
+
+    if (packagePath.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'packagePath required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    try {
+      final isDirty = await checkDirty(packagePath);
+      return _cors(Response.ok(jsonEncode({'isDirty': isDirty}), headers: {
         'Content-Type': 'application/json; charset=utf-8',
       }));
     } catch (e) {
@@ -883,10 +924,10 @@ Future<void> main(List<String> args) async {
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
 
-    // Attempt to save Word document if plugin is connected
-    if (pluginSender != null) {
+    // Attempt to save Word document if COM is connected
+    if (comSender != null) {
       print('Executing Word save before commit...');
-      await pluginSender!({'action': 'save'});
+      await comSender!({'action': 'save'});
       //if (!saved) {
       //  return _cors(Response(500,
       //      body: jsonEncode({'error': 'Word save failed. Commit aborted.'}),
@@ -1027,12 +1068,20 @@ Future<void> main(List<String> args) async {
     try {
       print('[API] AI对比请求: $commit1 vs $commit2 ($docType)');
 
-      final result = await compareCommitsWithAI(
-        repoPath,
-        commit1,
-        commit2,
-        docType: docType,
-      );
+      // 🔥 优化：优先检查本地缓存，避免无需的文件提取
+      final cachedResult = await AIDiffService.checkLocalCache(commit1, commit2, docType);
+      Map<String, dynamic> result;
+
+      if (cachedResult != null) {
+        result = cachedResult;
+      } else {
+        result = await compareCommitsWithAI(
+          repoPath,
+          commit1,
+          commit2,
+          docType: docType,
+        );
+      }
 
       return _cors(Response.ok(
           jsonEncode({
@@ -1467,13 +1516,15 @@ Future<void> main(List<String> args) async {
     final username = (data['username'] as String?)?.trim() ?? '';
     final token = (data['token'] as String?)?.trim() ?? '';
     final force = data['force'] == true;
+    final branch = (data['branch'] as String?)?.trim();
+
     if (repoPath.isEmpty || username.isEmpty || token.isEmpty) {
       return _cors(Response(400,
           body: jsonEncode({'error': 'repoPath, username, token required'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     try {
-      await pushToRemote(repoPath, username, token, force: force);
+      await pushToRemote(repoPath, username, token, force: force, branch: branch);
       return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
         'Content-Type': 'application/json; charset=utf-8',
       }));
@@ -2064,9 +2115,10 @@ Future<void> main(List<String> args) async {
         (data['localTrackingZipPath'] as String?)?.trim();
     final currentPath = _sanitizePath(data['currentPath'] as String?);
     final recursive = data['recursive'] == true;
+    final branch = (data['branch'] as String?)?.trim();
 
     print(
-        'Debug: /pull request - repoPath: $repoPath, repoName: $repoName, targetRepoName: $targetRepoName, localTrackingZipPath: $localTrackingZipPath, recursive: $recursive');
+        'Debug: /pull request - repoPath: $repoPath, repoName: $repoName, targetRepoName: $targetRepoName, localTrackingZipPath: $localTrackingZipPath, recursive: $recursive, branch: $branch');
 
     final pathArg = repoPath.isNotEmpty ? repoPath : repoName;
 
@@ -2082,7 +2134,8 @@ Future<void> main(List<String> args) async {
           targetRepoName: targetRepoName,
           localTrackingZipPath: localTrackingZipPath,
           currentPath: currentPath,
-          recursive: recursive);
+          recursive: recursive,
+          branch: branch);
       print("pullResult=${result}");
       return _cors(Response.ok(jsonEncode(result),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
@@ -2207,8 +2260,16 @@ Future<void> main(List<String> args) async {
     }
   });
 
-  final handler =
-      const Pipeline().addMiddleware(logRequests()).addHandler(router);
+  final handler = const Pipeline()
+      .addMiddleware(logRequests(logger: (String msg, bool isError) {
+        if (msg.contains('/project/dirty_status')) return;
+        if (isError) {
+          print('[ERROR] $msg');
+        } else {
+          print(msg);
+        }
+      }))
+      .addHandler(router);
   final server = await serve((req) async => _cors(await handler(req)),
       InternetAddress.loopbackIPv4, 8080);
   stdout.writeln(

@@ -7,6 +7,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
+import 'dart:ui' as ui;
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/io.dart';
@@ -613,7 +614,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   late AnimationController _sidebarFlashCtrl;
 
   final Set<String> _fetchingPaths = {};
-  final Map<String, bool> _repoUpdates = {};
+  final Map<String, RepoStatus> _repoUpdates = {};
   String? _selectedFilePath;
   bool _comConnected = false;
   // path -> true if updated
@@ -622,8 +623,14 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   DateTime? _lastTapTime;
   String? _lastTappedPath;
 
+  bool _isDirty = false;
+  Timer? _dirtyCheckTimer;
+  late final AppLifecycleListener _listener;
+
   @override
   void dispose() {
+    _listener.dispose();
+    _dirtyCheckTimer?.cancel();
     _channel?.sink.close();
     _reconnectTimer?.cancel();
     _sidebarFlashCtrl.dispose();
@@ -668,13 +675,95 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    _listener = AppLifecycleListener(
+      onExitRequested: _onExitRequested,
+    );
     _sidebarFlashCtrl = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 1),
     )..repeat(reverse: true);
     _checkLogin();
     _connectWebSocket();
+    _startDirtyCheck();
   }
+
+  void _startDirtyCheck() {
+    _dirtyCheckTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
+      if (currentProjectName != null) {
+        _checkDirtyStatus();
+      }
+    });
+  }
+
+  Future<void> _checkDirtyStatus() async {
+    if (currentProjectName == null) return;
+    try {
+      final resp = await _postJson('$baseUrl/project/dirty_status', {
+        'packagePath': currentProjectName,
+      });
+      if (resp['isDirty'] == true) {
+        if (!_isDirty && mounted) {
+          setState(() => _isDirty = true);
+        }
+      } else {
+        if (_isDirty && mounted) {
+          setState(() => _isDirty = false);
+        }
+      }
+    } catch (e) {
+      // Ignore
+    }
+  }
+
+  Future<ui.AppExitResponse> _onExitRequested() async {
+    if (_isDirty) {
+      final result = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('未保存的更改'),
+          content: const Text('您有未保存到追踪包的更改，是否保存？'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop('cancel'),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop('discard'),
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              child: const Text('不保存'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop('save'),
+              child: const Text('保存'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop('save_as'),
+              child: const Text('另存为'),
+            ),
+          ],
+        ),
+      );
+
+      if (result == 'save') {
+        await _saveProject();
+        // Check if save was successful
+        await _checkDirtyStatus();
+        if (!_isDirty) return ui.AppExitResponse.exit;
+        return ui.AppExitResponse.cancel;
+      } else if (result == 'save_as') {
+        await _saveProjectAs();
+        await _checkDirtyStatus();
+        if (!_isDirty) return ui.AppExitResponse.exit;
+        return ui.AppExitResponse.cancel;
+      } else if (result == 'discard') {
+        return ui.AppExitResponse.exit;
+      } else {
+        return ui.AppExitResponse.cancel;
+      }
+    }
+    return ui.AppExitResponse.exit;
+  }
+
 
   Future<void> _connectWebSocket() async {
     if (!mounted) return;
@@ -1484,7 +1573,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
 
 
-  Future<void> _onPush({bool force = false}) async {
+  Future<void> _onPush({bool force = false, String? branch}) async {
     if (!await _ensureToken()) {
       setState(() => error = '请先登录');
       return;
@@ -1495,17 +1584,112 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       return;
     }
 
+    String? selectedBranch = branch;
+    if (!force && selectedBranch == null) {
+      // Fetch branches for selection
+      List<String> branches = [];
+      String? currentBranch;
+      try {
+        if (data != null) {
+           branches = data!.branches.map((b) => b.name).toList();
+           currentBranch = data!.currentBranch;
+        }
+      } catch (e) {
+        print('Error getting branches: $e');
+      }
+
+      if (branches.isNotEmpty) {
+        String tempSelected = currentBranch ?? branches.first;
+        selectedBranch = await showDialog<String>(
+          context: context,
+          builder: (ctx) => StatefulBuilder(
+            builder: (context, setState) {
+              return AlertDialog(
+                title: const Text('选择要推送的分支'),
+                content: SizedBox(
+                  width: 300,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('请选择要推送到远程的分支：'),
+                      const SizedBox(height: 16),
+                      SizedBox(
+                        height: 200,
+                        child: ListView.builder(
+                          itemCount: branches.length,
+                          itemBuilder: (context, index) {
+                            final b = branches[index];
+                            final isSelected = b == tempSelected;
+                            return ListTile(
+                              title: Text(b),
+                              trailing: isSelected ? const Icon(Icons.check, size: 16) : null,
+                              selected: isSelected,
+                              onTap: () {
+                                setState(() {
+                                  tempSelected = b;
+                                });
+                              },
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                actions: [
+                   TextButton(
+                    onPressed: () => Navigator.pop(ctx, null), // Cancel
+                    child: const Text('取消'),
+                  ),
+                   ElevatedButton(
+                    onPressed: () => Navigator.pop(ctx, tempSelected),
+                    child: const Text('推送'),
+                  ),
+                ],
+              );
+            }
+          ),
+        );
+        if (selectedBranch == null) return; // Cancelled
+
+        // 二次确认
+        final confirm = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('确认推送'),
+            content: Text('您确定要推送分支 "$selectedBranch" 到远程吗？'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('取消'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('确定'),
+              ),
+            ],
+          ),
+        );
+        if (confirm != true) return;
+      } else {
+        selectedBranch = currentBranch;
+      }
+    }
+
     setState(() {
       loading = true;
       error = null;
     });
     try {
-      await _postJson('http://localhost:8080/push', {
+      final body = {
         'repoPath': repoPath,
         'username': _username,
         'token': _token,
         'force': force,
-      });
+      };
+      if (selectedBranch != null) body['branch'] = selectedBranch;
+
+      await _postJson('http://localhost:8080/push', body);
       if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('推送成功 (已同步所有父文件夹)')));
@@ -1517,7 +1701,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       final msg = e.toString();
       if (msg.contains('non-fast-forward') || msg.contains('fetch first')) {
         if (!mounted) return;
-        await _showPushRejectedDialog(msg);
+        await _showPushRejectedDialog(msg, branch: selectedBranch);
         return;
       }
       if (!mounted) return;
@@ -1527,7 +1711,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     }
   }
 
-  Future<void> _showPushRejectedDialog(String message) async {
+  Future<void> _showPushRejectedDialog(String message, {String? branch}) async {
     final choice = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1564,13 +1748,13 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       // Let's reuse the triple confirmation by just returning 'force' to caller?
       // But caller is _onPush which is async.
       // Let's implement the sub-dialogs here.
-      await _confirmForcePush();
+      await _confirmForcePush(branch: branch);
     } else if (choice == 'resolve') {
       await _showResolveConflictDialog(isPush: true);
     }
   }
 
-  Future<void> _confirmForcePush() async {
+  Future<void> _confirmForcePush({String? branch}) async {
     // 第一重确认
     final ok1 = await showDialog<bool>(
       context: context,
@@ -1620,7 +1804,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     if (!mounted) return;
 
     if (ok2 == true) {
-      await _onPush(force: true);
+      await _onPush(force: true, branch: branch);
     }
   }
 
@@ -1981,6 +2165,90 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         return;
       }
 
+      // Show branch selection dialog
+      final repoPath = pathCtrl.text.trim();
+      if (repoPath.isEmpty) {
+        setState(() => error = '未选择具体追踪节点');
+        return;
+      }
+      
+      // Fetch branches for selection
+      List<String> branches = [];
+      String? currentBranch;
+      try {
+        // We can use the graph data if available, or fetch fresh
+        // If we want fresh remote branches, we should probably fetch first?
+        // But fetch requires network.
+        // Let's use the branches we know from graph (which includes local and some remote refs)
+        // Or we can list remote branches via API?
+        // Actually, let's just use the branches present in the graph for now.
+        // Wait, graph only has what we loaded.
+        
+        // Let's rely on data from graph if available
+        if (data != null) {
+           branches = data!.branches.map((b) => b.name).toList();
+           currentBranch = data!.currentBranch;
+        }
+      } catch (e) {
+        print('Error getting branches: $e');
+      }
+
+      // If no branches found, default to 'master' or just text input
+      String? selectedBranch;
+      
+      if (branches.isNotEmpty) {
+        selectedBranch = await showDialog<String>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('选择要拉取的分支'),
+            content: SizedBox(
+              width: 300,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('请选择要从远程拉取的分支：'),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    height: 200,
+                    child: ListView.builder(
+                      itemCount: branches.length,
+                      itemBuilder: (context, index) {
+                        final b = branches[index];
+                        final isCurrent = b == currentBranch;
+                        return ListTile(
+                          title: Text(b),
+                          trailing: isCurrent ? const Icon(Icons.check, size: 16) : null,
+                          selected: isCurrent,
+                          onTap: () => Navigator.pop(ctx, b),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+               TextButton(
+                onPressed: () => Navigator.pop(ctx, null), // Cancel
+                child: const Text('取消'),
+              ),
+               TextButton(
+                onPressed: () => Navigator.pop(ctx, currentBranch), // Default
+                child: const Text('使用当前分支'),
+              ),
+            ],
+          ),
+        );
+      } else {
+        // Fallback if no branches list available (e.g. graph not loaded)
+        // Just proceed with current (null)
+        selectedBranch = currentBranch;
+      }
+
+      if (selectedBranch == null && branches.isNotEmpty) return; // User cancelled dialog
+      
+      // If branches was empty, selectedBranch is null, which is fine (defaults to current in backend)
+      
       if (isFolderProject &&
           packageRootCtrl.text.isNotEmpty &&
           pathCtrl.text.isNotEmpty &&
@@ -1996,17 +2264,17 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
               repoName: pathCtrl.text.trim(),
               repoPath: pathCtrl.text.trim(),
               targetRepoName: hash,
-              currentPath: pathCtrl.text.trim());
+              currentPath: pathCtrl.text.trim(),
+              branch: selectedBranch);
           return;
         }
       }
 
-      final repoPath = pathCtrl.text.trim();
-      if (repoPath.isEmpty) {
-        setState(() => error = '未选择具体追踪节点');
-        return;
-      }
-      await _executePull(repoName: repoPath, repoPath: repoPath, currentPath: pathCtrl.text.trim());
+      await _executePull(
+          repoName: repoPath, 
+          repoPath: repoPath, 
+          currentPath: pathCtrl.text.trim(),
+          branch: selectedBranch);
       return;
     }
 
@@ -2034,7 +2302,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   }
 
   Future<void> _executePull(
-      {String? repoName, String? repoPath, String? targetRepoName, String? localTrackingZipPath, String? currentPath}) async {
+      {String? repoName, String? repoPath, String? targetRepoName, String? localTrackingZipPath, String? currentPath, String? branch}) async {
     setState(() {
       loading = true;
       error = null;
@@ -2049,6 +2317,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       if (repoPath != null) body['repoPath'] = repoPath;
       if (localTrackingZipPath != null) body['localTrackingZipPath'] = localTrackingZipPath;
       if (currentPath != null) body['currentPath'] = currentPath;
+      if (branch != null) body['branch'] = branch;
       
       print('==================================================');
       print('Debug: Sending pull request: $body');
@@ -3849,7 +4118,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       print('[BgFetch] Remote Map: $remoteMap');
       print('[BgFetch] Known Remotes: $knownRemotes');
 
-      bool hasUpdate = false;
+      RepoStatus repoStatus = RepoStatus.upToDate;
       final localLines = LineSplitter.split(localOutput);
 
       for (final line in localLines) {
@@ -3884,9 +4153,41 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           final remoteSha = remoteMap[targetRemoteBranch]!;
           print('[BgFetch] Comparing with $targetRemoteBranch (sha: $remoteSha)');
           if (remoteSha != localSha) {
-            print('[BgFetch] Update detected! $localSha != $remoteSha');
-            hasUpdate = true;
-            break; 
+            bool localIsBehind = false;
+            bool remoteIsBehind = false;
+            
+            try {
+               final res = await Process.run('git', ['merge-base', '--is-ancestor', localSha, remoteSha], workingDirectory: repoPath);
+               if (res.exitCode == 0) localIsBehind = true;
+            } catch (_) {}
+             
+            try {
+               final res = await Process.run('git', ['merge-base', '--is-ancestor', remoteSha, localSha], workingDirectory: repoPath);
+               if (res.exitCode == 0) remoteIsBehind = true;
+            } catch (_) {}
+
+            RepoStatus branchStatus;
+            if (localIsBehind) {
+               branchStatus = RepoStatus.remoteAhead;
+            } else if (remoteIsBehind) {
+               branchStatus = RepoStatus.localAhead;
+            } else {
+               branchStatus = RepoStatus.diverged;
+            }
+            
+            print('[BgFetch] Update detected! $localSha != $remoteSha (Status: $branchStatus)');
+            
+            // Priority: Diverged > RemoteAhead > LocalAhead
+            if (branchStatus == RepoStatus.diverged) {
+               repoStatus = RepoStatus.diverged;
+               break; 
+            }
+            if (branchStatus == RepoStatus.remoteAhead) {
+               repoStatus = RepoStatus.remoteAhead;
+            }
+            if (branchStatus == RepoStatus.localAhead && repoStatus != RepoStatus.remoteAhead && repoStatus != RepoStatus.diverged) {
+               repoStatus = RepoStatus.localAhead;
+            }
           } else {
             print('[BgFetch] Up to date.');
           }
@@ -3897,8 +4198,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
       if (mounted) {
         setState(() {
-          if (hasUpdate) {
-            _repoUpdates[repoPath] = true;
+          if (repoStatus != RepoStatus.upToDate) {
+            _repoUpdates[repoPath] = repoStatus;
           } else {
             // Explicitly clear the update flag if no updates found
             _repoUpdates.remove(repoPath);
@@ -3961,6 +4262,18 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                     child: const Text('打开'),
                   ),
                 ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: loading ? null : _saveProject,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green, // Green as requested (or just distinct)
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    child: const Text('保存'),
+                  ),
+                ),
               ],
             ),
           ),
@@ -3977,7 +4290,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                     const Icon(Icons.folder_open, size: 16, color: Colors.blue),
                     const SizedBox(width: 8),
                     Expanded(
-                        child: Text('当前: $currentProjectName',
+                        child: Text(
+                            '当前: $currentProjectName${_isDirty ? " *" : ""}',
                             style: const TextStyle(
                                 fontWeight: FontWeight.bold,
                                 color: Colors.blue,
@@ -4002,7 +4316,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
               ),
             ),
 
-          if (_repoUpdates.isNotEmpty)
+          if (_repoUpdates.entries.any((e) => e.value == RepoStatus.remoteAhead || e.value == RepoStatus.diverged))
             Container(
               width: double.infinity,
               color: Colors.red.withValues(alpha: 0.05),
@@ -4014,20 +4328,59 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                     Icon(Icons.notifications_active,
                         color: Colors.red, size: 14),
                     SizedBox(width: 8),
-                    Text('发现更新:',
+                    Text('远程有本地没有的更改:',
                         style: TextStyle(
                             color: Colors.red,
                             fontWeight: FontWeight.bold,
                             fontSize: 13)),
                   ]),
                   ..._repoUpdates.entries
-                      .where((e) => e.value)
+                      .where((e) => e.value == RepoStatus.remoteAhead || e.value == RepoStatus.diverged)
                       .map((e) => e.key)
                       .map((path) => Padding(
                             padding: const EdgeInsets.only(left: 22, top: 4),
                             child: Row(children: [
                               const Icon(Icons.circle,
                                   size: 6, color: Colors.red),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                  child: Text(
+                                      p.relative(path, from: rootPath),
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(fontSize: 12))),
+                            ]),
+                          ))
+                      .take(5),
+                ],
+              ),
+            ),
+
+          if (_repoUpdates.entries.any((e) => e.value == RepoStatus.localAhead))
+            Container(
+              width: double.infinity,
+              color: Colors.green.withValues(alpha: 0.05),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(children: [
+                    Icon(Icons.upload,
+                        color: Colors.green, size: 14),
+                    SizedBox(width: 8),
+                    Text('有未推送的更改:',
+                        style: TextStyle(
+                            color: Colors.green,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13)),
+                  ]),
+                  ..._repoUpdates.entries
+                      .where((e) => e.value == RepoStatus.localAhead)
+                      .map((e) => e.key)
+                      .map((path) => Padding(
+                            padding: const EdgeInsets.only(left: 22, top: 4),
+                            child: Row(children: [
+                              const Icon(Icons.circle,
+                                  size: 6, color: Colors.green),
                               const SizedBox(width: 4),
                               Expanded(
                                   child: Text(
@@ -4054,10 +4407,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                     child: FoldableDirectoryTree(
                       rootPath: rootPath,
                       selectedPath: _selectedFilePath,
-                      updatedPaths: _repoUpdates.entries
-                          .where((e) => e.value)
-                          .map((e) => e.key)
-                          .toSet(),
+                      updatedPaths: _repoUpdates.keys.toSet(),
                       filter: (entity) {
                         final name = p.basename(entity.path);
                         if (entity is Directory &&
@@ -4116,13 +4466,6 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                 ],
               ),
             ),
-          const SizedBox(width: 16),
-          ElevatedButton.icon(
-            onPressed:
-                loading ? null : () => _onUpdateRepoAction(opIdentical: false),
-            icon: const Icon(Icons.sync, size: 16),
-            label: const Text('同步'),
-          ),
           const SizedBox(width: 8),
           ElevatedButton.icon(
             onPressed: loading ? null : _onPush,
@@ -4181,7 +4524,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       child: Column(
         children: [
           Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -4257,64 +4600,170 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                                   token: _token ?? '',
                                 )));
                   }),
-                  const SizedBox(height: 16),
-                  const Text('节点间距',
-                      style: TextStyle(fontSize: 12, color: Colors.grey)),
-                  Slider(
-                    min: 40,
-                    max: 160,
-                    divisions: 24,
-                    value: _rowHeight,
-                    label: _rowHeight.round().toString(),
-                    onChanged: (v) => setState(() => _rowHeight = v),
-                  ),
-                  const Text('分支间距',
-                      style: TextStyle(fontSize: 12, color: Colors.grey)),
-                  Slider(
-                    min: 60,
-                    max: 200,
-                    divisions: 28,
-                    value: _laneWidth,
-                    label: _laneWidth.round().toString(),
-                    onChanged: (v) => setState(() => _laneWidth = v),
-                  ),
-                  const SizedBox(height: 16),
-                  const Text('分支图例',
-                      style: TextStyle(
-                          fontWeight: FontWeight.bold, color: Colors.grey)),
-                  const SizedBox(height: 8),
-                  ...() {
-                    final branches = data!.branches;
-                    final palette = GraphPainter.lanePalette;
-                    return branches.asMap().entries.map((e) {
-                      final i = e.key;
-                      final b = e.value;
-                      final color = palette[i % palette.length];
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 4),
-                        child: Row(
-                          children: [
-                            Container(
-                                width: 12,
-                                height: 12,
-                                decoration: BoxDecoration(
-                                    color: color, shape: BoxShape.circle)),
-                            const SizedBox(width: 8),
-                            Expanded(
-                                child: Text(Branch.decodeName(b.name),
-                                    overflow: TextOverflow.ellipsis)),
-                            if (b.name == data!.currentBranch)
-                              const Icon(Icons.check_circle,
-                                  size: 14, color: Colors.green),
-                          ],
-                        ),
-                      );
-                    });
-                  }(),
                 ],
               ],
             ),
           ),
+          if (data != null)
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('分支图例',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold, color: Colors.grey)),
+                    const SizedBox(height: 8),
+                    Expanded(
+                      child: Align(
+                        alignment: Alignment.topLeft,
+                        child: LayoutBuilder(builder: (context, constraints) {
+                          final branches = data!.branches;
+                          // Use dedicated remoteBranches list
+                          final remotes = data!.remoteBranches;
+                          final palette = GraphPainter.lanePalette;
+                          final locals = <Branch>[];
+
+                          for (var b in branches) {
+                            if (!b.name.contains('/')) {
+                              locals.add(b);
+                            }
+                          }
+                          final handledRemotes = <String>{};
+                          final List<Widget> items = [];
+
+                          for (var l in locals) {
+                            final lColor =
+                                palette[branches.indexOf(l) % palette.length];
+
+                            // Determine related remotes (upstream or name match)
+                            final relatedRemotes = <Branch>[];
+                            if (l.upstream != null && l.upstream!.isNotEmpty) {
+                              // Find by exact name
+                              try {
+                                final up = remotes
+                                    .firstWhere((b) => b.name == l.upstream);
+                                relatedRemotes.add(up);
+                              } catch (_) {
+                                // If not found in branches list, create dummy for display
+                                relatedRemotes
+                                    .add(Branch(name: l.upstream!, head: ''));
+                              }
+                            } else {
+                              // Fallback to name matching
+                              // Try to find remote that ends with /localName
+                              // e.g. origin/master ends with /master
+                              final matchingRemotes = remotes
+                                  .where((r) => r.name.endsWith('/${l.name}'));
+                              relatedRemotes.addAll(matchingRemotes);
+                            }
+
+                            for (var m in relatedRemotes)
+                              handledRemotes.add(m.name);
+
+                            items.add(InkWell(
+                              onDoubleTap: () => _doSwitchBranch(l.name),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 4),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Container(
+                                        width: 12,
+                                        height: 12,
+                                        decoration: BoxDecoration(
+                                            color: lColor,
+                                            shape: BoxShape.circle)),
+                                    const SizedBox(width: 8),
+                                    Text(Branch.decodeName(l.name)),
+                                    if (l.name == data!.currentBranch)
+                                      const Padding(
+                                          padding: EdgeInsets.only(left: 4),
+                                          child: Icon(Icons.check_circle,
+                                              size: 14, color: Colors.green)),
+                                    if (relatedRemotes.isNotEmpty) ...[
+                                      const SizedBox(width: 8),
+                                      const Icon(Icons.arrow_right_alt,
+                                          size: 16, color: Colors.grey),
+                                      const SizedBox(width: 8),
+                                      ...relatedRemotes.map((r) {
+                                        Color rColor = Colors.grey;
+                                        // For color, we might not have it in palette if it's not in 'branches'
+                                        // Try to find if it is in branches (unlikely now)
+                                        // or just use a default color or hash
+                                        final idx = branches.indexWhere(
+                                            (b) => b.name == r.name);
+                                        if (idx >= 0) {
+                                          rColor =
+                                              palette[idx % palette.length];
+                                        }
+
+                                        final rName = Branch.decodeName(r.name)
+                                            .replaceFirst(
+                                                RegExp(r'^[^/]+(?=/)'),
+                                                'remote');
+                                        return Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Container(
+                                                  width: 12,
+                                                  height: 12,
+                                                  decoration: BoxDecoration(
+                                                      color: rColor,
+                                                      shape: BoxShape.circle)),
+                                              const SizedBox(width: 4),
+                                              Text(rName,
+                                                  style: const TextStyle(
+                                                      color: Colors.grey)),
+                                              const SizedBox(width: 8),
+                                            ]);
+                                      }),
+                                    ]
+                                  ],
+                                ),
+                              ),
+                            ));
+                          }
+
+                          for (var r in remotes) {
+                            if (handledRemotes.contains(r.name)) continue;
+                            // Only show unhandled remotes if necessary?
+                            // User asked for "master -> remotes/master"
+                            // Maybe we don't need to list all other remotes if they are not relevant?
+                            // But usually we list all branches.
+                            // If remote is not in 'branches', we don't have color assignment from graph.
+                            // So just skip unhandled remotes to keep list clean, or show them?
+                            // User complaint was about missing mapping.
+                            // Let's keep showing them but maybe in grey?
+                            // But if they are not in 'branches', they are not in the graph, so why show legend?
+                            // The legend is for the graph.
+                            // If remote is not in graph, maybe we shouldn't show it here unless it's linked to a local branch.
+                            // So, I'll COMMENT OUT the unlinked remotes display for now,
+                            // or only show them if they are in 'branches' (which means they are in graph).
+                            // BUT 'branches' now only has locals (mostly).
+                            // So remotes are NOT in graph.
+                            // So we should NOT show them as independent items.
+                            continue;
+                          }
+
+                          return SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: SingleChildScrollView(
+                              scrollDirection: Axis.vertical,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: items,
+                              ),
+                            ),
+                          );
+                        }),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -4449,12 +4898,19 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             children: [
               Scaffold(
                 appBar: AppBar(
-                  title: const Text('LambdaEssay'),
+                  title: Text('LambdaEssay${_isDirty ? ' *' : ''}'),
                   backgroundColor: const Color(0xFFFFFFFF),
                   foregroundColor: const Color(0xFF6200EE),
                   elevation: 1,
                   shadowColor: Colors.black.withOpacity(0.1),
                   actions: [
+                    IconButton(
+                      icon: const Icon(Icons.save),
+                      tooltip: '保存追踪包 (Ctrl+S)',
+                      onPressed: _isDirty ? _saveProject : null, 
+                      color: _isDirty ? Colors.red : Colors.grey,
+                    ),
+                    const SizedBox(width: 16),
                     Row(
                       children: [
                         const Text('Server: ',
@@ -4510,55 +4966,82 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                                     ? Row(
                                         children: [
                                           Expanded(
-                                            child: _GraphView(
-                                              data: remoteData!,
-                                              repoPath: pathCtrl.text.trim(),
-                                              projectName: currentProjectName,
-                                              token: _token,
-                                              readOnly: true,
-                                              primaryBranchName:
-                                                  'origin/master',
-                                              customRowMapping:
-                                                  remoteRowMapping,
-                                              totalRows: totalRows,
-                                              transformationController:
-                                                  _sharedController,
-                                              uiScale: _uiScale,
-                                              rowHeight: _rowHeight,
-                                              laneWidth: _laneWidth,
+                                            child: Column(
+                                              children: [
+                                                Container(
+                                                  padding: const EdgeInsets.all(8.0),
+                                                  color: Colors.grey[200],
+                                                  width: double.infinity,
+                                                  alignment: Alignment.center,
+                                                  child: const Text(
+                                                    '远程文档仓库',
+                                                    style: TextStyle(fontWeight: FontWeight.bold),
+                                                  ),
+                                                ),
+                                                Expanded(
+                                                  child: _GraphView(
+                                                    data: remoteData!,
+                                                    repoPath: pathCtrl.text.trim(),
+                                                    projectName: currentProjectName,
+                                                    token: _token,
+                                                    readOnly: true,
+                                                    primaryBranchName: 'origin/master',
+                                                    customRowMapping: remoteRowMapping,
+                                                    totalRows: totalRows,
+                                                    transformationController: _sharedController,
+                                                    uiScale: _uiScale,
+                                                    rowHeight: _rowHeight,
+                                                    laneWidth: _laneWidth,
+                                                  ),
+                                                ),
+                                              ],
                                             ),
                                           ),
+                                          Container(
+                                            width: 1,
+                                            color: Colors.grey[300],
+                                          ),
                                           Expanded(
-                                            child: _GraphView(
-                                              key: _localGraphKey,
-                                              data: data!,
-                                              working: (data!.commits.isEmpty &&
-                                                      working != null)
-                                                  ? WorkingState(
-                                                      changed: true,
-                                                      baseId: working!.baseId)
-                                                  : working,
-                                              repoPath: pathCtrl.text.trim(),
-                                              projectName: currentProjectName,
-                                              token: _token,
-                                              onRefresh: _load,
-                                              onUpdate: _onUpdateRepoAction,
-                                              onMerge: _performMerge,
-                                              onFindIdentical: _findIdentical,
-                                              identicalCommitIds:
-                                                  identicalCommitIds,
-                                              onLoading: (v) =>
-                                                  setState(() => loading = v),
-                                              transformationController:
-                                                  _sharedController,
-                                              uiScale: _uiScale,
-                                              customRowMapping: localRowMapping,
-                                              totalRows: totalRows,
-                                              primaryBranchName: 'master',
-                                              onNodeAction:
-                                                  _showNodeActionDialog,
-                                              rowHeight: _rowHeight,
-                                              laneWidth: _laneWidth,
+                                            child: Column(
+                                              children: [
+                                                Container(
+                                                  padding: const EdgeInsets.all(8.0),
+                                                  color: Colors.grey[200],
+                                                  width: double.infinity,
+                                                  alignment: Alignment.center,
+                                                  child: const Text(
+                                                    '本地文档仓库',
+                                                    style: TextStyle(fontWeight: FontWeight.bold),
+                                                  ),
+                                                ),
+                                                Expanded(
+                                                  child: _GraphView(
+                                                    key: _localGraphKey,
+                                                    data: data!,
+                                                    working: (data!.commits.isEmpty && working != null)
+                                                        ? WorkingState(
+                                                            changed: true, baseId: working!.baseId)
+                                                        : working,
+                                                    repoPath: pathCtrl.text.trim(),
+                                                    projectName: currentProjectName,
+                                                    token: _token,
+                                                    onRefresh: _load,
+                                                    onUpdate: _onUpdateRepoAction,
+                                                    onMerge: _performMerge,
+                                                    onFindIdentical: _findIdentical,
+                                                    identicalCommitIds: identicalCommitIds,
+                                                    onLoading: (v) => setState(() => loading = v),
+                                                    transformationController: _sharedController,
+                                                    uiScale: _uiScale,
+                                                    customRowMapping: localRowMapping,
+                                                    totalRows: totalRows,
+                                                    primaryBranchName: 'master',
+                                                    onNodeAction: _showNodeActionDialog,
+                                                    rowHeight: _rowHeight,
+                                                    laneWidth: _laneWidth,
+                                                  ),
+                                                ),
+                                              ],
                                             ),
                                           ),
                                         ],
@@ -5844,113 +6327,6 @@ class _GraphViewState extends State<_GraphView>
                 ),
               ),
             ),
-            if (!widget.readOnly)
-              MovableResizablePanel(
-                offset: _branchPanelOffset,
-                size: _branchPanelSize,
-                parentSize: parentSize,
-                scale: widget.uiScale,
-                title: '当前分支与操作',
-                minSize: const Size(320, 88),
-                maxSize: const Size(1600, 600),
-                elevation: 4,
-                borderRadius: BorderRadius.circular(8),
-                contentPadding: const EdgeInsets.all(8),
-                backgroundColor: Colors.white,
-                onOffsetChanged: (v) => setState(() => _branchPanelOffset = v),
-                onSizeChanged: (v) => setState(() => _branchPanelSize = v),
-                isCollapsed: _branchPanelCollapsed,
-                onCollapseChanged: (v) {
-                  setState(() => _branchPanelCollapsed = v);
-                  _saveLayoutPrefs();
-                },
-                onInteractionEnd: _saveLayoutPrefs,
-                child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        '当前分支: ${Branch.decodeName(widget.data.currentBranch ?? "Unknown")}',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        softWrap: false,
-                      ),
-                      const SizedBox(height: 8),
-                      SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            ElevatedButton.icon(
-                              onPressed: _onCommit,
-                              icon: const Icon(Icons.upload),
-                              label: const Text(
-                                '提交更改',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                softWrap: false,
-                              ),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.green,
-                                foregroundColor: Colors.white,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            OutlinedButton.icon(
-                              onPressed: _onCreateBranch,
-                              icon: const Icon(Icons.add),
-                              label: const Text(
-                                '新建分支',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                softWrap: false,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            OutlinedButton.icon(
-                              onPressed: _onSwitchBranch,
-                              icon: const Icon(Icons.swap_horiz),
-                              label: const Text(
-                                '切换分支',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                softWrap: false,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            OutlinedButton.icon(
-                              onPressed: _onMergeButton,
-                              icon: const Icon(Icons.call_merge),
-                              label: const Text(
-                                '合并分支',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                softWrap: false,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            OutlinedButton.icon(
-                              onPressed: widget.onFindIdentical,
-                              icon: const Icon(Icons.find_in_page),
-                              label: const Text(
-                                '查找与当前本地文档相同的版本',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                softWrap: false,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
 
             if (_hovered != null && _hoverPos != null)
               Positioned(

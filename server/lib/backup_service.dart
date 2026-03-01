@@ -60,10 +60,49 @@ Future<Map<String, dynamic>> listBackupCommits(
   
   // Fix: If repoName is a full path, convert to hash key to match server logic
   String targetRepoName = repoName;
+
   if (p.isAbsolute(repoName) || repoName.contains(p.separator)) {
-     final norm = p.normalize(repoName).toLowerCase();
-     targetRepoName = md5.convert(utf8.encode(norm)).toString();
+     print("==========================================================");
+     print("Debug: resolving repoName: $repoName");
+     
+     // Method: Try to get remote URL directly from git config
+     // This is the most reliable way as it reflects the actual remote repo name
+     bool foundViaGit = false;
+     if (await Directory(repoName).exists() || await File(repoName).exists()) { // File check for bare repo/submodule file
+        try {
+           final res = await Process.run('git', ['remote', 'get-url', 'origin'], 
+              workingDirectory: repoName);
+           print("Debug: git remote get-url origin result: exitCode=${res.exitCode}, stdout=${res.stdout}");
+           
+           if (res.exitCode == 0) {
+              final url = (res.stdout as String).trim();
+              if (url.isNotEmpty) {
+                 // Extract repo name from URL
+                 // e.g., http://host:port/47f25aed...-document.git -> 47f25aed...-document
+                 final uri = Uri.parse(url);
+                 String lastSegment = uri.pathSegments.last;
+                 if (lastSegment.endsWith('.git')) {
+                    targetRepoName = lastSegment.substring(0, lastSegment.length - 4);
+                 } else {
+                    targetRepoName = lastSegment;
+                 }
+                 print("Debug: Found targetRepoName via git remote: $targetRepoName");
+                 foundViaGit = true;
+              }
+           }
+        } catch (e) {
+           print("Debug: Failed to get git remote url: $e");
+        }
+     }
+
+     if (!foundViaGit) {
+        // Fallback: MD5 hash of normalized path (legacy behavior)
+        final norm = p.normalize(repoName).toLowerCase();
+        targetRepoName = md5.convert(utf8.encode(norm)).toString();
+        print("Debug: Git remote not found, fallback MD5: $targetRepoName");
+     }
      print("Converted path '$repoName' to key '$targetRepoName'");
+     print("==========================================================");
   }
 
   final dirPath = _getBackupDir(targetRepoName);
@@ -172,11 +211,11 @@ Future<Map<String, dynamic>> listBackupCommits(
   }
 
   // Pre-cache all snapshots logic
-  print('Pre-caching snapshots for $repoName...');
-  final effectiveRepoPath = await _findEffectiveRepoPath(repoName);
-  await _precacheSnapshots(repoName, effectiveRepoPath);
+  print('Pre-caching snapshots for $targetRepoName...');
+  final effectiveRepoPath = await _findEffectiveRepoPath(targetRepoName);
+  await _precacheSnapshots(targetRepoName, effectiveRepoPath);
 
-  final commits = await _getCommitsFromDir(effectiveRepoPath, repoName);
+  final commits = await _getCommitsFromDir(effectiveRepoPath, targetRepoName);
   return {
     'commits': commits,
     'cacheHit': cacheHit,
@@ -378,18 +417,14 @@ Future<String> _findEffectiveRepoPath(String repoName) async {
   throw Exception('Parent repository not found in $repoDir');
 }
 
-Future<Map<String, dynamic>> getBackupChildGraph(
-    String repoName, String commitId) async {
-  // Use cached snapshot
+Future<String> resolveSnapshotGitPath(String repoName, String commitId) async {
   final snapshotPath = p.join(_checkoutBaseDir, repoName, commitId);
   final snapshotDir = Directory(snapshotPath);
 
   if (!await snapshotDir.exists()) {
-    throw Exception('Snapshot not found for $commitId. Try refreshing list.');
+    throw Exception('Snapshot not found for $commitId');
   }
 
-  // The snapshot directory contains the child repo contents directly
-  // It might be a normal repo (with .git) or bare-ish
   String gitDir = snapshotPath;
   
   // First check for inner bare repo, as it is the most specific content
@@ -422,7 +457,12 @@ Future<Map<String, dynamic>> getBackupChildGraph(
         }
       }
   }
+  return gitDir;
+}
 
+Future<Map<String, dynamic>> getBackupChildGraph(
+    String repoName, String commitId) async {
+  final gitDir = await resolveSnapshotGitPath(repoName, commitId);
   return (await _getGraphFromGitDir(gitDir)).toJson();
 }
 
@@ -519,49 +559,7 @@ Future<List<Branch>> _getBranchesFromGitDir(String gitDir) async {
 }
 
 Future<GraphResponse> getBackupGraph(String repoName, String commitId) async {
-  // Use cached snapshot
-  final snapshotPath = p.join(_checkoutBaseDir, repoName, commitId);
-  final snapshotDir = Directory(snapshotPath);
-
-  if (!await snapshotDir.exists()) {
-    throw Exception('Snapshot not found for $commitId. Try refreshing list.');
-  }
-
-  // The snapshot directory contains the child repo contents directly
-  // It might be a normal repo (with .git) or bare-ish
-  String gitDir = snapshotPath;
-  
-  // First check for inner bare repo, as it is the most specific content
-  bool foundInner = false;
-  final subs = snapshotDir.listSync().whereType<Directory>();
-  for (final s in subs) {
-      if (p.basename(s.path) == '.git') continue;
-      if (await File(p.join(s.path, 'HEAD')).exists() && 
-          await File(p.join(s.path, 'config')).exists() && 
-          await Directory(p.join(s.path, 'refs')).exists()) {
-        gitDir = s.path;
-        foundInner = true;
-        break;
-      }
-  }
-
-  if (!foundInner) {
-      if (await Directory(p.join(snapshotPath, '.git')).exists()) {
-        gitDir = p.join(snapshotPath, '.git');
-      } else {
-        // Check if it looks like a bare repo/embedded git dir
-        if (!await File(p.join(snapshotPath, 'HEAD')).exists()) {
-          // Maybe inside a subdir?
-          for (final s in subs) {
-            if (await Directory(p.join(s.path, '.git')).exists()) {
-              gitDir = p.join(s.path, '.git');
-              break;
-            }
-          }
-        }
-      }
-  }
-
+  final gitDir = await resolveSnapshotGitPath(repoName, commitId);
   return _getGraphFromGitDir(gitDir);
 }
 

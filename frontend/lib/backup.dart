@@ -32,10 +32,12 @@ class _BackupPageState extends State<BackupPage> {
   WebSocketChannel? _channel;
   double _downloadProgress = 0.0;
   String? _chainViewUrl;
+  String? _workspaceId;
 
   List<CommitNode> _commits = [];
   // Store comparison results for each backup commit vs local
   final Map<String, ComparisonData> _comparisons = {};
+  final Set<String> _failedComparisons = {};
   final TransformationController _sharedTc = TransformationController();
   double _uiScale = 1.0;
 
@@ -73,9 +75,34 @@ class _BackupPageState extends State<BackupPage> {
     }
   }
 
+  Future<void> _fetchWorkspaceId() async {
+     try {
+        final url = '$backupBase/track/info';
+        // Use widget.projectName as repoPath if widget.repoPath is empty, 
+        // though widget.repoPath should be passed correctly.
+        final path = widget.repoPath.isNotEmpty ? widget.repoPath : widget.projectName;
+        final resp = await http.post(
+          Uri.parse(url),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'repoPath': path}),
+        );
+        if (resp.statusCode == 200) {
+           final j = jsonDecode(resp.body);
+           final id = j['workspaceId'] as String?;
+           if (id != null) {
+              setState(() {
+                 _workspaceId = id;
+              });
+           }
+        }
+     } catch (e) {
+        debugPrint('Failed to fetch workspaceId: $e');
+     }
+  }
+
   String _getRemoteRepoName() {
     final rootPath = widget.projectName;
-    final rootHash = md5.convert(utf8.encode(p.normalize(rootPath).toLowerCase())).toString();
+    final rootHash = _workspaceId ?? md5.convert(utf8.encode(p.normalize(rootPath).toLowerCase())).toString();
     
     if (_selectedRepo == 'Root') {
        return rootHash; 
@@ -114,6 +141,9 @@ class _BackupPageState extends State<BackupPage> {
   }
 
   Future<void> _loadBackups() async {
+    if (_workspaceId == null) {
+       await _fetchWorkspaceId();
+    }
     final repo = _getRemoteRepoName();
     if (widget.projectName.isEmpty) {
       setState(() => _error = '项目名称为空');
@@ -124,6 +154,7 @@ class _BackupPageState extends State<BackupPage> {
       _error = null;
       _commits = [];
       _comparisons.clear();
+      _failedComparisons.clear();
       _downloadProgress = 0.0;
     });
     try {
@@ -160,6 +191,11 @@ class _BackupPageState extends State<BackupPage> {
       for (final c in commits) {
         _ensureComparison(repo, c.id).catchError((e) {
           debugPrint('Failed to load comparison for ${c.id}: $e');
+          if (mounted) {
+            setState(() {
+              _failedComparisons.add(c.id);
+            });
+          }
         });
       }
     } catch (e) {
@@ -499,6 +535,13 @@ class _BackupPageState extends State<BackupPage> {
                                           ),
                                         ),
                                       ],
+                                    )
+                                  else if (_failedComparisons.contains(sha))
+                                    const SizedBox(
+                                      height: 100,
+                                      child: Center(
+                                          child: Text('加载对比失败',
+                                              style: TextStyle(color: Colors.red))),
                                     )
                                   else
                                     const SizedBox(
