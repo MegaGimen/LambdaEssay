@@ -8,11 +8,11 @@ import 'package:shelf_router/shelf_router.dart';
 import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:path/path.dart' as p;
-import '../lib/git_service.dart';
-import '../lib/backup_service.dart';
-import '../lib/diff/repocmp.dart';
-import '../lib/sumdiff.dart';
-import '../lib/ai_diff_service.dart';
+import 'git_service.dart';
+import 'backup_service.dart';
+import 'diff/repocmp.dart';
+import 'sumdiff.dart';
+import 'ai_diff_service.dart';
 import 'package:http/http.dart' as http;
 
 import 'package:uuid/uuid.dart';
