@@ -302,277 +302,24 @@ Future<void> main(List<String> args) async {
   });
 
   // Word Plugin API: Trigger Save
-  router.post('/api/save', (Request req) async {
-    if (comSender == null) {
-      return _cors(Response(503,
-          body: jsonEncode({'error': 'COM not connected'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-
-    Map<String, dynamic> options = {};
-    try {
-      final body = await req.readAsString();
-      if (body.isNotEmpty) {
-        final data = jsonDecode(body) as Map<String, dynamic>;
-        if (data['options'] != null) {
-          options = data['options'] as Map<String, dynamic>;
-        }
-      }
-    } catch (_) {}
-
-    final success = await comSender!({'action': 'save', 'options': options});
-
-    if (success) {
-      return _cors(Response.ok(jsonEncode({'message': 'Save command sent'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    } else {
-      return _cors(Response(500,
-          body: jsonEncode({'error': 'Save failed or timed out'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
+  router.post('/api/save', _handleApiSave);
 
   // Word Plugin API: Replace Document
-  router.post('/api/document', (Request req) async {
-    if (comSender == null) {
-      return _cors(Response(503,
-          body: jsonEncode({'error': 'COM not connected'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
+  router.post('/api/document', _handleApiDocument);
 
-    String? content;
-    String type = 'text';
-    Map<String, dynamic> options = {};
-
-    final contentType = req.headers['content-type'] ?? '';
-
-    if (contentType.toLowerCase().contains('application/json')) {
-      final body = await req.readAsString();
-      try {
-        final data = jsonDecode(body) as Map<String, dynamic>;
-        content = data['content'] as String?;
-        type = (data['type'] as String?) ?? 'text';
-        if (data['options'] != null) {
-          if (data['options'] is String) {
-            try {
-              options = jsonDecode(data['options']) as Map<String, dynamic>;
-            } catch (_) {}
-          } else {
-            options = data['options'] as Map<String, dynamic>;
-          }
-        }
-      } catch (e) {
-        return _cors(Response(400,
-            body: jsonEncode({'error': 'Invalid JSON'}),
-            headers: {'Content-Type': 'application/json; charset=utf-8'}));
-      }
-    } else if (contentType.toLowerCase().contains('multipart/form-data')) {
-      final boundary = _boundaryOf(contentType);
-      if (boundary == null) {
-        return _cors(Response(400,
-            body: jsonEncode({'error': 'Invalid multipart boundary'}),
-            headers: {'Content-Type': 'application/json; charset=utf-8'}));
-      }
-      final bytesBuilder = BytesBuilder();
-      await for (final chunk in req.read()) {
-        bytesBuilder.add(chunk);
-      }
-      final bodyBytes = bytesBuilder.takeBytes();
-      final parts = _parseMultipart(bodyBytes, boundary);
-
-      final filePart = parts.firstWhere(
-        (p) => (p.name ?? '') == 'file',
-        orElse: () => _MultipartPart(null, null, Uint8List(0)),
-      );
-
-      if (filePart.data.isNotEmpty) {
-        content = base64Encode(filePart.data);
-        type = 'base64';
-      } else {
-        // Try to find content in other parts if not file
-        final contentPart = parts.firstWhere(
-          (p) => (p.name ?? '') == 'content',
-          orElse: () => _MultipartPart(null, null, Uint8List(0)),
-        );
-        if (contentPart.data.isNotEmpty) {
-          content = utf8.decode(contentPart.data);
-        }
-      }
-
-      // Parse type if provided in form
-      final typePart = parts.firstWhere(
-        (p) => (p.name ?? '') == 'type',
-        orElse: () => _MultipartPart(null, null, Uint8List(0)),
-      );
-      if (typePart.data.isNotEmpty) {
-        type = utf8.decode(typePart.data);
-      }
-
-      // Parse options
-      final optionsPart = parts.firstWhere(
-        (p) => (p.name ?? '') == 'options',
-        orElse: () => _MultipartPart(null, null, Uint8List(0)),
-      );
-      if (optionsPart.data.isNotEmpty) {
-        try {
-          options = jsonDecode(utf8.decode(optionsPart.data));
-        } catch (e) {
-          print('Failed to parse options: $e');
-        }
-      }
-    } else {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'Unsupported Content-Type'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-
-    if (content == null || content.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'Content is required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-
-    final success = await comSender!({
-      'action': 'replace',
-      'payload': {'content': content, 'type': type, 'options': options}
-    });
-
-    if (success) {
-      return _cors(Response.ok(jsonEncode({'message': 'Replace command sent'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    } else {
-      return _cors(Response(500,
-          body: jsonEncode({'error': 'Replace failed or timed out'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-
-  router.post('/reset', (Request req) async {
-    clearCache();
-    return _cors(Response.ok(jsonEncode({'status': 'reset'}), headers: {
-      'Content-Type': 'application/json; charset=utf-8',
-    }));
-  });
+  router.post('/reset', _handleReset);
 
   router.options('/<ignored|.*>', _optionsHandler);
 
-  router.post('/fetch', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoPath = _sanitizePath(data['repoPath'] as String?);
-    if (repoPath.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'repoPath required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    final normalized = p.normalize(repoPath);
-    try {
-      await fetchAll(normalized);
-      return _cors(Response.ok(jsonEncode({'status': 'ok'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
+  router.post('/fetch', _handleFetch);
 
-  router.post('/project/delete', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    var packagePath = _sanitizePath(data['packagePath'] as String?).trim();
-    if (packagePath.isEmpty) {
-      packagePath = _sanitizePath(data['gitdocxPath'] as String?);
-    }
-    final targetPath =
-        _sanitizePath(data['targetPath'] as String?).trim().isNotEmpty
-            ? _sanitizePath(data['targetPath'] as String?)
-            : _sanitizePath(data['trackingPath'] as String?);
+  router.post('/project/delete', _handleProjectDelete);
 
-    if (packagePath.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'No packagePath'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      await deleteProject(packagePath, targetPath);
-      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
+  router.post('/project/dirty_status', _handleProjectDirtyStatus);
 
-  router.post('/project/dirty_status', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final packagePath = _sanitizePath(data['packagePath'] as String?);
+  router.post('/project/save', _handleProjectSave);
 
-    if (packagePath.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'packagePath required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      final isDirty = await checkDirty(packagePath);
-      return _cors(Response.ok(jsonEncode({'isDirty': isDirty}), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-
-  router.post('/project/save', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final packagePath = _sanitizePath(data['packagePath'] as String?);
-
-    if (packagePath.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'packagePath required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      await saveTrackingProject(packagePath);
-      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-
-  router.post('/project/save_as', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final packagePath = _sanitizePath(data['packagePath'] as String?);
-    final newPackagePath = _sanitizePath(data['newPackagePath'] as String?);
-
-    if (packagePath.isEmpty || newPackagePath.isEmpty) {
-      return _cors(Response(400,
-          body:
-              jsonEncode({'error': 'packagePath and newPackagePath required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      await saveTrackingProject(packagePath, newPackagePath);
-      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
+  router.post('/project/save_as', _handleProjectSaveAs);
 
   router.get('/project/list', (Request req) async {
     try {
@@ -587,521 +334,38 @@ Future<void> main(List<String> args) async {
     }
   });
 
-  router.post('/project/copy', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final packagePath = _sanitizePath(data['packagePath'] as String?);
-    final targetDir = _sanitizePath(data['targetDir'] as String?);
-    final sourcePath = _sanitizePath(data['sourcePath'] as String?);
+  router.post('/project/copy', _handleProjectCopy);
 
-    if (packagePath.isEmpty || targetDir.isEmpty || sourcePath.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode(
-              {'error': 'packagePath, targetDir, sourcePath required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
+  router.post('/branches', _handleBranches);
 
-    try {
-      await importTrackingSource(packagePath, targetDir, sourcePath);
-      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
+  router.post('/graph', _handleGraph);
 
-  router.post('/branches', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoPath = _sanitizePath(data['repoPath'] as String?);
-    if (repoPath.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'repoPath required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    final normalized = p.normalize(repoPath);
-    final dir = Directory(normalized);
-    if (!dir.existsSync()) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'path not found'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    if (!isGitRepo(normalized)) {
-      print('Debug: /branches - Path is not a git repo: $normalized');
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'not a git repo'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    print('Debug: /branches - Fetching branches for $normalized');
-    try {
-      final branches = await getBranches(normalized);
-      return _cors(Response.ok(
-          jsonEncode({'branches': branches.map((b) => b.toJson()).toList()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
+  router.post('/remote_graph', _handleRemoteGraph);
 
-  router.post('/graph', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoPath = _sanitizePath(data['repoPath'] as String?);
-    final limit = data['limit'] is int ? data['limit'] as int : null;
-    if (repoPath.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'repoPath required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    final normalized = p.normalize(repoPath);
-    final dir = Directory(normalized);
-    if (!dir.existsSync()) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'path not found'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    if (!isGitRepo(normalized)) {
-      print('Debug: /graph - Path is not a git repo: $normalized');
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'not a git repo'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    print('Debug: /graph - Fetching graph for $normalized (limit: $limit)');
-    try {
-      final resp = await getGraph(normalized, limit: limit);
-      return _cors(Response.ok(jsonEncode(resp.toJson()),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
+  router.post('/compare', _handleCompare);
 
-  router.post('/remote_graph', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoPath = _sanitizePath(data['repoPath'] as String?);
-    final limit = data['limit'] is int ? data['limit'] as int : null;
-    if (repoPath.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'repoPath required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    final normalized = p.normalize(repoPath);
-    try {
-      // Fetch remote graph: includeLocal=false, remoteNames=[] (all remotes)
-      final resp = await getGraph(normalized,
-          limit: limit, includeLocal: false, remoteNames: []);
-      return _cors(Response.ok(jsonEncode(resp.toJson()),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
+  router.post('/summarizeDiff', _handleSummarizeDiff);
 
-  router.post('/compare', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoPath = _sanitizePath(data['repoPath'] as String?);
-    final c1 = data['commit1'] as String?;
-    final c2 = data['commit2'] as String?;
+  router.post('/summarize_commit', _handleSummarizeCommit);
 
-    if (repoPath.isEmpty || c1 == null || c2 == null) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'repoPath, commit1, commit2 required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      final pdf = await compareCommits(repoPath, c1, c2);
-      return _cors(Response.ok(pdf, headers: {
-        'Content-Type': 'application/pdf',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
+  router.post('/backup/graph', _handleBackupGraph);
 
-  router.post('/summarizeDiff', (Request req) async {
-    try {
-      final body = await req.readAsString();
-      final data = jsonDecode(body) as Map<String, dynamic>;
-      final beforePath = _sanitizePath(data['beforePath'] as String?);
-      final afterPath = _sanitizePath(data['afterPath'] as String?);
+  router.post('/compare_repos', _handleCompareRepos);
 
-      if (beforePath.isEmpty || afterPath.isEmpty) {
-        return _cors(Response(400,
-            body: jsonEncode({'error': 'beforePath and afterPath required'}),
-            headers: {'Content-Type': 'application/json; charset=utf-8'}));
-      }
+  router.post('/backup/preview', _handleBackupPreview);
 
-      final result = await summarizeDiff(beforePath, afterPath);
-      return _cors(Response.ok(
-        jsonEncode({'output': result}),
-        headers: {'Content-Type': 'application/json; charset=utf-8'},
-      ));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
+  router.post('/commit', _handleCommit);
 
-  router.post('/summarize_commit', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoName = (data['repoName'] as String?)?.trim() ?? '';
-    final commitId = (data['commitId'] as String?)?.trim() ?? '';
+  router.post('/branch/create', _handleBranchCreate);
 
-    if (repoName.isEmpty || commitId.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'repoName, commitId required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
+  router.post('/branch/switch', _handleBranchSwitch);
 
-    Directory? tempDir;
-    try {
-      final appData = Platform.environment['APPDATA'];
-      if (appData == null) throw Exception('APPDATA not found');
-      final repoPath = p.join(appData, 'gitdocx', repoName);
+  router.post('/compare_working', _handleCompareWorking);
 
-      if (!await Directory(repoPath).exists()) {
-        throw Exception('Repo $repoName not found at $repoPath');
-      }
-
-      // Find parent
-      final parentRes = await Process.run(
-          'git', ['log', '-1', '--format=%P', commitId],
-          workingDirectory: repoPath);
-
-      if (parentRes.exitCode != 0)
-        throw Exception('Git log failed: ${parentRes.stderr}');
-
-      final parentId = (parentRes.stdout as String)
-          .trim()
-          .split(' ')
-          .firstWhere((e) => e.isNotEmpty, orElse: () => '');
-
-      tempDir = await Directory.systemTemp.createTemp('sum_commit_');
-      final afterDocx = p.join(tempDir.path, 'after.docx');
-
-      // Extract commit docx
-      final afterRes = await Process.run(
-          'git', ['show', '$commitId:content.docx'],
-          workingDirectory: repoPath, stdoutEncoding: null);
-
-      if (afterRes.exitCode != 0) {
-        // Maybe file didn't exist in that commit?
-        // Check if error is "pathspec ... did not match"
-        final err = utf8.decode(afterRes.stderr as List<int>);
-        if (err.contains('did not match')) {
-          return _cors(Response.ok(
-            jsonEncode(
-                {'output': 'File content.docx not found in this commit'}),
-            headers: {'Content-Type': 'application/json; charset=utf-8'},
-          ));
-        }
-        throw Exception('Git show failed for current: $err');
-      }
-      await File(afterDocx).writeAsBytes(afterRes.stdout as List<int>);
-
-      String result;
-      if (parentId.isEmpty) {
-        result = "Initial commit (no parent)";
-      } else {
-        final beforeDocx = p.join(tempDir.path, 'before.docx');
-        final beforeRes = await Process.run(
-            'git', ['show', '$parentId:content.docx'],
-            workingDirectory: repoPath, stdoutEncoding: null);
-
-        if (beforeRes.exitCode != 0) {
-          // Parent might not have the file
-          // We can treat it as empty or new file
-          result = "New file created (parent did not have content.docx)";
-        } else {
-          await File(beforeDocx).writeAsBytes(beforeRes.stdout as List<int>);
-          result = await summarizeDiff(beforeDocx, afterDocx);
-        }
-      }
-
-      return _cors(Response.ok(
-        jsonEncode({'output': result}),
-        headers: {'Content-Type': 'application/json; charset=utf-8'},
-      ));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    } finally {
-      if (tempDir != null) {
-        try {
-          await tempDir.delete(recursive: true);
-        } catch (_) {}
-      }
-    }
-  });
-
-  router.post('/backup/graph', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoName = data['repoName'] as String?;
-    final commitId = data['commitId'] as String?;
-    if (repoName == null || commitId == null) {
-      return _cors(Response(400, body: 'Repo name and commitId required'));
-    }
-    try {
-      final graph = await getBackupChildGraph(repoName, commitId);
-      return _cors(Response.ok(jsonEncode(graph)));
-    } catch (e) {
-      return _cors(Response(500, body: e.toString()));
-    }
-  });
-
-  router.post('/compare_repos', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoName = (data['repoName'] as String?)?.trim() ?? '';
-    final commitA = data['commitA'] as String?;
-    final commitB = data['commitB'] as String?;
-    final localPath = data['localPath'] as String?;
-
-    if (repoName.isEmpty || commitA == null || commitB == null) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'repoName, commitA, commitB required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-
-    try {
-      final result =
-          await compareReposWithLocal(repoName, localPath, commitA, commitB);
-      return _cors(Response.ok(jsonEncode(result.toJson()), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      var stackTrace = StackTrace.current;
-      print(stackTrace);
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-
-  router.post('/backup/preview', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoName = data['repoName'] as String?;
-    final commitId = data['commitId'] as String?;
-    if (repoName == null || commitId == null) {
-      return _cors(Response(400, body: 'Repo name and commitId required'));
-    }
-    try {
-      final bytes = await previewBackupChildDoc(repoName, commitId);
-      return _cors(
-          Response.ok(bytes, headers: {'Content-Type': 'application/pdf'}));
-    } catch (e) {
-      return _cors(Response(500, body: e.toString()));
-    }
-  });
-
-  router.post('/commit', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoPath = _sanitizePath(data['repoPath'] as String?);
-    final author = (data['author'] as String?) ?? '';
-    final message = (data['message'] as String?) ?? '';
-    if (repoPath.isEmpty || author.isEmpty || message.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'repoPath, author, message required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-
-    // Attempt to save Word document if COM is connected
-    if (comSender != null) {
-      print('Executing Word save before commit...');
-      await comSender!({'action': 'save'});
-      //if (!saved) {
-      //  return _cors(Response(500,
-      //      body: jsonEncode({'error': 'Word save failed. Commit aborted.'}),
-      //      headers: {'Content-Type': 'application/json; charset=utf-8'}));
-      //}
-      //即使没有保存成功，也继续提交
-      print('Word save verified.');
-    }
-
-    try {
-      await commitChanges(repoPath, author, message);
-      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-
-  router.post('/branch/create', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoPath = _sanitizePath(data['repoPath'] as String?);
-    final branchName = (data['branchName'] as String?)?.trim() ?? '';
-    if (repoPath.isEmpty || branchName.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'repoPath, branchName required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      await createBranch(repoPath, branchName);
-      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-
-  router.post('/branch/switch', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final projectName = (data['projectName'] as String?)?.trim() ?? '';
-    final branchName = (data['branchName'] as String?)?.trim() ?? '';
-    final repoPath = (data['repoPath'] as String?)?.trim() ?? '';
-
-    if (branchName.contains(projectName + "/")) {
-      //拒绝切换远程分支
-      return _cors(Response(400,
-          body: jsonEncode({'error': '禁止切换到远程分支'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    if (projectName.isEmpty || branchName.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'projectName, branchName required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      final sw = Stopwatch()..start();
-      await switchBranch(projectName, branchName, repoPath: repoPath.isNotEmpty ? repoPath : null);
-      sw.stop();
-      print('[Perf][Server][SwitchBranch] Total: ${sw.elapsedMilliseconds}ms');
-      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-
-  router.post('/compare_working', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoPath = _sanitizePath(data['repoPath'] as String?);
-    if (repoPath.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'repoPath required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      final pdf = await compareWorking(repoPath);
-      return _cors(Response.ok(pdf, headers: {
-        'Content-Type': 'application/pdf',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-
-  router.post('/preview', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoPath = _sanitizePath(data['repoPath'] as String?);
-    final commitId = data['commitId'] as String?;
-
-    if (repoPath.isEmpty || commitId == null) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'repoPath, commitId required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      final pdf = await previewVersion(repoPath, commitId);
-      return _cors(Response.ok(pdf, headers: {
-        'Content-Type': 'application/pdf',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
+  router.post('/preview', _handlePreview);
 
   // 🔥 新增：AI 对比端点
-  router.post('/compare_ai', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-
-    final repoPath = _sanitizePath(data['repoPath'] as String?);
-    final commit1 = (data['commit1'] as String? ?? '').trim();
-    final commit2 = (data['commit2'] as String? ?? '').trim();
-    final docType = (data['docType'] as String? ?? 'word').trim();
-
-    if (repoPath.isEmpty || commit1.isEmpty || commit2.isEmpty) {
-      return _cors(Response.badRequest(
-        body: jsonEncode({'error': 'repoPath, commit1, commit2 不能为空'}),
-        headers: {'Content-Type': 'application/json; charset=utf-8'},
-      ));
-    }
-
-    try {
-      print('[API] AI对比请求: $commit1 vs $commit2 ($docType)');
-
-      // 🔥 优化：优先检查本地缓存，避免无需的文件提取
-      final cachedResult = await AIDiffService.checkLocalCache(commit1, commit2, docType);
-      Map<String, dynamic> result;
-
-      if (cachedResult != null) {
-        result = cachedResult;
-      } else {
-        result = await compareCommitsWithAI(
-          repoPath,
-          commit1,
-          commit2,
-          docType: docType,
-        );
-      }
-
-      return _cors(Response.ok(
-          jsonEncode({
-            'success': true,
-            'commit1': commit1,
-            'commit2': commit2,
-            'docType': docType,
-            'result': result,
-          }),
-          headers: {
-            'Content-Type': 'application/json; charset=utf-8',
-          }));
-    } catch (e) {
-      print('[API] AI对比失败: $e');
-      return _cors(Response.internalServerError(
-        body: jsonEncode({'error': e.toString()}),
-        headers: {'Content-Type': 'application/json; charset=utf-8'},
-      ));
-    }
-  });
+  router.post('/compare_ai', _handleCompareAi);
 
   // 🔥 新增：AI 缓存统计端点
   router.get('/ai_cache/stats', (Request req) async {
@@ -1138,340 +402,29 @@ Future<void> main(List<String> args) async {
     }
   });
 
-  router.post('/preview_cache', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoPath = _sanitizePath(data['repoPath'] as String?);
+  router.post('/preview_cache', _handlePreviewCache);
 
-    final ids = <String>{};
-    if (data['commitIds'] != null) {
-      for (final item in (data['commitIds'] as List)) {
-        if (item is String && item.trim().isNotEmpty) {
-          ids.add(item.trim());
-        }
-      }
-    }
-    if (data['commitId'] != null) {
-      final single = data['commitId'] as String;
-      if (single.trim().isNotEmpty) {
-        ids.add(single.trim());
-      }
-    }
+  router.post('/rollback', _handleRollback);
 
-    if (repoPath.isEmpty || ids.isEmpty) {
-      return _cors(Response(400,
-          body:
-              jsonEncode({'error': 'repoPath and commitId/commitIds required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
+  router.post('/convert', _handleConvert);
 
-    // Process all IDs asynchronously
-    unawaited(() async {
-      for (final id in ids) {
-        // ensureCommitPreviewAssets handles concurrency with semaphore internally
-        await ensureCommitPreviewAssets(repoPath, id);
-        // Yield to event loop and give some breathing room
-        await Future.delayed(const Duration(milliseconds: 100));
-      }
-    }());
+  router.post('/track/create', _handleTrackCreate);
 
-    return _cors(Response.ok(
-        jsonEncode({'status': 'scheduled', 'count': ids.length}),
-        headers: {
-          'Content-Type': 'application/json; charset=utf-8',
-        }));
-  });
+  router.post('/restore_docx', _handleRestoreDocx);
 
-  router.post('/rollback', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final projectName = (data['projectName'] as String?)?.trim() ?? '';
-    final commitId = data['commitId'] as String?;
+  router.post('/track/open', _handleTrackOpen);
 
-    if (projectName.isEmpty || commitId == null) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'projectName, commitId required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      await rollbackVersion(projectName, commitId);
-      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
+  router.post('/track/expand', _handleTrackExpand);
 
-  router.post('/convert', (Request req) async {
-    final ct = req.headers['content-type'] ?? '';
-    final b = _boundaryOf(ct);
-    if (b == null) {
-      return _cors(Response(400,
-          body:
-              jsonEncode({'error': 'content-type must be multipart/form-data'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    final bytesBuilder = BytesBuilder();
-    await for (final chunk in req.read()) {
-      bytesBuilder.add(chunk);
-    }
-    final body = bytesBuilder.takeBytes();
-    final parts = _parseMultipart(body, b);
-    final filePart = parts.firstWhere(
-        (p) => (p.name ?? '').toLowerCase() == 'file',
-        orElse: () => _MultipartPart(null, null, Uint8List(0)));
-    if (filePart.name == null || filePart.data.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'file part missing'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    final tmp = await Directory.systemTemp.createTemp('docx_convert_');
-    try {
-      final uploadName = (filePart.filename?.trim().isNotEmpty == true)
-          ? filePart.filename!
-          : 'upload.docx';
-      final inPath = p.join(tmp.path, uploadName);
-      await File(inPath).writeAsBytes(filePart.data, flush: true);
-      final scriptPath = p.fromUri(Platform.script);
-      final repoRoot = p.dirname(p.dirname(p.dirname(scriptPath)));
-      final soffice = p.join(repoRoot, 'frontend', 'LibreOfficePortable', 'App',
-          'libreoffice', 'program', 'soffice.exe');
-      final outDir = tmp.path;
-      final result = await Process.run(soffice,
-          ['--headless', '--convert-to', 'pdf', '--outdir', outDir, inPath]);
-      final outName = p.setExtension(p.basename(inPath), '.pdf');
-      final outPath = p.join(outDir, outName);
-      if (result.exitCode != 0 || !File(outPath).existsSync()) {
-        return _cors(Response(500,
-            body: jsonEncode({
-              'error': 'convert failed',
-              'code': result.exitCode,
-              'stderr': (result.stderr ?? '').toString()
-            }),
-            headers: {'Content-Type': 'application/json; charset=utf-8'}));
-      }
-      final pdf = await File(outPath).readAsBytes();
-      return _cors(Response.ok(pdf, headers: {
-        'Content-Type': 'application/pdf',
-      }));
-    } finally {
-      try {
-        if (tmp.existsSync()) {
-          tmp.deleteSync(recursive: true);
-        }
-      } catch (_) {}
-    }
-  });
+  router.post('/track/repos', _handleTrackRepos);
 
-  router.post('/track/create', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final name = (data['packagePath'] as String?)?.trim() ??
-        (data['name'] as String?)?.trim() ??
-        '';
-    final docxPath = data['docxPath'] as String?;
-    if (name.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'packagePath required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      final resp = await createTrackingProject(name, docxPath);
-      return _cors(Response.ok(jsonEncode(resp), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
+  router.post('/track/update', _handleTrackUpdate);
 
-  router.post('/restore_docx', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoName = (data['repoName'] as String?)?.trim() ?? '';
+  router.post('/track/sync_folder', _handleTrackSyncFolder);
 
-    if (repoName.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'repoName required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      await restoreDocx(repoName);
-      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
+  router.post('/track/find_identical', _handleTrackFindIdentical);
 
-  router.post('/track/open', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final name = (data['packagePath'] as String?)?.trim() ??
-        (data['name'] as String?)?.trim() ??
-        '';
-    if (name.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'packagePath required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      final resp = await openTrackingProject(name);
-      return _cors(Response.ok(jsonEncode(resp), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-
-  router.post('/track/expand', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final filePath = (data['filePath'] as String?)?.trim() ?? '';
-
-    if (filePath.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'filePath required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      final resp = await expandLocalTrackingPackage(filePath);
-      return _cors(Response.ok(jsonEncode(resp), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-
-  router.post('/track/repos', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final name = (data['packagePath'] as String?)?.trim() ??
-        (data['name'] as String?)?.trim() ??
-        '';
-    if (name.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'packagePath required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      final repos = await listProjectRepos(name);
-      return _cors(Response.ok(jsonEncode({'repos': repos}), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-
-  router.post('/track/update', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final name = (data['packagePath'] as String?)?.trim() ??
-        (data['name'] as String?)?.trim() ??
-        '';
-    final opIdentical = (data['opIdentical'] as bool?) ?? false;
-    final newDocxPath = data['newDocxPath'] as String?;
-    final repoPath = data['repoPath'] as String?;
-    final docxPath = data['docxPath'] as String?;
-    if (name.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'packagePath required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      final resp = await updateTrackingProject(name, opIdentical,
-          newDocxPath: newDocxPath, repoPath: repoPath, docxPath: docxPath);
-      return _cors(Response.ok(jsonEncode(resp), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-
-  router.post('/track/sync_folder', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final name = (data['packagePath'] as String?)?.trim() ??
-        (data['name'] as String?)?.trim() ??
-        '';
-    if (name.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'packagePath required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      await syncFolderProject(name);
-      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-
-  router.post('/track/find_identical', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final name = (data['name'] as String?)?.trim() ?? '';
-    if (name.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'name required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      final commitIds = await findIdenticalCommit(name);
-      return _cors(Response.ok(jsonEncode({'commitIds': commitIds}), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-
-  router.post('/track/info', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoPath = _sanitizePath(data['repoPath'] as String?);
-    if (repoPath.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'repoPath required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      final info = await getTrackingInfo(repoPath);
-      return _cors(Response.ok(jsonEncode(info ?? {}), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
+  router.post('/track/info', _handleTrackInfo);
 
   router.get('/track/list', (Request req) async {
     try {
@@ -1486,779 +439,48 @@ Future<void> main(List<String> args) async {
     }
   });
 
-  router.post('/reset_branch', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final projectName = (data['projectName'] as String?)?.trim() ?? '';
-    final commitId = data['commitId'] as String?;
+  router.post('/reset_branch', _handleResetBranch);
 
-    if (projectName.isEmpty || commitId == null) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'projectName, commitId required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      await resetBranch(projectName, commitId);
-      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
+  router.post('/push', _handlePush);
 
-  router.post('/push', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoPath = _sanitizePath(data['repoPath'] as String?);
-    final username = (data['username'] as String?)?.trim() ?? '';
-    final token = (data['token'] as String?)?.trim() ?? '';
-    final force = data['force'] == true;
-    final branch = (data['branch'] as String?)?.trim();
+  router.post('/remote/list', _handleRemoteList);
 
-    if (repoPath.isEmpty || username.isEmpty || token.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'repoPath, username, token required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      await pushToRemote(repoPath, username, token, force: force, branch: branch);
-      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
+  router.post('/remote/add', _handleRemoteAdd);
 
-  router.post('/remote/list', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final token = data['token'] as String?;
-    final repoPath = data['repoPath'] as String?;
+  router.post('/get_remotes', _handleGetRemotes);
 
-    if (token == null || token.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'token required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
+  router.post('/request_code', _handleRequestCode);
 
-    try {
-      final giteaUrl = 'http://47.242.109.145:3000';
-      final headers = {
-        'Authorization': 'token $token',
-        'Content-Type': 'application/json',
-      };
+  router.post('/register', _handleRegister);
 
-      // Fetch owned repos
-      final respOwned = await http.get(
-        Uri.parse('$giteaUrl/api/v1/user/repos'),
-        headers: headers,
-      );
+  router.post('/login', _handleLogin);
 
-      // Fetch member repos
-      final respMember = await http.get(
-        Uri.parse('$giteaUrl/api/v1/user/repos?type=member'),
-        headers: headers,
-      );
+  router.post('/create_user', _handleCreateUser);
 
-      if (respOwned.statusCode == 200 && respMember.statusCode == 200) {
-        final owned = jsonDecode(respOwned.body) as List;
-        final member = jsonDecode(respMember.body) as List;
+  router.post('/share', _handleShare);
 
-        final allRepos = [...owned, ...member];
+  router.post('/pull_rebase', _handlePullRebase);
 
-        final uniqueRepos = <String, Map<String, dynamic>>{};
-        for (final r in allRepos) {
-          final name = (r['name'] as String).toLowerCase();
-          uniqueRepos[name] = r;
-        }
+  router.post('/fork_local', _handleForkLocal);
 
-        final filteredRepoNames = <String>[];
+  router.post('/pull/cancel', _handlePullCancel);
 
-        // Filter by last commit message
-        await Future.wait(uniqueRepos.values.map((repo) async {
-          try {
-            final ownerObj = repo['owner'];
-            if (ownerObj == null) return;
+  router.post('/pull/preview', _handlePullPreview);
 
-            final ownerName = ownerObj['login'];
-            final repoName = repo['name'];
-            // Prefer full_name if available, otherwise construct it
-            final fullName = repo['full_name'] ?? '$ownerName/$repoName';
+  router.post('/check_pull_status', _handleCheckPullStatus);
 
-            final commitResp = await http.get(
-              Uri.parse('$giteaUrl/api/v1/repos/$fullName/commits?limit=1'),
-              headers: headers,
-            );
+  router.post('/summarizeDiff', _handleSummarizeDiff);
 
-            if (commitResp.statusCode == 200) {
-              final commits = jsonDecode(commitResp.body) as List;
-              if (commits.isNotEmpty) {
-                final msg = (commits[0]['commit']['message'] as String).trim();
-                if (msg.contains('[folder project213897]')) {
-                  filteredRepoNames.add((repoName as String).toLowerCase());
-                }
-              }
-            } else {
-              print(
-                  'Failed to fetch commits for $fullName: ${commitResp.statusCode}');
-            }
-          } catch (e) {
-            print('Error filtering repo ${repo['name']}: $e');
-          }
-        }));
+  router.post('/summarize_commit', _handleSummarizeCommit);
 
-        // Unify: Return all repositories without filtering by folder_meta.json
-        final results = filteredRepoNames.map((name) {
-          return {'name': name, 'isFolder': true};
-        }).toList();
+  router.post('/pull', _handlePull);
 
-        // If repoPath is provided, add remotes (logic remains)
-        if (repoPath != null && repoPath.isNotEmpty) {
-          for (final r in uniqueRepos.values) {
-            final name = (r['name'] as String).toLowerCase();
-            final cloneUrl = r['clone_url'] as String?;
-            if (cloneUrl != null) {
-              await addRemote(repoPath, name, cloneUrl);
-            }
-          }
-        }
+  router.post('/prepare_merge', _handlePrepareMerge);
 
-        return _cors(Response.ok(jsonEncode(results), headers: {
-          'Content-Type': 'application/json; charset=utf-8',
-        }));
-      } else if (respOwned.statusCode != 200) {
-        return _cors(Response(respOwned.statusCode,
-            body: jsonEncode({
-              'error': 'Failed to fetch owned repos',
-              'details': respOwned.body
-            }),
-            headers: {'Content-Type': 'application/json; charset=utf-8'}));
-      } else {
-        return _cors(Response(respMember.statusCode,
-            body: jsonEncode({
-              'error': 'Failed to fetch member repos',
-              'details': respMember.body
-            }),
-            headers: {'Content-Type': 'application/json; charset=utf-8'}));
-      }
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': 'Remote list failed: $e'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
+  router.post('/complete_merge', _handleCompleteMerge);
 
-  router.post('/remote/add', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoPath = _sanitizePath(data['repoPath'] as String?);
-    final name = (data['name'] as String?)?.trim() ?? '';
-    final url = (data['url'] as String?)?.trim() ?? '';
-
-    if (repoPath.isEmpty || name.isEmpty || url.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'repoPath, name, url required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      await addRemote(repoPath, name, url);
-      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-
-  router.post('/get_remotes', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoPath = _sanitizePath(data['repoPath'] as String?);
-
-    if (repoPath.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'repoPath required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      final remotes = await getRemotes(repoPath);
-      return _cors(Response.ok(jsonEncode({'remotes': remotes}), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-
-  router.post('/request_code', (Request req) async {
-    try {
-      final body = await req.readAsString();
-      final url = Uri.parse('http://47.242.109.145:3920/request_code');
-      final resp = await http.post(
-        url,
-        headers: {'Content-Type': 'application/json'},
-        body: body,
-      );
-      return _cors(Response(resp.statusCode,
-          body: resp.body,
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': 'Proxy failed: $e'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-
-  router.post('/register', (Request req) async {
-    try {
-      final body = await req.readAsString();
-      final url = Uri.parse('http://47.242.109.145:3920/register');
-      final resp = await http.post(
-        url,
-        headers: {'Content-Type': 'application/json'},
-        body: body,
-      );
-      return _cors(Response(resp.statusCode,
-          body: resp.body,
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': 'Proxy failed: $e'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-
-  router.post('/login', (Request req) async {
-    try {
-      final body = await req.readAsString();
-      final url = Uri.parse('http://47.242.109.145:3920/login');
-      final resp = await http.post(
-        url,
-        headers: {'Content-Type': 'application/json'},
-        body: body,
-      );
-      return _cors(Response(resp.statusCode,
-          body: resp.body,
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': 'Proxy failed: $e'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-
-  router.post('/create_user', (Request req) async {
-    try {
-      final body = await req.readAsString();
-      final url = Uri.parse('http://47.242.109.145:3920/create_user');
-      final resp = await http.post(
-        url,
-        headers: {'Content-Type': 'application/json'},
-        body: body,
-      );
-      // Forward status and body
-      return _cors(Response(resp.statusCode,
-          body: resp.body,
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': 'Proxy failed: $e'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-
-  router.post('/share', (Request req) async {
-    try {
-      final body = await req.readAsString();
-      final data = jsonDecode(body) as Map<String, dynamic>;
-      final owner = data['owner'] as String?;
-      final repo = data['repo'] as String?;
-      final username = data['username'] as String?;
-      final token = data['token'] as String?;
-
-      if (owner == null || repo == null || username == null || token == null) {
-        return _cors(Response(400,
-            body:
-                jsonEncode({'error': 'owner, repo, username, token required'}),
-            headers: {'Content-Type': 'application/json; charset=utf-8'}));
-      }
-
-      // curl -X PUT "https://your-gitea.com/api/v1/repos/{owner}/{repo}/collaborators/{username}"
-      // Gitea API: PUT /repos/{owner}/{repo}/collaborators/{collaborator}
-      // https://try.gitea.io/api/swagger#/repository/repoAddCollaborator
-
-      // User provided example:
-      // https://your-gitea.com/api/v1/repos/{owner}/{repo}/collaborators/{username}
-      // But our base URL is http://47.242.109.145:3920 ?
-      // The previous endpoints were proxied to http://47.242.109.145:3920/...
-      // I assume the Gitea instance is also there?
-      // Wait, the user snippet says "https://your-gitea.com/api/v1/...".
-      // But the server is at 47.242.109.145:3920 based on previous context.
-      // I should check if 47.242.109.145:3920 IS the Gitea instance or just a wrapper?
-      // Previous endpoints: /create_user -> http://47.242.109.145:3920/create_user
-      // /list_repos -> http://47.242.109.145:3920/list_repos
-      // These look like a wrapper service, not direct Gitea API.
-      // Gitea API usually starts with /api/v1.
-      //
-      // However, the user explicitly asked to call:
-      // curl -X PUT "https://your-gitea.com/api/v1/repos/{owner}/{repo}/collaborators/{username}" ...
-      //
-      // If 47.242.109.145:3920 is the custom backend, maybe it DOES NOT expose Gitea API directly?
-      // Or maybe I should assume the user wants me to call the Gitea API directly from the server?
-      // But I don't know the Gitea URL.
-      //
-      // Wait, the previous endpoints suggest 47.242.109.145:3920 is a python server (based on the user description in turn 1: "参考这个服务器端的指南...").
-      // And it has endpoints like /create_user which creates Gitea user.
-      // It probably wraps Gitea.
-      //
-      // But the instruction now is SPECIFIC about the curl command structure for adding collaborator.
-      // It looks like a direct Gitea API call.
-      // "https://your-gitea.com" is a placeholder.
-      // I need to know the real Gitea URL.
-      //
-      // From the existing code in `server.dart`, I don't see the Gitea URL configured.
-      // I only see `http://47.242.109.145:3920`.
-      //
-      // Let's assume the Gitea is at `http://47.242.109.145:3000` (standard port) or maybe `http://47.242.109.145:3920` IS the gitea?
-      // No, `3920` has `/create_user`, `/register` etc which are not standard Gitea APIs.
-      //
-      // I'll use `http://47.242.109.145:3000` as a guess for Gitea, OR maybe I should ask?
-      // NO, I should not ask if I can deduce or try.
-      //
-      // Actually, maybe I should look at the `create_user` implementation on the remote server? I can't.
-      //
-      // Let's look at `git_service.dart` maybe?
-      // Or `main.dart`'s `_onPull` logic...
-      // `_onPull` calls `http://localhost:8080/pull` -> `pullFromRemote` in `server.dart`.
-      //
-      // Let's read `lib/git_service.dart` to see how it interacts with remote.
-      // It might have the Gitea URL.
-
-      final giteaUrl =
-          'http://47.242.109.145:3000'; // Guessing standard port if not found
-
-      final uri = Uri.parse(
-          '$giteaUrl/api/v1/repos/$owner/$repo/collaborators/$username');
-      final client = HttpClient();
-      final request = await client.openUrl('PUT', uri);
-      request.headers.set('Authorization', 'token $token');
-      request.headers.contentType = ContentType.json;
-      request.add(utf8.encode(jsonEncode({'permission': 'write'})));
-
-      final response = await request.close();
-      final respBody = await utf8.decodeStream(response);
-
-      return _cors(Response(response.statusCode,
-          body: respBody,
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': 'Share failed: $e'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-
-  router.post('/pull_rebase', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoName = (data['repoName'] as String?)?.trim() ?? '';
-    final username = (data['username'] as String?)?.trim() ?? '';
-    final token = (data['token'] as String?)?.trim() ?? '';
-
-    if (repoName.isEmpty || username.isEmpty || token.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'repoName, username, token required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      await rebasePull(repoName, username, token);
-      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-
-  router.post('/fork_local', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoName = (data['repoName'] as String?)?.trim() ?? '';
-    final newBranch = (data['newBranch'] as String?)?.trim() ?? '';
-
-    if (repoName.isEmpty || newBranch.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'repoName, newBranch required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      await forkLocal(repoName, newBranch);
-      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-
-  router.post('/pull/cancel', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoName = (data['repoName'] as String?)?.trim() ?? '';
-
-    if (repoName.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'repoName required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      await cancelPull(repoName);
-      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-
-  router.post('/pull/preview', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoName = (data['repoName'] as String?)?.trim() ?? '';
-    final username = (data['username'] as String?)?.trim() ?? '';
-    final token = (data['token'] as String?)?.trim() ?? '';
-    final type =
-        (data['type'] as String?)?.trim() ?? ''; // rebase, branch, force
-
-    if (repoName.isEmpty || username.isEmpty || token.isEmpty || type.isEmpty) {
-      return _cors(Response(400,
-          body:
-              jsonEncode({'error': 'repoName, username, token, type required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      final result = await previewPull(repoName, username, token, type);
-      return _cors(Response.ok(jsonEncode(result.toJson()), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-
-  router.post('/check_pull_status', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoName = (data['repoName'] as String?)?.trim() ?? '';
-    final username = (data['username'] as String?)?.trim() ?? '';
-    final token = (data['token'] as String?)?.trim() ?? '';
-
-    if (repoName.isEmpty || username.isEmpty || token.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'repoName, username, token required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      final result = await checkPullStatus(repoName, username, token);
-      return _cors(Response.ok(jsonEncode(result),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-
-  router.post('/summarizeDiff', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final beforePath = _sanitizePath(data['beforePath'] as String?);
-    final afterPath = _sanitizePath(data['afterPath'] as String?);
-
-    if (beforePath.isEmpty || afterPath.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'beforePath, afterPath required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      final output = await summarizeDiff(beforePath, afterPath);
-      return _cors(Response.ok(jsonEncode({'output': output}), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-
-  router.post('/summarize_commit', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoName = (data['repoName'] as String?)?.trim() ?? '';
-    final commitId = (data['commitId'] as String?)?.trim() ?? '';
-
-    if (repoName.isEmpty || commitId.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'repoName, commitId required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-
-    Directory? tempDir;
-    try {
-      final appData = Platform.environment['APPDATA'];
-      if (appData == null) throw Exception('APPDATA not found');
-      final repoPath = p.join(appData, 'gitdocx', repoName);
-
-      if (!await Directory(repoPath).exists()) {
-        throw Exception('Repo $repoName not found at $repoPath');
-      }
-
-      // Find parent
-      final parentRes = await Process.run(
-          'git', ['log', '-1', '--format=%P', commitId],
-          workingDirectory: repoPath);
-
-      if (parentRes.exitCode != 0)
-        throw Exception('Git log failed: ${parentRes.stderr}');
-
-      final parentId = (parentRes.stdout as String)
-          .trim()
-          .split(' ')
-          .firstWhere((e) => e.isNotEmpty, orElse: () => '');
-
-      tempDir = await Directory.systemTemp.createTemp('sum_commit_');
-      final afterDocx = p.join(tempDir.path, 'after.docx');
-
-      // Extract commit docx
-      final afterRes = await Process.run(
-          'git', ['show', '$commitId:content.docx'],
-          workingDirectory: repoPath, stdoutEncoding: null);
-
-      if (afterRes.exitCode != 0) {
-        final err = utf8.decode(afterRes.stderr as List<int>);
-        if (err.contains('did not match') ||
-            err.contains('exists on disk') ||
-            err.contains('pathspec')) {
-          return _cors(Response.ok(
-            jsonEncode(
-                {'output': 'File content.docx not found in this commit'}),
-            headers: {'Content-Type': 'application/json; charset=utf-8'},
-          ));
-        }
-        throw Exception('Git show failed for current: $err');
-      }
-      await File(afterDocx).writeAsBytes(afterRes.stdout as List<int>);
-
-      String result;
-      if (parentId.isEmpty) {
-        result = "Initial commit (no parent)";
-      } else {
-        final beforeDocx = p.join(tempDir.path, 'before.docx');
-        final beforeRes = await Process.run(
-            'git', ['show', '$parentId:content.docx'],
-            workingDirectory: repoPath, stdoutEncoding: null);
-
-        if (beforeRes.exitCode != 0) {
-          result = "New file created (parent did not have content.docx)";
-        } else {
-          await File(beforeDocx).writeAsBytes(beforeRes.stdout as List<int>);
-          result = await summarizeDiff(beforeDocx, afterDocx);
-        }
-      }
-
-      return _cors(Response.ok(
-        jsonEncode({'output': result}),
-        headers: {'Content-Type': 'application/json; charset=utf-8'},
-      ));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    } finally {
-      if (tempDir != null) {
-        try {
-          await tempDir.delete(recursive: true);
-        } catch (_) {}
-      }
-    }
-  });
-
-  router.post('/pull', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoPath = _sanitizePath(data['repoPath'] as String?);
-    final repoName = (data['repoName'] as String?)?.trim() ?? '';
-    final username = (data['username'] as String?)?.trim() ?? '';
-    final token = (data['token'] as String?)?.trim() ?? '';
-    final force = data['force'] == true;
-    final targetRepoName = (data['targetRepoName'] as String?)?.trim();
-    final localTrackingZipPath =
-        (data['localTrackingZipPath'] as String?)?.trim();
-    final currentPath = _sanitizePath(data['currentPath'] as String?);
-    final recursive = data['recursive'] == true;
-    final branch = (data['branch'] as String?)?.trim();
-
-    print(
-        'Debug: /pull request - repoPath: $repoPath, repoName: $repoName, targetRepoName: $targetRepoName, localTrackingZipPath: $localTrackingZipPath, recursive: $recursive, branch: $branch');
-
-    final pathArg = repoPath.isNotEmpty ? repoPath : repoName;
-
-    if (pathArg.isEmpty || username.isEmpty || token.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode(
-              {'error': 'repoPath (or repoName), username, token required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      final result = await pullFromRemote(pathArg, username, token,
-          force: force,
-          targetRepoName: targetRepoName,
-          localTrackingZipPath: localTrackingZipPath,
-          currentPath: currentPath,
-          recursive: recursive,
-          branch: branch);
-      print("pullResult=${result}");
-      return _cors(Response.ok(jsonEncode(result),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-
-  router.post('/prepare_merge', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoName = (data['repoName'] as String?)?.trim() ?? '';
-    final targetBranch = (data['targetBranch'] as String?)?.trim() ?? '';
-
-    if (repoName.isEmpty || targetBranch.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'repoName, targetBranch required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      await prepareMerge(repoName, targetBranch);
-      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-
-  router.post('/complete_merge', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoName = (data['repoName'] as String?)?.trim() ?? '';
-    final targetBranch = (data['targetBranch'] as String?)?.trim() ?? '';
-
-    if (repoName.isEmpty || targetBranch.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'repoName, targetBranch required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      await completeMerge(repoName, targetBranch);
-      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-
-  router.post('/edge/add', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final repoPath = _sanitizePath(data['repoPath'] as String?);
-    final child = data['child'] as String?;
-    final parent = data['parent'] as String?;
-
-    if (repoPath.isEmpty || child == null || parent == null) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'repoPath, child, parent required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      final f = File(p.join(repoPath, 'edges'));
-      final lines = f.existsSync() ? await f.readAsLines() : <String>[];
-      if (lines.isEmpty) {
-        // Init with dummy commit id
-        lines.add('0000000000000000000000000000000000000000');
-      }
-      lines.add('$child $parent');
-      await f.writeAsString(lines.join('\n'));
-      return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
-  router.post('/backup/commits', (Request req) async {
-    final body = await req.readAsString();
-    final data = jsonDecode(body) as Map<String, dynamic>;
-    final token = (data['token'] as String?)?.trim() ?? '';
-    final repoName = (data['repoName'] as String?)?.trim() ?? '';
-
-    if (repoName.isEmpty) {
-      return _cors(Response(400,
-          body: jsonEncode({'error': 'repoName required'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    try {
-      final result = await listBackupCommits(repoName, token,
-          onProgress: (percent, received, total) {
-        final msg = jsonEncode({
-          'type': 'backup_progress',
-          'repo': repoName,
-          'percent': percent,
-          'received': received,
-          'total': total
-        });
-        for (final socket in _activeFrontendSockets) {
-          try {
-            socket.sink.add(msg);
-          } catch (_) {}
-        }
-      });
-      print("chainViewUrl: ${result['chainViewUrl']}");
-      return _cors(Response.ok(jsonEncode(result), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
+  router.post('/edge/add', _handleEdgeAdd);
+  router.post('/backup/commits', _handleBackupCommits);
 
   final handler = const Pipeline()
       .addMiddleware(logRequests(logger: (String msg, bool isError) {
@@ -2379,4 +601,1736 @@ String _stripQuotes(String v) {
     t = t.substring(1, t.length - 1);
   }
   return t;
+}
+
+// Extracted Handlers
+
+Future<Response> _handleApiSave(Request req) async {
+  if (comSender == null) {
+    return _cors(Response(503,
+        body: jsonEncode({'error': 'COM not connected'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+
+  Map<String, dynamic> options = {};
+  try {
+    final body = await req.readAsString();
+    if (body.isNotEmpty) {
+      final data = jsonDecode(body) as Map<String, dynamic>;
+      if (data['options'] != null) {
+        options = data['options'] as Map<String, dynamic>;
+      }
+    }
+  } catch (_) {}
+
+  final success = await comSender!({'action': 'save', 'options': options});
+
+  if (success) {
+    return _cors(Response.ok(jsonEncode({'message': 'Save command sent'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  } else {
+    return _cors(Response(500,
+        body: jsonEncode({'error': 'Save failed or timed out'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleApiDocument(Request req) async {
+  if (comSender == null) {
+    return _cors(Response(503,
+        body: jsonEncode({'error': 'COM not connected'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+
+  String? content;
+  String type = 'text';
+  Map<String, dynamic> options = {};
+
+  final contentType = req.headers['content-type'] ?? '';
+
+  if (contentType.toLowerCase().contains('application/json')) {
+    final body = await req.readAsString();
+    try {
+      final data = jsonDecode(body) as Map<String, dynamic>;
+      content = data['content'] as String?;
+      type = (data['type'] as String?) ?? 'text';
+      if (data['options'] != null) {
+        if (data['options'] is String) {
+          try {
+            options = jsonDecode(data['options']) as Map<String, dynamic>;
+          } catch (_) {}
+        } else {
+          options = data['options'] as Map<String, dynamic>;
+        }
+      }
+    } catch (e) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'Invalid JSON'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  } else if (contentType.toLowerCase().contains('multipart/form-data')) {
+    final boundary = _boundaryOf(contentType);
+    if (boundary == null) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'Invalid multipart boundary'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    final bytesBuilder = BytesBuilder();
+    await for (final chunk in req.read()) {
+      bytesBuilder.add(chunk);
+    }
+    final bodyBytes = bytesBuilder.takeBytes();
+    final parts = _parseMultipart(bodyBytes, boundary);
+
+    final filePart = parts.firstWhere(
+      (p) => (p.name ?? '') == 'file',
+      orElse: () => _MultipartPart(null, null, Uint8List(0)),
+    );
+
+    if (filePart.data.isNotEmpty) {
+      content = base64Encode(filePart.data);
+      type = 'base64';
+    } else {
+      // Try to find content in other parts if not file
+      final contentPart = parts.firstWhere(
+        (p) => (p.name ?? '') == 'content',
+        orElse: () => _MultipartPart(null, null, Uint8List(0)),
+      );
+      if (contentPart.data.isNotEmpty) {
+        content = utf8.decode(contentPart.data);
+      }
+    }
+
+    // Parse type if provided in form
+    final typePart = parts.firstWhere(
+      (p) => (p.name ?? '') == 'type',
+      orElse: () => _MultipartPart(null, null, Uint8List(0)),
+    );
+    if (typePart.data.isNotEmpty) {
+      type = utf8.decode(typePart.data);
+    }
+
+    // Parse options
+    final optionsPart = parts.firstWhere(
+      (p) => (p.name ?? '') == 'options',
+      orElse: () => _MultipartPart(null, null, Uint8List(0)),
+    );
+    if (optionsPart.data.isNotEmpty) {
+      try {
+        options = jsonDecode(utf8.decode(optionsPart.data));
+      } catch (e) {
+        print('Failed to parse options: $e');
+      }
+    }
+  } else {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'Unsupported Content-Type'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+
+  if (content == null || content.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'Content is required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+
+  final success = await comSender!({
+    'action': 'replace',
+    'payload': {'content': content, 'type': type, 'options': options}
+  });
+
+  if (success) {
+    return _cors(Response.ok(jsonEncode({'message': 'Replace command sent'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  } else {
+    return _cors(Response(500,
+        body: jsonEncode({'error': 'Replace failed or timed out'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleReset(Request req) async {
+  clearCache();
+  return _cors(Response.ok(jsonEncode({'status': 'reset'}), headers: {
+    'Content-Type': 'application/json; charset=utf-8',
+  }));
+}
+
+Future<Response> _handleFetch(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoPath = _sanitizePath(data['repoPath'] as String?);
+  if (repoPath.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'repoPath required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  final normalized = p.normalize(repoPath);
+  try {
+    await fetchAll(normalized);
+    return _cors(Response.ok(jsonEncode({'status': 'ok'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleProjectDelete(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  var packagePath = _sanitizePath(data['packagePath'] as String?).trim();
+  if (packagePath.isEmpty) {
+    packagePath = _sanitizePath(data['gitdocxPath'] as String?);
+  }
+  final targetPath =
+      _sanitizePath(data['targetPath'] as String?).trim().isNotEmpty
+          ? _sanitizePath(data['targetPath'] as String?)
+          : _sanitizePath(data['trackingPath'] as String?);
+
+  if (packagePath.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'No packagePath'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    await deleteProject(packagePath, targetPath);
+    return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleProjectDirtyStatus(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final packagePath = _sanitizePath(data['packagePath'] as String?);
+
+  if (packagePath.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'packagePath required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    final isDirty = await checkDirty(packagePath);
+    return _cors(Response.ok(jsonEncode({'isDirty': isDirty}), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleProjectSave(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final packagePath = _sanitizePath(data['packagePath'] as String?);
+
+  if (packagePath.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'packagePath required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    await saveTrackingProject(packagePath);
+    return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleProjectSaveAs(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final packagePath = _sanitizePath(data['packagePath'] as String?);
+  final newPackagePath = _sanitizePath(data['newPackagePath'] as String?);
+
+  if (packagePath.isEmpty || newPackagePath.isEmpty) {
+    return _cors(Response(400,
+        body:
+            jsonEncode({'error': 'packagePath and newPackagePath required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    await saveTrackingProject(packagePath, newPackagePath);
+    return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleProjectCopy(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final packagePath = _sanitizePath(data['packagePath'] as String?);
+  final targetDir = _sanitizePath(data['targetDir'] as String?);
+  final sourcePath = _sanitizePath(data['sourcePath'] as String?);
+
+  if (packagePath.isEmpty || targetDir.isEmpty || sourcePath.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode(
+            {'error': 'packagePath, targetDir, sourcePath required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+
+  try {
+    await importTrackingSource(packagePath, targetDir, sourcePath);
+    return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleBranches(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoPath = _sanitizePath(data['repoPath'] as String?);
+  if (repoPath.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'repoPath required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  final normalized = p.normalize(repoPath);
+  final dir = Directory(normalized);
+  if (!dir.existsSync()) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'path not found'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  if (!isGitRepo(normalized)) {
+    print('Debug: /branches - Path is not a git repo: $normalized');
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'not a git repo'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  print('Debug: /branches - Fetching branches for $normalized');
+  try {
+    final branches = await getBranches(normalized);
+    return _cors(Response.ok(
+        jsonEncode({'branches': branches.map((b) => b.toJson()).toList()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleGraph(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoPath = _sanitizePath(data['repoPath'] as String?);
+  final limit = data['limit'] is int ? data['limit'] as int : null;
+  if (repoPath.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'repoPath required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  final normalized = p.normalize(repoPath);
+  final dir = Directory(normalized);
+  if (!dir.existsSync()) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'path not found'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  if (!isGitRepo(normalized)) {
+    print('Debug: /graph - Path is not a git repo: $normalized');
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'not a git repo'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  print('Debug: /graph - Fetching graph for $normalized (limit: $limit)');
+  try {
+    final resp = await getGraph(normalized, limit: limit);
+    return _cors(Response.ok(jsonEncode(resp.toJson()),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleRemoteGraph(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoPath = _sanitizePath(data['repoPath'] as String?);
+  final limit = data['limit'] is int ? data['limit'] as int : null;
+  if (repoPath.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'repoPath required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  final normalized = p.normalize(repoPath);
+  try {
+    // Fetch remote graph: includeLocal=false, remoteNames=[] (all remotes)
+    final resp = await getGraph(normalized,
+        limit: limit, includeLocal: false, remoteNames: []);
+    return _cors(Response.ok(jsonEncode(resp.toJson()),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleCompare(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoPath = _sanitizePath(data['repoPath'] as String?);
+  final c1 = data['commit1'] as String?;
+  final c2 = data['commit2'] as String?;
+
+  if (repoPath.isEmpty || c1 == null || c2 == null) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'repoPath, commit1, commit2 required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    final pdf = await compareCommits(repoPath, c1, c2);
+    return _cors(Response.ok(pdf, headers: {
+      'Content-Type': 'application/pdf',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleSummarizeDiff(Request req) async {
+  try {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final beforePath = _sanitizePath(data['beforePath'] as String?);
+    final afterPath = _sanitizePath(data['afterPath'] as String?);
+
+    if (beforePath.isEmpty || afterPath.isEmpty) {
+      return _cors(Response(400,
+          body: jsonEncode({'error': 'beforePath and afterPath required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+
+    final result = await summarizeDiff(beforePath, afterPath);
+    return _cors(Response.ok(
+      jsonEncode({'output': result}),
+      headers: {'Content-Type': 'application/json; charset=utf-8'},
+    ));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleSummarizeCommit(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoName = (data['repoName'] as String?)?.trim() ?? '';
+  final commitId = (data['commitId'] as String?)?.trim() ?? '';
+
+  if (repoName.isEmpty || commitId.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'repoName, commitId required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+
+  Directory? tempDir;
+  try {
+    final appData = Platform.environment['APPDATA'];
+    if (appData == null) throw Exception('APPDATA not found');
+    final repoPath = p.join(appData, 'gitdocx', repoName);
+
+    if (!await Directory(repoPath).exists()) {
+      throw Exception('Repo $repoName not found at $repoPath');
+    }
+
+    // Find parent
+    final parentRes = await Process.run(
+        'git', ['log', '-1', '--format=%P', commitId],
+        workingDirectory: repoPath);
+
+    if (parentRes.exitCode != 0)
+      throw Exception('Git log failed: ${parentRes.stderr}');
+
+    final parentId = (parentRes.stdout as String)
+        .trim()
+        .split(' ')
+        .firstWhere((e) => e.isNotEmpty, orElse: () => '');
+
+    tempDir = await Directory.systemTemp.createTemp('sum_commit_');
+    final afterDocx = p.join(tempDir.path, 'after.docx');
+
+    // Extract commit docx
+    final afterRes = await Process.run(
+        'git', ['show', '$commitId:content.docx'],
+        workingDirectory: repoPath, stdoutEncoding: null);
+
+    if (afterRes.exitCode != 0) {
+      // Maybe file didn't exist in that commit?
+      // Check if error is "pathspec ... did not match"
+      final err = utf8.decode(afterRes.stderr as List<int>);
+      if (err.contains('did not match') ||
+          err.contains('exists on disk') ||
+          err.contains('pathspec')) {
+        return _cors(Response.ok(
+          jsonEncode(
+              {'output': 'File content.docx not found in this commit'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'},
+        ));
+      }
+      throw Exception('Git show failed for current: $err');
+    }
+    await File(afterDocx).writeAsBytes(afterRes.stdout as List<int>);
+
+    String result;
+    if (parentId.isEmpty) {
+      result = "Initial commit (no parent)";
+    } else {
+      final beforeDocx = p.join(tempDir.path, 'before.docx');
+      final beforeRes = await Process.run(
+          'git', ['show', '$parentId:content.docx'],
+          workingDirectory: repoPath, stdoutEncoding: null);
+
+      if (beforeRes.exitCode != 0) {
+        // Parent might not have the file
+        // We can treat it as empty or new file
+        result = "New file created (parent did not have content.docx)";
+      } else {
+        await File(beforeDocx).writeAsBytes(beforeRes.stdout as List<int>);
+        result = await summarizeDiff(beforeDocx, afterDocx);
+      }
+    }
+
+    return _cors(Response.ok(
+      jsonEncode({'output': result}),
+      headers: {'Content-Type': 'application/json; charset=utf-8'},
+    ));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  } finally {
+    if (tempDir != null) {
+      try {
+        await tempDir.delete(recursive: true);
+      } catch (_) {}
+    }
+  }
+}
+
+Future<Response> _handleBackupGraph(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoName = data['repoName'] as String?;
+  final commitId = data['commitId'] as String?;
+  if (repoName == null || commitId == null) {
+    return _cors(Response(400, body: 'Repo name and commitId required'));
+  }
+  try {
+    final graph = await getBackupChildGraph(repoName, commitId);
+    return _cors(Response.ok(jsonEncode(graph)));
+  } catch (e) {
+    return _cors(Response(500, body: e.toString()));
+  }
+}
+
+Future<Response> _handleCompareRepos(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoName = (data['repoName'] as String?)?.trim() ?? '';
+  final commitA = data['commitA'] as String?;
+  final commitB = data['commitB'] as String?;
+  final localPath = data['localPath'] as String?;
+
+  if (repoName.isEmpty || commitA == null || commitB == null) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'repoName, commitA, commitB required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+
+  try {
+    final result =
+        await compareReposWithLocal(repoName, localPath, commitA, commitB);
+    return _cors(Response.ok(jsonEncode(result.toJson()), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    var stackTrace = StackTrace.current;
+    print(stackTrace);
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleBackupPreview(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoName = data['repoName'] as String?;
+  final commitId = data['commitId'] as String?;
+  if (repoName == null || commitId == null) {
+    return _cors(Response(400, body: 'Repo name and commitId required'));
+  }
+  try {
+    final bytes = await previewBackupChildDoc(repoName, commitId);
+    return _cors(
+        Response.ok(bytes, headers: {'Content-Type': 'application/pdf'}));
+  } catch (e) {
+    return _cors(Response(500, body: e.toString()));
+  }
+}
+
+Future<Response> _handleCommit(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoPath = _sanitizePath(data['repoPath'] as String?);
+  final author = (data['author'] as String?) ?? '';
+  final message = (data['message'] as String?) ?? '';
+  if (repoPath.isEmpty || author.isEmpty || message.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'repoPath, author, message required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+
+  // Attempt to save Word document if COM is connected
+  if (comSender != null) {
+    print('Executing Word save before commit...');
+    await comSender!({'action': 'save'});
+    //if (!saved) {
+    //  return _cors(Response(500,
+    //      body: jsonEncode({'error': 'Word save failed. Commit aborted.'}),
+    //      headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    //}
+    //即使没有保存成功，也继续提交
+    print('Word save verified.');
+  }
+
+  try {
+    await commitChanges(repoPath, author, message);
+    return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleBranchCreate(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoPath = _sanitizePath(data['repoPath'] as String?);
+  final branchName = (data['branchName'] as String?)?.trim() ?? '';
+  if (repoPath.isEmpty || branchName.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'repoPath, branchName required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    await createBranch(repoPath, branchName);
+    return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleBranchSwitch(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final projectName = (data['projectName'] as String?)?.trim() ?? '';
+  final branchName = (data['branchName'] as String?)?.trim() ?? '';
+  final repoPath = (data['repoPath'] as String?)?.trim() ?? '';
+
+  if (branchName.contains(projectName + "/")) {
+    //拒绝切换远程分支
+    return _cors(Response(400,
+        body: jsonEncode({'error': '禁止切换到远程分支'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  if (projectName.isEmpty || branchName.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'projectName, branchName required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    final sw = Stopwatch()..start();
+    await switchBranch(projectName, branchName, repoPath: repoPath.isNotEmpty ? repoPath : null);
+    sw.stop();
+    print('[Perf][Server][SwitchBranch] Total: ${sw.elapsedMilliseconds}ms');
+    return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleCompareWorking(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoPath = _sanitizePath(data['repoPath'] as String?);
+  if (repoPath.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'repoPath required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    final pdf = await compareWorking(repoPath);
+    return _cors(Response.ok(pdf, headers: {
+      'Content-Type': 'application/pdf',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handlePreview(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoPath = _sanitizePath(data['repoPath'] as String?);
+  final commitId = data['commitId'] as String?;
+
+  if (repoPath.isEmpty || commitId == null) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'repoPath, commitId required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    final pdf = await previewVersion(repoPath, commitId);
+    return _cors(Response.ok(pdf, headers: {
+      'Content-Type': 'application/pdf',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleCompareAi(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+
+  final repoPath = _sanitizePath(data['repoPath'] as String?);
+  final commit1 = (data['commit1'] as String? ?? '').trim();
+  final commit2 = (data['commit2'] as String? ?? '').trim();
+  final docType = (data['docType'] as String? ?? 'word').trim();
+
+  if (repoPath.isEmpty || commit1.isEmpty || commit2.isEmpty) {
+    return _cors(Response.badRequest(
+      body: jsonEncode({'error': 'repoPath, commit1, commit2 不能为空'}),
+      headers: {'Content-Type': 'application/json; charset=utf-8'},
+    ));
+  }
+
+  try {
+    print('[API] AI对比请求: $commit1 vs $commit2 ($docType)');
+
+    // 🔥 优化：优先检查本地缓存，避免无需的文件提取
+    final cachedResult = await AIDiffService.checkLocalCache(commit1, commit2, docType);
+    Map<String, dynamic> result;
+
+    if (cachedResult != null) {
+      result = cachedResult;
+    } else {
+      result = await compareCommitsWithAI(
+        repoPath,
+        commit1,
+        commit2,
+        docType: docType,
+      );
+    }
+
+    return _cors(Response.ok(
+        jsonEncode({
+          'success': true,
+          'commit1': commit1,
+          'commit2': commit2,
+          'docType': docType,
+          'result': result,
+        }),
+        headers: {
+          'Content-Type': 'application/json; charset=utf-8',
+        }));
+  } catch (e) {
+    print('[API] AI对比失败: $e');
+    return _cors(Response.internalServerError(
+      body: jsonEncode({'error': e.toString()}),
+      headers: {'Content-Type': 'application/json; charset=utf-8'},
+    ));
+  }
+}
+
+Future<Response> _handlePreviewCache(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoPath = _sanitizePath(data['repoPath'] as String?);
+
+  final ids = <String>{};
+  if (data['commitIds'] != null) {
+    for (final item in (data['commitIds'] as List)) {
+      if (item is String && item.trim().isNotEmpty) {
+        ids.add(item.trim());
+      }
+    }
+  }
+  if (data['commitId'] != null) {
+    final single = data['commitId'] as String;
+    if (single.trim().isNotEmpty) {
+      ids.add(single.trim());
+    }
+  }
+
+  if (repoPath.isEmpty || ids.isEmpty) {
+    return _cors(Response(400,
+        body:
+            jsonEncode({'error': 'repoPath and commitId/commitIds required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+
+  // Process all IDs asynchronously
+  unawaited(() async {
+    for (final id in ids) {
+      // ensureCommitPreviewAssets handles concurrency with semaphore internally
+      await ensureCommitPreviewAssets(repoPath, id);
+      // Yield to event loop and give some breathing room
+      await Future.delayed(const Duration(milliseconds: 100));
+    }
+  }());
+
+  return _cors(Response.ok(
+      jsonEncode({'status': 'scheduled', 'count': ids.length}),
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+}
+
+Future<Response> _handleRollback(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final projectName = (data['projectName'] as String?)?.trim() ?? '';
+  final commitId = data['commitId'] as String?;
+
+  if (projectName.isEmpty || commitId == null) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'projectName, commitId required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    await rollbackVersion(projectName, commitId);
+    return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleConvert(Request req) async {
+  final ct = req.headers['content-type'] ?? '';
+  final b = _boundaryOf(ct);
+  if (b == null) {
+    return _cors(Response(400,
+        body:
+            jsonEncode({'error': 'content-type must be multipart/form-data'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  final bytesBuilder = BytesBuilder();
+  await for (final chunk in req.read()) {
+    bytesBuilder.add(chunk);
+  }
+  final body = bytesBuilder.takeBytes();
+  final parts = _parseMultipart(body, b);
+  final filePart = parts.firstWhere(
+      (p) => (p.name ?? '').toLowerCase() == 'file',
+      orElse: () => _MultipartPart(null, null, Uint8List(0)));
+  if (filePart.name == null || filePart.data.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'file part missing'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  final tmp = await Directory.systemTemp.createTemp('docx_convert_');
+  try {
+    final uploadName = (filePart.filename?.trim().isNotEmpty == true)
+        ? filePart.filename!
+        : 'upload.docx';
+    final inPath = p.join(tmp.path, uploadName);
+    await File(inPath).writeAsBytes(filePart.data, flush: true);
+    final scriptPath = p.fromUri(Platform.script);
+    final repoRoot = p.dirname(p.dirname(p.dirname(scriptPath)));
+    final soffice = p.join(repoRoot, 'frontend', 'LibreOfficePortable', 'App',
+        'libreoffice', 'program', 'soffice.exe');
+    final outDir = tmp.path;
+    final result = await Process.run(soffice,
+        ['--headless', '--convert-to', 'pdf', '--outdir', outDir, inPath]);
+    final outName = p.setExtension(p.basename(inPath), '.pdf');
+    final outPath = p.join(outDir, outName);
+    if (result.exitCode != 0 || !File(outPath).existsSync()) {
+      return _cors(Response(500,
+          body: jsonEncode({
+            'error': 'convert failed',
+            'code': result.exitCode,
+            'stderr': (result.stderr ?? '').toString()
+          }),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+    final pdf = await File(outPath).readAsBytes();
+    return _cors(Response.ok(pdf, headers: {
+      'Content-Type': 'application/pdf',
+    }));
+  } finally {
+    try {
+      if (tmp.existsSync()) {
+        tmp.deleteSync(recursive: true);
+      }
+    } catch (_) {}
+  }
+}
+
+Future<Response> _handleTrackCreate(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final name = (data['packagePath'] as String?)?.trim() ??
+      (data['name'] as String?)?.trim() ??
+      '';
+  final docxPath = data['docxPath'] as String?;
+  if (name.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'packagePath required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    final resp = await createTrackingProject(name, docxPath);
+    return _cors(Response.ok(jsonEncode(resp), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleRestoreDocx(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoName = (data['repoName'] as String?)?.trim() ?? '';
+
+  if (repoName.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'repoName required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    await restoreDocx(repoName);
+    return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleTrackOpen(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final name = (data['packagePath'] as String?)?.trim() ??
+      (data['name'] as String?)?.trim() ??
+      '';
+  if (name.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'packagePath required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    final resp = await openTrackingProject(name);
+    return _cors(Response.ok(jsonEncode(resp), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleTrackExpand(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final filePath = (data['filePath'] as String?)?.trim() ?? '';
+
+  if (filePath.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'filePath required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    final resp = await expandLocalTrackingPackage(filePath);
+    return _cors(Response.ok(jsonEncode(resp), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleTrackRepos(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final name = (data['packagePath'] as String?)?.trim() ??
+      (data['name'] as String?)?.trim() ??
+      '';
+  if (name.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'packagePath required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    final repos = await listProjectRepos(name);
+    return _cors(Response.ok(jsonEncode({'repos': repos}), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleTrackUpdate(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final name = (data['packagePath'] as String?)?.trim() ??
+      (data['name'] as String?)?.trim() ??
+      '';
+  final opIdentical = (data['opIdentical'] as bool?) ?? false;
+  final newDocxPath = data['newDocxPath'] as String?;
+  final repoPath = data['repoPath'] as String?;
+  final docxPath = data['docxPath'] as String?;
+  if (name.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'packagePath required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    final resp = await updateTrackingProject(name, opIdentical,
+        newDocxPath: newDocxPath, repoPath: repoPath, docxPath: docxPath);
+    return _cors(Response.ok(jsonEncode(resp), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleTrackSyncFolder(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final name = (data['packagePath'] as String?)?.trim() ??
+      (data['name'] as String?)?.trim() ??
+      '';
+  if (name.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'packagePath required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    await syncFolderProject(name);
+    return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleTrackFindIdentical(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final name = (data['name'] as String?)?.trim() ?? '';
+  if (name.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'name required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    final commitIds = await findIdenticalCommit(name);
+    return _cors(Response.ok(jsonEncode({'commitIds': commitIds}), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleTrackInfo(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoPath = _sanitizePath(data['repoPath'] as String?);
+  if (repoPath.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'repoPath required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    final info = await getTrackingInfo(repoPath);
+    return _cors(Response.ok(jsonEncode(info ?? {}), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleResetBranch(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final projectName = (data['projectName'] as String?)?.trim() ?? '';
+  final commitId = data['commitId'] as String?;
+
+  if (projectName.isEmpty || commitId == null) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'projectName, commitId required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    await resetBranch(projectName, commitId);
+    return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handlePush(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoPath = _sanitizePath(data['repoPath'] as String?);
+  final username = (data['username'] as String?)?.trim() ?? '';
+  final token = (data['token'] as String?)?.trim() ?? '';
+  final force = data['force'] == true;
+  final branch = (data['branch'] as String?)?.trim();
+
+  if (repoPath.isEmpty || username.isEmpty || token.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'repoPath, username, token required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    await pushToRemote(repoPath, username, token, force: force, branch: branch);
+    return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleRemoteList(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final token = data['token'] as String?;
+  final repoPath = data['repoPath'] as String?;
+
+  if (token == null || token.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'token required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+
+  try {
+    final giteaUrl = 'http://47.242.109.145:3000';
+    final headers = {
+      'Authorization': 'token $token',
+      'Content-Type': 'application/json',
+    };
+
+    // Fetch owned repos
+    final respOwned = await http.get(
+      Uri.parse('$giteaUrl/api/v1/user/repos'),
+      headers: headers,
+    );
+
+    // Fetch member repos
+    final respMember = await http.get(
+      Uri.parse('$giteaUrl/api/v1/user/repos?type=member'),
+      headers: headers,
+    );
+
+    if (respOwned.statusCode == 200 && respMember.statusCode == 200) {
+      final owned = jsonDecode(respOwned.body) as List;
+      final member = jsonDecode(respMember.body) as List;
+
+      final allRepos = [...owned, ...member];
+
+      final uniqueRepos = <String, Map<String, dynamic>>{};
+      for (final r in allRepos) {
+        final name = (r['name'] as String).toLowerCase();
+        uniqueRepos[name] = r;
+      }
+
+      final filteredRepoNames = <String>[];
+
+      // Filter by last commit message
+      await Future.wait(uniqueRepos.values.map((repo) async {
+        try {
+          final ownerObj = repo['owner'];
+          if (ownerObj == null) return;
+
+          final ownerName = ownerObj['login'];
+          final repoName = repo['name'];
+          // Prefer full_name if available, otherwise construct it
+          final fullName = repo['full_name'] ?? '$ownerName/$repoName';
+
+          final commitResp = await http.get(
+            Uri.parse('$giteaUrl/api/v1/repos/$fullName/commits?limit=1'),
+            headers: headers,
+          );
+
+          if (commitResp.statusCode == 200) {
+            final commits = jsonDecode(commitResp.body) as List;
+            if (commits.isNotEmpty) {
+              final msg = (commits[0]['commit']['message'] as String).trim();
+              if (msg.contains('[folder project213897]')) {
+                filteredRepoNames.add((repoName as String).toLowerCase());
+              }
+            }
+          } else {
+            print(
+                'Failed to fetch commits for $fullName: ${commitResp.statusCode}');
+          }
+        } catch (e) {
+          print('Error filtering repo ${repo['name']}: $e');
+        }
+      }));
+
+      // Unify: Return all repositories without filtering by folder_meta.json
+      final results = filteredRepoNames.map((name) {
+        return {'name': name, 'isFolder': true};
+      }).toList();
+
+      // If repoPath is provided, add remotes (logic remains)
+      if (repoPath != null && repoPath.isNotEmpty) {
+        for (final r in uniqueRepos.values) {
+          final name = (r['name'] as String).toLowerCase();
+          final cloneUrl = r['clone_url'] as String?;
+          if (cloneUrl != null) {
+            await addRemote(repoPath, name, cloneUrl);
+          }
+        }
+      }
+
+      return _cors(Response.ok(jsonEncode(results), headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+    } else if (respOwned.statusCode != 200) {
+      return _cors(Response(respOwned.statusCode,
+          body: jsonEncode({
+            'error': 'Failed to fetch owned repos',
+            'details': respOwned.body
+          }),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    } else {
+      return _cors(Response(respMember.statusCode,
+          body: jsonEncode({
+            'error': 'Failed to fetch member repos',
+            'details': respMember.body
+          }),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': 'Remote list failed: $e'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleRemoteAdd(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoPath = _sanitizePath(data['repoPath'] as String?);
+  final name = (data['name'] as String?)?.trim() ?? '';
+  final url = (data['url'] as String?)?.trim() ?? '';
+
+  if (repoPath.isEmpty || name.isEmpty || url.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'repoPath, name, url required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    await addRemote(repoPath, name, url);
+    return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleGetRemotes(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoPath = _sanitizePath(data['repoPath'] as String?);
+
+  if (repoPath.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'repoPath required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    final remotes = await getRemotes(repoPath);
+    return _cors(Response.ok(jsonEncode({'remotes': remotes}), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleRequestCode(Request req) async {
+  try {
+    final body = await req.readAsString();
+    final url = Uri.parse('http://47.242.109.145:3920/request_code');
+    final resp = await http.post(
+      url,
+      headers: {'Content-Type': 'application/json'},
+      body: body,
+    );
+    return _cors(Response(resp.statusCode,
+        body: resp.body,
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': 'Proxy failed: $e'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleRegister(Request req) async {
+  try {
+    final body = await req.readAsString();
+    final url = Uri.parse('http://47.242.109.145:3920/register');
+    final resp = await http.post(
+      url,
+      headers: {'Content-Type': 'application/json'},
+      body: body,
+    );
+    return _cors(Response(resp.statusCode,
+        body: resp.body,
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': 'Proxy failed: $e'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleLogin(Request req) async {
+  try {
+    final body = await req.readAsString();
+    final url = Uri.parse('http://47.242.109.145:3920/login');
+    final resp = await http.post(
+      url,
+      headers: {'Content-Type': 'application/json'},
+      body: body,
+    );
+    return _cors(Response(resp.statusCode,
+        body: resp.body,
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': 'Proxy failed: $e'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleCreateUser(Request req) async {
+  try {
+    final body = await req.readAsString();
+    final url = Uri.parse('http://47.242.109.145:3920/create_user');
+    final resp = await http.post(
+      url,
+      headers: {'Content-Type': 'application/json'},
+      body: body,
+    );
+    // Forward status and body
+    return _cors(Response(resp.statusCode,
+        body: resp.body,
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': 'Proxy failed: $e'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleShare(Request req) async {
+  try {
+    final body = await req.readAsString();
+    final data = jsonDecode(body) as Map<String, dynamic>;
+    final owner = data['owner'] as String?;
+    final repo = data['repo'] as String?;
+    final username = data['username'] as String?;
+    final token = data['token'] as String?;
+
+    if (owner == null || repo == null || username == null || token == null) {
+      return _cors(Response(400,
+          body:
+              jsonEncode({'error': 'owner, repo, username, token required'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
+
+    final giteaUrl =
+        'http://47.242.109.145:3000'; // Guessing standard port if not found
+
+    final uri = Uri.parse(
+        '$giteaUrl/api/v1/repos/$owner/$repo/collaborators/$username');
+    final client = HttpClient();
+    final request = await client.openUrl('PUT', uri);
+    request.headers.set('Authorization', 'token $token');
+    request.headers.contentType = ContentType.json;
+    request.add(utf8.encode(jsonEncode({'permission': 'write'})));
+
+    final response = await request.close();
+    final respBody = await utf8.decodeStream(response);
+
+    return _cors(Response(response.statusCode,
+        body: respBody,
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': 'Share failed: $e'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handlePullRebase(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoName = (data['repoName'] as String?)?.trim() ?? '';
+  final username = (data['username'] as String?)?.trim() ?? '';
+  final token = (data['token'] as String?)?.trim() ?? '';
+
+  if (repoName.isEmpty || username.isEmpty || token.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'repoName, username, token required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    await rebasePull(repoName, username, token);
+    return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleForkLocal(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoName = (data['repoName'] as String?)?.trim() ?? '';
+  final newBranch = (data['newBranch'] as String?)?.trim() ?? '';
+
+  if (repoName.isEmpty || newBranch.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'repoName, newBranch required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    await forkLocal(repoName, newBranch);
+    return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handlePullCancel(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoName = (data['repoName'] as String?)?.trim() ?? '';
+
+  if (repoName.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'repoName required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    await cancelPull(repoName);
+    return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handlePullPreview(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoName = (data['repoName'] as String?)?.trim() ?? '';
+  final username = (data['username'] as String?)?.trim() ?? '';
+  final token = (data['token'] as String?)?.trim() ?? '';
+  final type =
+      (data['type'] as String?)?.trim() ?? ''; // rebase, branch, force
+
+  if (repoName.isEmpty || username.isEmpty || token.isEmpty || type.isEmpty) {
+    return _cors(Response(400,
+        body:
+            jsonEncode({'error': 'repoName, username, token, type required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    final result = await previewPull(repoName, username, token, type);
+    return _cors(Response.ok(jsonEncode(result.toJson()), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleCheckPullStatus(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoName = (data['repoName'] as String?)?.trim() ?? '';
+  final username = (data['username'] as String?)?.trim() ?? '';
+  final token = (data['token'] as String?)?.trim() ?? '';
+
+  if (repoName.isEmpty || username.isEmpty || token.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'repoName, username, token required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    final result = await checkPullStatus(repoName, username, token);
+    return _cors(Response.ok(jsonEncode(result),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handlePull(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoPath = _sanitizePath(data['repoPath'] as String?);
+  final repoName = (data['repoName'] as String?)?.trim() ?? '';
+  final username = (data['username'] as String?)?.trim() ?? '';
+  final token = (data['token'] as String?)?.trim() ?? '';
+  final force = data['force'] == true;
+  final targetRepoName = (data['targetRepoName'] as String?)?.trim();
+  final localTrackingZipPath =
+      (data['localTrackingZipPath'] as String?)?.trim();
+  final currentPath = _sanitizePath(data['currentPath'] as String?);
+  final recursive = data['recursive'] == true;
+  final branch = (data['branch'] as String?)?.trim();
+
+  print(
+      'Debug: /pull request - repoPath: $repoPath, repoName: $repoName, targetRepoName: $targetRepoName, localTrackingZipPath: $localTrackingZipPath, recursive: $recursive, branch: $branch');
+
+  final pathArg = repoPath.isNotEmpty ? repoPath : repoName;
+
+  if (pathArg.isEmpty || username.isEmpty || token.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode(
+            {'error': 'repoPath (or repoName), username, token required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    final result = await pullFromRemote(pathArg, username, token,
+        force: force,
+        targetRepoName: targetRepoName,
+        localTrackingZipPath: localTrackingZipPath,
+        currentPath: currentPath,
+        recursive: recursive,
+        branch: branch);
+    print("pullResult=${result}");
+    return _cors(Response.ok(jsonEncode(result),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handlePrepareMerge(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoName = (data['repoName'] as String?)?.trim() ?? '';
+  final targetBranch = (data['targetBranch'] as String?)?.trim() ?? '';
+
+  if (repoName.isEmpty || targetBranch.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'repoName, targetBranch required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    await prepareMerge(repoName, targetBranch);
+    return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleCompleteMerge(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoName = (data['repoName'] as String?)?.trim() ?? '';
+  final targetBranch = (data['targetBranch'] as String?)?.trim() ?? '';
+
+  if (repoName.isEmpty || targetBranch.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'repoName, targetBranch required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    await completeMerge(repoName, targetBranch);
+    return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleEdgeAdd(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoPath = _sanitizePath(data['repoPath'] as String?);
+  final child = data['child'] as String?;
+  final parent = data['parent'] as String?;
+
+  if (repoPath.isEmpty || child == null || parent == null) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'repoPath, child, parent required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    final f = File(p.join(repoPath, 'edges'));
+    final lines = f.existsSync() ? await f.readAsLines() : <String>[];
+    if (lines.isEmpty) {
+      // Init with dummy commit id
+      lines.add('0000000000000000000000000000000000000000');
+    }
+    lines.add('$child $parent');
+    await f.writeAsString(lines.join('\n'));
+    return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleBackupCommits(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final token = (data['token'] as String?)?.trim() ?? '';
+  final repoName = (data['repoName'] as String?)?.trim() ?? '';
+
+  if (repoName.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'repoName required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  try {
+    final result = await listBackupCommits(repoName, token,
+        onProgress: (percent, received, total) {
+      final msg = jsonEncode({
+        'type': 'backup_progress',
+        'repo': repoName,
+        'percent': percent,
+        'received': received,
+        'total': total
+      });
+      for (final socket in _activeFrontendSockets) {
+        try {
+          socket.sink.add(msg);
+        } catch (_) {}
+      }
+    });
+    print("chainViewUrl: ${result['chainViewUrl']}");
+    return _cors(Response.ok(jsonEncode(result), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
 }
