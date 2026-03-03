@@ -139,167 +139,16 @@ Future<void> main(List<String> args) async {
   await initTrackingService();
   final router = Router();
 
-  router.get('/health', (Request req) async {
-    return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
-      'Content-Type': 'application/json; charset=utf-8',
-    }));
-  });
+  router.get('/health', _handleHealth);
 
   // WebSocket endpoint for Word Plugin
-  router.get('/ws', (Request req) {
-    return webSocketHandler((channel, protocol) {
-      print('Word Plugin connected');
-      _activePluginSockets.add(channel);
-
-      comSender = (Map<String, dynamic> message) async {
-        if (_activePluginSockets.isEmpty) return false;
-        final id = _uuid.v4().replaceAll('-', '');
-        message['id'] = id;
-
-        // Send to all connected plugins
-        for (final socket in _activePluginSockets) {
-          try {
-            socket.sink.add(jsonEncode(message));
-          } catch (e) {
-            print('Failed to send to socket: $e');
-          }
-        }
-
-        final mainCompleter = Completer<dynamic>();
-        _pendingRequests[id] = mainCompleter;
-
-        try {
-          // Wait for first success or timeout
-          final response =
-              await mainCompleter.future.timeout(const Duration(seconds: 30));
-          if (response is Map && response['status'] == 'success') return true;
-          return false;
-        } catch (e) {
-          _pendingRequests.remove(id);
-          return false;
-        }
-      };
-
-      channel.stream.listen((message) {
-        // print('Raw WebSocket message: $message');
-        try {
-          final data = jsonDecode(message as String);
-          if (data is Map) {
-            if (data['type'] == 'response' && data['id'] != null) {
-              final id = data['id'];
-              // Check if we have a pending request
-              if (_pendingRequests.containsKey(id)) {
-                if (data['status'] == 'success') {
-                  // If success, complete the main completer immediately
-                  if (!_pendingRequests[id]!.isCompleted) {
-                    _pendingRequests[id]!.complete(data);
-                  }
-                } else {
-                  print('Plugin reported error/mismatch: ${data['message']}');
-                  // Fail fast
-                  if (!_pendingRequests[id]!.isCompleted) {
-                    _pendingRequests[id]!
-                        .complete(data); // Complete with error data
-                  }
-                }
-              }
-            } else if (data['type'] == 'event' && data['event'] == 'saved') {
-              final path = data['path'] as String?;
-              if (path != null) {
-                print(
-                    'Plugin reported save event for: $path. But we ignore it. ');
-                /*
-                   // Notify frontend to start loading immediately
-                   for (final socket in _activeFrontendSockets) {
-                     try {
-                       socket.sink.add(jsonEncode({
-                         'type': 'loading_status',
-                         'loading': true,
-                         'message': '正在处理保存事件...'
-                       }));
-                     } catch (e) {
-                       print('Failed to notify frontend loading: $e');
-                     }
-                   }
-
-                   for (final socket in _activeFrontendSockets) {
-                     try {
-                       socket.sink.add(jsonEncode({
-                         'type': 'repo_updated',
-                         'path': path,
-                       }));
-                     } catch (e) {
-                       print('Failed to notify frontend: $e');
-                     }
-                   }
-                   */
-              } else {
-                print('Plugin reported save event but path is null');
-              }
-            } else {
-              print('Received from plugin: $message');
-            }
-          }
-        } catch (e) {
-          print('WebSocket message error: $e');
-        }
-      }, onDone: () {
-        print('Word Plugin disconnected');
-        _activePluginSockets.remove(channel);
-        if (_activePluginSockets.isEmpty) {
-          comSender = null;
-        }
-        // Notify frontend
-        for (final socket in _activeFrontendSockets) {
-          try {
-            socket.sink.add(
-                jsonEncode({'type': 'com_status', 'status': 'disconnected'}));
-          } catch (_) {}
-        }
-      }, onError: (e) {
-        print('WebSocket error: $e');
-        _activePluginSockets.remove(channel);
-        if (_activePluginSockets.isEmpty) {
-          comSender = null;
-        }
-        // Notify frontend
-        for (final socket in _activeFrontendSockets) {
-          try {
-            socket.sink.add(
-                jsonEncode({'type': 'com_status', 'status': 'disconnected'}));
-          } catch (_) {}
-        }
-      });
-    })(req);
-  });
+  router.get('/ws', _handleWs);
 
   // WebSocket endpoint for Frontend Client
-  router.get('/ws/client', (Request req) {
-    return webSocketHandler((channel, protocol) {
-      print('Frontend Client connected');
-      _activeFrontendSockets.add(channel);
-
-      channel.stream.listen((message) {
-        // Client usually just listens
-      }, onDone: () {
-        print('Frontend Client disconnected');
-        _activeFrontendSockets.remove(channel);
-      }, onError: (e) {
-        print('Frontend WebSocket error: $e');
-        _activeFrontendSockets.remove(channel);
-      });
-    })(req);
-  });
+  router.get('/ws/client', _handleWsClient);
 
   // Word Plugin API: Health Check
-  router.get('/api/health', (Request req) async {
-    return _cors(Response.ok(
-        jsonEncode(
-            {'status': 'ok', 'connected': _activePluginSockets.isNotEmpty}),
-        headers: {
-          'Content-Type': 'application/json; charset=utf-8',
-        }));
-  });
+  router.get('/api/health', _handleApiHealth);
 
   // Word Plugin API: Trigger Save
   router.post('/api/save', _handleApiSave);
@@ -321,18 +170,7 @@ Future<void> main(List<String> args) async {
 
   router.post('/project/save_as', _handleProjectSaveAs);
 
-  router.get('/project/list', (Request req) async {
-    try {
-      final projects = await listProjects();
-      return _cors(Response.ok(jsonEncode(projects), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
+  router.get('/project/list', _handleProjectList);
 
   router.post('/project/copy', _handleProjectCopy);
 
@@ -368,39 +206,10 @@ Future<void> main(List<String> args) async {
   router.post('/compare_ai', _handleCompareAi);
 
   // 🔥 新增：AI 缓存统计端点
-  router.get('/ai_cache/stats', (Request req) async {
-    try {
-      final stats = await AIDiffService.getCacheStats();
-      return _cors(Response.ok(jsonEncode(stats), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response.internalServerError(
-        body: jsonEncode({'error': e.toString()}),
-        headers: {'Content-Type': 'application/json; charset=utf-8'},
-      ));
-    }
-  });
+  router.get('/ai_cache/stats', _handleAiCacheStats);
 
   // 🔥 新增：清空 AI 缓存端点
-  router.delete('/ai_cache', (Request req) async {
-    try {
-      final deleted = await AIDiffService.clearCache();
-      return _cors(Response.ok(
-          jsonEncode({
-            'success': true,
-            'deleted': deleted,
-          }),
-          headers: {
-            'Content-Type': 'application/json; charset=utf-8',
-          }));
-    } catch (e) {
-      return _cors(Response.internalServerError(
-        body: jsonEncode({'error': e.toString()}),
-        headers: {'Content-Type': 'application/json; charset=utf-8'},
-      ));
-    }
-  });
+  router.delete('/ai_cache', _handleAiCacheClear);
 
   router.post('/preview_cache', _handlePreviewCache);
 
@@ -426,18 +235,7 @@ Future<void> main(List<String> args) async {
 
   router.post('/track/info', _handleTrackInfo);
 
-  router.get('/track/list', (Request req) async {
-    try {
-      final list = await listProjects();
-      return _cors(Response.ok(jsonEncode({'projects': list}), headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      }));
-    } catch (e) {
-      return _cors(Response(500,
-          body: jsonEncode({'error': e.toString()}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-  });
+  router.get('/track/list', _handleTrackList);
 
   router.post('/reset_branch', _handleResetBranch);
 
@@ -2326,6 +2124,199 @@ Future<Response> _handleBackupCommits(Request req) async {
     });
     print("chainViewUrl: ${result['chainViewUrl']}");
     return _cors(Response.ok(jsonEncode(result), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleHealth(Request req) async {
+  return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+    'Content-Type': 'application/json; charset=utf-8',
+  }));
+}
+
+FutureOr<Response> _handleWs(Request req) {
+  return webSocketHandler((channel, protocol) {
+    print('Word Plugin connected');
+    _activePluginSockets.add(channel);
+
+    comSender = (Map<String, dynamic> message) async {
+      if (_activePluginSockets.isEmpty) return false;
+      final id = _uuid.v4().replaceAll('-', '');
+      message['id'] = id;
+
+      // Send to all connected plugins
+      for (final socket in _activePluginSockets) {
+        try {
+          socket.sink.add(jsonEncode(message));
+        } catch (e) {
+          print('Failed to send to socket: $e');
+        }
+      }
+
+      final mainCompleter = Completer<dynamic>();
+      _pendingRequests[id] = mainCompleter;
+
+      try {
+        // Wait for first success or timeout
+        final response =
+            await mainCompleter.future.timeout(const Duration(seconds: 30));
+        if (response is Map && response['status'] == 'success') return true;
+        return false;
+      } catch (e) {
+        _pendingRequests.remove(id);
+        return false;
+      }
+    };
+
+    channel.stream.listen((message) {
+      // print('Raw WebSocket message: $message');
+      try {
+        final data = jsonDecode(message as String);
+        if (data is Map) {
+          if (data['type'] == 'response' && data['id'] != null) {
+            final id = data['id'];
+            // Check if we have a pending request
+            if (_pendingRequests.containsKey(id)) {
+              if (data['status'] == 'success') {
+                // If success, complete the main completer immediately
+                if (!_pendingRequests[id]!.isCompleted) {
+                  _pendingRequests[id]!.complete(data);
+                }
+              } else {
+                print('Plugin reported error/mismatch: ${data['message']}');
+                // Fail fast
+                if (!_pendingRequests[id]!.isCompleted) {
+                  _pendingRequests[id]!
+                      .complete(data); // Complete with error data
+                }
+              }
+            }
+          } else if (data['type'] == 'event' && data['event'] == 'saved') {
+            final path = data['path'] as String?;
+            if (path != null) {
+              print(
+                  'Plugin reported save event for: $path. But we ignore it. ');
+            } else {
+              print('Plugin reported save event but path is null');
+            }
+          } else {
+            print('Received from plugin: $message');
+          }
+        }
+      } catch (e) {
+        print('WebSocket message error: $e');
+      }
+    }, onDone: () {
+      print('Word Plugin disconnected');
+      _activePluginSockets.remove(channel);
+      if (_activePluginSockets.isEmpty) {
+        comSender = null;
+      }
+      // Notify frontend
+      for (final socket in _activeFrontendSockets) {
+        try {
+          socket.sink.add(
+              jsonEncode({'type': 'com_status', 'status': 'disconnected'}));
+        } catch (_) {}
+      }
+    }, onError: (e) {
+      print('WebSocket error: $e');
+      _activePluginSockets.remove(channel);
+      if (_activePluginSockets.isEmpty) {
+        comSender = null;
+      }
+      // Notify frontend
+      for (final socket in _activeFrontendSockets) {
+        try {
+          socket.sink.add(
+              jsonEncode({'type': 'com_status', 'status': 'disconnected'}));
+        } catch (_) {}
+      }
+    });
+  })(req);
+}
+
+FutureOr<Response> _handleWsClient(Request req) {
+  return webSocketHandler((channel, protocol) {
+    print('Frontend Client connected');
+    _activeFrontendSockets.add(channel);
+
+    channel.stream.listen((message) {
+      // Client usually just listens
+    }, onDone: () {
+      print('Frontend Client disconnected');
+      _activeFrontendSockets.remove(channel);
+    }, onError: (e) {
+      print('Frontend WebSocket error: $e');
+      _activeFrontendSockets.remove(channel);
+    });
+  })(req);
+}
+
+Future<Response> _handleApiHealth(Request req) async {
+  return _cors(Response.ok(
+      jsonEncode(
+          {'status': 'ok', 'connected': _activePluginSockets.isNotEmpty}),
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+      }));
+}
+
+Future<Response> _handleProjectList(Request req) async {
+  try {
+    final projects = await listProjects();
+    return _cors(Response.ok(jsonEncode(projects), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> _handleAiCacheStats(Request req) async {
+  try {
+    final stats = await AIDiffService.getCacheStats();
+    return _cors(Response.ok(jsonEncode(stats), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response.internalServerError(
+      body: jsonEncode({'error': e.toString()}),
+      headers: {'Content-Type': 'application/json; charset=utf-8'},
+    ));
+  }
+}
+
+Future<Response> _handleAiCacheClear(Request req) async {
+  try {
+    final deleted = await AIDiffService.clearCache();
+    return _cors(Response.ok(
+        jsonEncode({
+          'success': true,
+          'deleted': deleted,
+        }),
+        headers: {
+          'Content-Type': 'application/json; charset=utf-8',
+        }));
+  } catch (e) {
+    return _cors(Response.internalServerError(
+      body: jsonEncode({'error': e.toString()}),
+      headers: {'Content-Type': 'application/json; charset=utf-8'},
+    ));
+  }
+}
+
+Future<Response> _handleTrackList(Request req) async {
+  try {
+    final list = await listProjects();
+    return _cors(Response.ok(jsonEncode({'projects': list}), headers: {
       'Content-Type': 'application/json; charset=utf-8',
     }));
   } catch (e) {
