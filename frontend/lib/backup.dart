@@ -3,12 +3,13 @@ import 'dart:io'; // For Process.run
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
-import 'package:http/http.dart' as http;
+
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:web_socket_channel/status.dart' as status;
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 import 'models.dart';
+import 'main.dart';
 import 'graph_view.dart'; // For SimpleGraphView
 
 class BackupPage extends StatefulWidget {
@@ -58,18 +59,11 @@ class _BackupPageState extends State<BackupPage> {
   Future<void> _fetchSubRepos() async {
     try {
       final url = '$backupBase/track/repos';
-      final resp = await http.post(
-        Uri.parse(url),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'packagePath': widget.projectName}),
-      );
-      if (resp.statusCode == 200) {
-        final j = jsonDecode(resp.body);
-        final repos = (j['repos'] as List).cast<Map<String, dynamic>>();
-        setState(() {
-          _subRepos = repos.map((e) => e['relPath'] as String).toList();
-        });
-      }
+      final j = await postJson(url, {'packagePath': widget.projectName});
+      final repos = (j['repos'] as List).cast<Map<String, dynamic>>();
+      setState(() {
+        _subRepos = repos.map((e) => e['relPath'] as String).toList();
+      });
     } catch (e) {
       debugPrint('Failed to fetch sub repos: $e');
     }
@@ -81,19 +75,12 @@ class _BackupPageState extends State<BackupPage> {
         // Use widget.projectName as repoPath if widget.repoPath is empty, 
         // though widget.repoPath should be passed correctly.
         final path = widget.repoPath.isNotEmpty ? widget.repoPath : widget.projectName;
-        final resp = await http.post(
-          Uri.parse(url),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'repoPath': path}),
-        );
-        if (resp.statusCode == 200) {
-           final j = jsonDecode(resp.body);
-           final id = j['workspaceId'] as String?;
-           if (id != null) {
-              setState(() {
-                 _workspaceId = id;
-              });
-           }
+        final j = await postJson(url, {'repoPath': path});
+        final id = j['workspaceId'] as String?;
+        if (id != null) {
+           setState(() {
+              _workspaceId = id;
+           });
         }
      } catch (e) {
         debugPrint('Failed to fetch workspaceId: $e');
@@ -160,16 +147,7 @@ class _BackupPageState extends State<BackupPage> {
     try {
       final url = '$backupBase/backup/commits';
         print("The token here is ${widget.token}");
-      final resp = await http.post(
-        Uri.parse(url),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'repoName': repo,"token":widget.token}),
-      );
-      if (resp.statusCode != 200) {
-        throw Exception('加载备份失败: ${resp.body}');
-      }
-
-      final j = jsonDecode(resp.body) as Map<String, dynamic>;
+      final j = await postJson(url, {'repoName': repo, "token": widget.token});
       final list = (j['commits'] as List?) ?? const [];
       final bool cacheHit = j['cacheHit'] == true;
       _chainViewUrl = j['chainViewUrl'] as String?;
@@ -210,20 +188,12 @@ class _BackupPageState extends State<BackupPage> {
     if (_comparisons.containsKey(sha)) return;
     // Call the compare_repos API to get aligned graphs
     final url = '$backupBase/compare_repos';
-    final resp = await http.post(
-      Uri.parse(url),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'repoName': repo,
-        'commitA': sha, // Backup commit
-        'commitB': 'local', // Local state
-        'localPath': widget.repoPath,
-      }),
-    );
-    if (resp.statusCode != 200) {
-      throw Exception('加载对比失败: ${resp.body}');
-    }
-    final j = jsonDecode(resp.body) as Map<String, dynamic>;
+    final j = await postJson(url, {
+      'repoName': repo,
+      'commitA': sha, // Backup commit
+      'commitB': 'local', // Local state
+      'localPath': widget.repoPath,
+    });
     final gA = GraphData.fromJson(j['graphA']);
     final gB = GraphData.fromJson(j['graphB']);
     final rawMapping = j['unifiedRowMapping'] as Map<String, dynamic>;

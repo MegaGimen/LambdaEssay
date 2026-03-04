@@ -25,14 +25,12 @@ import 'visualize.dart';
 import 'backup.dart';
 import 'pull_preview.dart';
 import 'graph_view.dart';
-import 'movable_panel.dart';
-import 'version.dart';
 import 'backend_manager.dart';
 import 'login_page.dart';
 
 const String kTrackingExt = '.tracking.zip';
 
-Future<Map<String, dynamic>> _postJson(
+Future<dynamic> postJson(
   String url,
   Map<String, dynamic> body,
 ) async {
@@ -65,7 +63,39 @@ Future<Map<String, dynamic>> _postJson(
     throw Exception(respBody);
   }
   if (respBody.isEmpty) return {};
-  return jsonDecode(respBody) as Map<String, dynamic>;
+  return jsonDecode(respBody);
+}
+
+Future<dynamic> getJson(String url) async {
+  final uri = Uri.parse(url);
+  final path = uri.path;
+
+  // 查找路由处理器
+  final handler = routeMap[path];
+  if (handler == null) {
+    throw Exception('Route not found: $path');
+  }
+
+  // 构造 Shelf Request
+  final request = shelf.Request(
+    'GET',
+    uri,
+    headers: {'content-type': 'application/json'},
+  );
+
+  // 调用处理器
+  final response = await (handler as Function)(request) as shelf.Response;
+
+  // 处理响应
+  final respBody = await response.readAsString();
+  if (response.statusCode == 204) {
+    return {};
+  }
+  if (response.statusCode != 200 && response.statusCode != 201) {
+    throw Exception(respBody);
+  }
+  if (respBody.isEmpty) return {};
+  return jsonDecode(respBody);
 }
 
 
@@ -313,12 +343,9 @@ class _BootstrapAppState extends State<BootstrapApp> {
             _statusMessage = '正在连接服务器... (尝试 ${retryCount + 1})';
           });
 
-          final response = await http.get(Uri.parse(healthUrl));
-          if (response.statusCode == 200) {
-            final body = jsonDecode(response.body);
-            if (body['status'] == 'ok') {
-              ready = true;
-            }
+          final body = await getJson(healthUrl);
+          if (body['status'] == 'ok') {
+            ready = true;
           }
         } catch (e) {
           // 连接失败，等待重试
@@ -545,7 +572,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   Future<void> _checkDirtyStatus() async {
     if (currentProjectName == null) return;
     try {
-      final resp = await _postJson('$baseUrl/project/dirty_status', {
+      final resp = await postJson('$baseUrl/project/dirty_status', {
         'packagePath': currentProjectName,
       });
       if (resp['isDirty'] == true) {
@@ -693,7 +720,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
   Future<void> _requestPreviewCache(String commitId) async {
     try {
-      await _postJson('$baseUrl/preview_cache', {
+      await postJson('$baseUrl/preview_cache', {
         'repoPath': pathCtrl.text.trim(),
         'commitId': commitId
       });
@@ -868,9 +895,9 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     setState(() => loading = true);
     try {
       if (autoAccept) {
-        await _postJson('$baseUrl/api/save', {'options': {'acceptRevisions': true}});
+        await postJson('$baseUrl/api/save', {'options': {'acceptRevisions': true}});
       }
-      await _postJson('$baseUrl/commit', {'repoPath': pathCtrl.text.trim(), 'author': author, 'message': msg});
+      await postJson('$baseUrl/commit', {'repoPath': pathCtrl.text.trim(), 'author': author, 'message': msg});
 
       
       await _onUpdateRepoAction(opIdentical: false);
@@ -898,7 +925,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     if (name.isEmpty) return;
     setState(() => loading = true);
     try {
-      await _postJson('$baseUrl/branch/create', {'repoPath': pathCtrl.text.trim(), 'branchName': Branch.encodeName(name)});
+      await postJson('$baseUrl/branch/create', {'repoPath': pathCtrl.text.trim(), 'branchName': Branch.encodeName(name)});
       await _onUpdateRepoAction(forcePull: false);
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('创建失败: $e')));
@@ -910,7 +937,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   Future<void> _doSwitchBranch(String name) async {
     setState(() => loading = true);
     try {
-      await _postJson('$baseUrl/branch/switch', {'projectName': currentProjectName ?? '', 'branchName': name, 'repoPath': pathCtrl.text.trim()});
+      await postJson('$baseUrl/branch/switch', {'projectName': currentProjectName ?? '', 'branchName': name, 'repoPath': pathCtrl.text.trim()});
       await _onUpdateRepoAction(forcePull: false, opIdentical: false);
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('已切换到分支: $name')));
     } catch (e) {
@@ -978,7 +1005,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                   final currentIndex = commits.indexWhere((c) => c.id == node.id);
                   if (currentIndex >= 0 && currentIndex < commits.length - 1) {
                     final parentNode = commits[currentIndex + 1];
-                    final response = await _postJson('$baseUrl/compare_ai', {'repoPath': pathCtrl.text.trim(), 'commit1': parentNode.id, 'commit2': node.id, 'docType': 'word'});
+                    final response = await postJson('$baseUrl/compare_ai', {'repoPath': pathCtrl.text.trim(), 'commit1': parentNode.id, 'commit2': node.id, 'docType': 'word'});
                     if (response['success'] == true && response['result'] != null) {
                       if (ctx.mounted) setState(() { aiResult = response['result'] as Map<String, dynamic>; aiLoading = false; aiError = null; });
                     } else { throw Exception('后端返回失败'); }
@@ -1139,7 +1166,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     if (username != null && password != null) {
       // Refresh tokens automatically
       try {
-        final resp = await _postJson('$baseUrl/create_user', {
+        final resp = await postJson('$baseUrl/create_user', {
           'username': username,
           'password': password,
         });
@@ -1178,7 +1205,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     if (username != null && password != null) {
       // Try to get token
       try {
-        final resp = await _postJson('$baseUrl/create_user', {
+        final resp = await postJson('$baseUrl/create_user', {
           'username': username,
           'password': password,
         });
@@ -1212,20 +1239,13 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     List<Map<String, dynamic>> repoList = [];
     List<String> repos = [];
     try {
-      final resp = await http.post(
-        Uri.parse('http://localhost:8080/remote/list'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'token': _token}),
-      );
-      if (resp.statusCode == 200) {
-        final list = jsonDecode(resp.body) as List;
-        // Check format: older server might return List<String>, newer returns List<Map>
-        if (list.isNotEmpty && list.first is String) {
-          repos = list.cast<String>();
-        } else {
-          repoList = list.cast<Map<String, dynamic>>();
-          repos = repoList.map((e) => e['name'] as String).toList();
-        }
+      final list = await postJson('$baseUrl/remote/list', {'token': _token}) as List;
+      // Check format: older server might return List<String>, newer returns List<Map>
+      if (list.isNotEmpty && list.first is String) {
+        repos = list.cast<String>();
+      } else {
+        repoList = list.cast<Map<String, dynamic>>();
+        repos = repoList.map((e) => e['name'] as String).toList();
       }
     } catch (e) {
       if (!mounted) return null;
@@ -1393,7 +1413,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
     try {
       // 1. Direct Push (Backend handles remote creation)
-      await _postJson('$baseUrl/push', {
+      await postJson('$baseUrl/push', {
         'repoPath': rootPath,
         'username': _username,
         'token': _token,
@@ -1530,7 +1550,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       };
       if (selectedBranch != null) body['branch'] = selectedBranch;
 
-      await _postJson('http://localhost:8080/push', body);
+      await postJson('http://localhost:8080/push', body);
       if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('推送成功 (已同步所有父文件夹)')));
@@ -1730,7 +1750,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   Future<void> _doForcePull() async {
     setState(() => loading = true);
     try {
-      final resp = await _postJson('http://localhost:8080/pull', {
+      final resp = await postJson('http://localhost:8080/pull', {
         'repoName': pathCtrl.text.trim(),
         'username': _username,
         'token': _token,
@@ -1761,7 +1781,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     setState(() => loading = true);
     try {
       // Rebase pull
-      await _postJson('http://localhost:8080/pull_rebase', {
+      await postJson('http://localhost:8080/pull_rebase', {
         'repoName': pathCtrl.text.trim(),
         'username': _username,
         'token': _token,
@@ -1826,7 +1846,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     if (!mounted) return;
     setState(() => loading = true);
     try {
-      await _postJson('http://localhost:8080/fork_local', {
+      await postJson('http://localhost:8080/fork_local', {
         'repoName': pathCtrl.text.trim(),
         'newBranch': newBranch,
       });
@@ -1938,7 +1958,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         final docx = docxCtrl.text.trim();
         if (docx.isNotEmpty) {
           try {
-            await _postJson('http://localhost:8080/track/update', {
+            await postJson('http://localhost:8080/track/update', {
               'packagePath': packagePath,
               'newDocxPath': docx,
               'opIdentical': false,
@@ -2164,7 +2184,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       print('Debug: Sending pull request: $body');
       print('==================================================');
 
-      final resp = await _postJson('http://localhost:8080/pull', body);
+      final resp = await postJson('http://localhost:8080/pull', body);
       
       print('==================================================');
       print('Debug: Received pull response: $resp');
@@ -2234,7 +2254,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
         // Load sub-repos
         try {
-          final reposResp = await _postJson('http://localhost:8080/track/repos', {
+          final reposResp = await postJson('http://localhost:8080/track/repos', {
             'packagePath': localTrackingZipPath,
           });
           final repos = (reposResp['repos'] as List).cast<Map<String, dynamic>>();
@@ -2277,7 +2297,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     if (name == null || name.isEmpty) return;
 
     try {
-      final resp = await _postJson('http://localhost:8080/track/update', {
+      final resp = await postJson('http://localhost:8080/track/update', {
         'packagePath': name,
         'opIdentical': false,
       });
@@ -2453,13 +2473,13 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   Future<void> _importProject(String sourcePath, String targetPath) async {
     setState(() => loading = true);
     try {
-      await _postJson('$baseUrl/project/copy', {
+      await postJson('$baseUrl/project/copy', {
         'packagePath': currentProjectName,
         'targetDir': targetPath,
         'sourcePath': sourcePath
       });
 
-      final reposResp = await _postJson('$baseUrl/track/repos', {
+      final reposResp = await postJson('$baseUrl/track/repos', {
         'packagePath': currentProjectName,
       });
       if (!mounted) return;
@@ -2518,7 +2538,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       setState(() => loading = true);
       try {
         final parent = p.dirname(_selectedFilePath!);
-        await _postJson('$baseUrl/project/delete', {
+        await postJson('$baseUrl/project/delete', {
           'packagePath': currentProjectName,
           'targetPath': _selectedFilePath,
         });
@@ -2542,14 +2562,14 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   Future<GraphData> _loadGraph(String repoPath) async {
     final limit = int.tryParse(limitCtrl.text.trim());
     // Reset cache on server first? Not strictly needed but good for consistency
-    await _postJson('http://localhost:8080/reset', {'ts': DateTime.now().millisecondsSinceEpoch});
-    final j = await _postJson('http://localhost:8080/graph', {'repoPath': repoPath, 'limit': limit});
+    await postJson('http://localhost:8080/reset', {'ts': DateTime.now().millisecondsSinceEpoch});
+    final j = await postJson('http://localhost:8080/graph', {'repoPath': repoPath, 'limit': limit});
     return GraphData.fromJson(j);
   }
 
   Future<GraphData> _fetchRemoteGraph(String repoPath) async {
     final limit = int.tryParse(limitCtrl.text.trim());
-    final j = await _postJson('http://localhost:8080/remote_graph', {
+    final j = await postJson('http://localhost:8080/remote_graph', {
       'repoPath': repoPath,
       'limit': limit,
       'remoteNames': [], // Empty list requests all remotes
@@ -2559,7 +2579,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
   Future<void> _triggerGitFetch(String repoPath) async {
     try {
-      await _postJson('http://localhost:8080/fetch', {'repoPath': repoPath});
+      await postJson('http://localhost:8080/fetch', {'repoPath': repoPath});
     } catch (e) {
       print('Fetch failed: $e');
     }
@@ -2584,7 +2604,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
     // Try fetch tracking info
     try {
-      final info = await _postJson('http://localhost:8080/track/info', {
+      final info = await postJson('http://localhost:8080/track/info', {
         'repoPath': path,
       });
       if (!mounted) return;
@@ -2697,7 +2717,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       return;
     }
     try {
-      final resp = await _postJson('http://localhost:8080/track/create', {
+      final resp = await postJson('http://localhost:8080/track/create', {
         'packagePath': packagePath,
         'docxPath': null,
       });
@@ -2706,7 +2726,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       final type = resp['type'] as String? ?? 'file';
 
       if (type == 'folder') {
-        final reposResp = await _postJson('http://localhost:8080/track/repos', {
+        final reposResp = await postJson('http://localhost:8080/track/repos', {
           'packagePath': packagePath,
         });
         final repos = (reposResp['repos'] as List).cast<Map<String, dynamic>>();
@@ -2762,9 +2782,9 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   Future<List<String>> _fetchProjectList() async {
     try {
       final resp =
-          await http.get(Uri.parse('http://localhost:8080/track/list'));
-      if (resp.statusCode == 200) {
-        final body = jsonDecode(resp.body);
+          await getJson('http://localhost:8080/track/list');
+      if (resp != null) {
+        final body = resp;
         final list = (body['projects'] as List).cast<String>();
         return list.where((p) => p != 'cache' && p != 'preview').toList();
       }
@@ -2782,7 +2802,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
     setState(() => loading = true);
     try {
-      final resp = await _postJson('http://localhost:8080/track/open', {
+      final resp = await postJson('http://localhost:8080/track/open', {
         'packagePath': packagePath,
       });
       if (!mounted) return;
@@ -2791,7 +2811,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       final type = resp['type'] as String? ?? 'file';
 
       if (type == 'folder') {
-        final reposResp = await _postJson('http://localhost:8080/track/repos', {
+        final reposResp = await postJson('http://localhost:8080/track/repos', {
           'packagePath': packagePath,
         });
         if (!mounted) return;
@@ -2845,7 +2865,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     });
 
     try {
-      final resp = await _postJson('$baseUrl/track/find_identical', {
+      final resp = await postJson('$baseUrl/track/find_identical', {
         'packagePath': currentProjectName,
       });
       if (!mounted) return;
@@ -2955,7 +2975,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             final swFetch = Stopwatch()..start();
             try {
               // Check status performs git fetch internally
-              await _postJson('http://localhost:8080/check_pull_status', {
+              await postJson('http://localhost:8080/check_pull_status', {
                 'repoName': name,
                 'username': _username,
                 'token': _token,
@@ -2975,7 +2995,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
       try {
         final swUpdate = Stopwatch()..start();
-        final resp = await _postJson('http://localhost:8080/track/update', {
+        final resp = await postJson('http://localhost:8080/track/update', {
           'packagePath': name,
           'opIdentical': false,
           'repoPath': specificRepoPath,
@@ -3050,7 +3070,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           }
 
           if (docx != null && docx.isNotEmpty) {
-            final up = await _postJson('http://localhost:8080/track/update', {
+            final up = await postJson('http://localhost:8080/track/update', {
               'packagePath': name,
               'newDocxPath': docx,
               'opIdentical': false,
@@ -3125,7 +3145,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     setState(() => loading = true);
 
     try {
-      await _postJson('http://localhost:8080/prepare_merge', {
+      await postJson('http://localhost:8080/prepare_merge', {
         'repoName': pathCtrl.text.trim(),
         'targetBranch': targetBranch,
       });
@@ -3166,7 +3186,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         if (confirm != true) {
           // Restore logic if cancelled in Step 3
           setState(() => loading = true);
-          await _postJson('http://localhost:8080/restore_docx', {'repoName': pathCtrl.text.trim()});
+          await postJson('http://localhost:8080/restore_docx', {'repoName': pathCtrl.text.trim()});
           if (!mounted) return;
           setState(() => loading = false);
           if (mounted) {
@@ -3211,7 +3231,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       // await _onUpdateRepoAction(forcePull: false);
 
       // Step 6: Complete Merge
-      await _postJson('http://localhost:8080/complete_merge', {
+      await postJson('http://localhost:8080/complete_merge', {
         'repoName': pathCtrl.text.trim(),
         'targetBranch': targetBranch,
       });
@@ -3220,7 +3240,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       // setState(() => loading = false);
 
       // Force clear cache on server
-      await _postJson('http://localhost:8080/reset', {});
+      await postJson('http://localhost:8080/reset', {});
 
 
       if (!mounted) return;
@@ -3320,7 +3340,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       if (newPath.isEmpty) return;
 
       try {
-        final up = await _postJson('http://localhost:8080/track/update', {
+        final up = await postJson('http://localhost:8080/track/update', {
           'packagePath': name,
           'newDocxPath': newPath,
           'opIdentical': false,
@@ -3348,7 +3368,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   Future<void> _openProject(String name, {bool isFolderProject = false}) async {
     setState(() => loading = true);
     try {
-      final resp = await _postJson('http://localhost:8080/track/open', {
+      final resp = await postJson('http://localhost:8080/track/open', {
         'packagePath': name,
       });
       if (!mounted) return;
@@ -3357,7 +3377,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       final type = resp['type'] as String? ?? 'file';
 
       if (type == 'folder') {
-        final reposResp = await _postJson('http://localhost:8080/track/repos', {
+        final reposResp = await postJson('http://localhost:8080/track/repos', {
           'packagePath': name,
         });
         if (!mounted) return;
@@ -3545,7 +3565,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         contentDocx.copySync(targetFilePath);
       }
 
-      final reposResp = await _postJson('http://localhost:8080/track/repos', {
+      final reposResp = await postJson('http://localhost:8080/track/repos', {
         'packagePath': currentProjectName!,
       });
       if (!mounted) return;
@@ -3688,7 +3708,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     if (lowerPath.endsWith(kTrackingExt)) {
       try {
         setState(() => loading = true);
-        final resp = await _postJson('$baseUrl/track/expand', {
+        final resp = await postJson('$baseUrl/track/expand', {
           'filePath': filePath
         });
         if (!mounted) return;
@@ -3705,7 +3725,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           return;
         }
 
-        final openResp = await _postJson('$baseUrl/track/open', {
+        final openResp = await postJson('$baseUrl/track/open', {
           'packagePath': filePath,
         });
         if (!mounted) return;
@@ -4573,7 +4593,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     });
 
     try {
-      await _postJson('$baseUrl/project/save', {
+      await postJson('$baseUrl/project/save', {
         'packagePath': currentProjectName,
       });
       if (!mounted) return;
@@ -4616,7 +4636,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     });
 
     try {
-      await _postJson('$baseUrl/project/save_as', {
+      await postJson('$baseUrl/project/save_as', {
         'packagePath': currentProjectName,
         'newPackagePath': finalPath,
       });
@@ -5007,7 +5027,7 @@ class _GraphViewState extends State<_GraphView>
 
   Future<void> _requestPreviewCache(String commitId) async {
     try {
-      await _postJson('http://localhost:8080/preview_cache', {
+      await postJson('http://localhost:8080/preview_cache', {
         'repoPath': widget.repoPath,
         'commitId': commitId,
       });
@@ -5281,7 +5301,7 @@ class _GraphViewState extends State<_GraphView>
       String docType = 'word'; // 默认为 word
       // 这里可以根据实际文件扩展名判断，暂时使用默认值
 
-      final response = await _postJson('http://localhost:8080/compare_ai', {
+      final response = await postJson('http://localhost:8080/compare_ai', {
         'repoPath': widget.repoPath,
         'commit1': oldC,
         'commit2': newC,
@@ -5693,10 +5713,10 @@ class _GraphViewState extends State<_GraphView>
     widget.onLoading?.call(true);
     try {
       if (autoAccept) {
-        await _postJson('http://localhost:8080/api/save', {'options': {'acceptRevisions': true}});
+        await postJson('http://localhost:8080/api/save', {'options': {'acceptRevisions': true}});
       }
 
-      await _postJson('http://localhost:8080/commit', {
+      await postJson('http://localhost:8080/commit', {
         'repoPath': widget.repoPath,
         'author': author,
         'message': msg,
@@ -5758,7 +5778,7 @@ class _GraphViewState extends State<_GraphView>
 
     widget.onLoading?.call(true);
     try {
-      await _postJson('http://localhost:8080/branch/create', {
+      await postJson('http://localhost:8080/branch/create', {
         'repoPath': widget.repoPath,
         'branchName': Branch.encodeName(name)
       });

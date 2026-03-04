@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
+
+
 import 'package:shared_preferences/shared_preferences.dart';
 import 'main.dart'; // To navigate to GraphPage
 
@@ -56,17 +56,11 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
       setState(() => loading = true);
       try {
         // Attempt to login/refresh token
-        final resp = await http.post(
-          Uri.parse('$baseUrl/create_user'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({
+        final body = await postJson('$baseUrl/create_user', {
             'username': username,
             'password': password,
-          }),
-        );
+          });
         
-        if (resp.statusCode == 200) {
-           final body = jsonDecode(resp.body);
            if (body['tokens'] != null) {
              // Success, navigate to main page
              if (mounted) {
@@ -76,7 +70,6 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
              }
              return;
            }
-        }
       } catch (e) {
         // Ignore error, stay on login page
       } finally {
@@ -96,11 +89,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
       error = null;
     });
     try {
-      await http.post(
-        Uri.parse('$baseUrl/request_code'), 
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'email': email})
-      );
+      await postJson('$baseUrl/request_code', {'email': email});
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('验证码已发送，请检查邮箱')),
@@ -130,20 +119,12 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
 
     try {
       // 1. Register
-      final regResp = await http.post(
-        Uri.parse('$baseUrl/register'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
+      await postJson('$baseUrl/register', {
           'email': email,
           'username': username,
           'password': password,
           'verification_code': code,
-        }),
-      );
-
-      if (regResp.statusCode != 200) {
-        throw Exception(regResp.body);
-      }
+        });
 
       // 2. Login (Create Gitea User & Get Token)
       await _performLogin(username, password);
@@ -177,33 +158,19 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
   }
 
   Future<void> _performLogin(String username, String password) async {
-      // First try /login
-      final resp = await http.post(
-        Uri.parse('$baseUrl/login'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
+      Map<String, dynamic> body;
+      try {
+        // First try /login
+        body = await postJson('$baseUrl/login', {
           'username': username,
           'password': password,
-        }),
-      );
-
-      Map<String, dynamic> body;
-      if (resp.statusCode == 200) {
-        body = jsonDecode(resp.body);
-      } else {
+        });
+      } catch (_) {
         // Try create_user if login fails (legacy logic from main.dart)
-         final resp2 = await http.post(
-          Uri.parse('$baseUrl/create_user'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({
+         body = await postJson('$baseUrl/create_user', {
             'username': username,
             'password': password,
-          }),
-        );
-        if (resp2.statusCode != 200) {
-          throw Exception(resp2.body);
-        }
-        body = jsonDecode(resp2.body);
+          });
       }
 
       // Save credentials
