@@ -14,6 +14,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 // import 'package:file_tree_view/file_tree_view.dart';
 import 'widgets/custom_file_tree.dart';
 import 'server/server.dart';
+import 'server/git_service.dart';
 import 'server/route_map.dart';
 // import 'server/notification_service.dart';
 import 'package:shelf/shelf.dart' as shelf;
@@ -322,6 +323,14 @@ class _BootstrapAppState extends State<BootstrapApp> {
         _hasError = false;
       });
 
+      final setGlobal = await Process.run(
+          'git', ['config', '--global', 'core.autocrlf', 'false']);
+      if (setGlobal.exitCode == 0) {
+        print('✓ 已设置全局 core.autocrlf = false');
+      } else {
+        print('✗ 设置失败: ${setGlobal.stderr}');
+      }
+
       String binPath;
       if (kDebugMode) {
         // Debug模式：使用 frontend/bin
@@ -349,7 +358,7 @@ class _BootstrapAppState extends State<BootstrapApp> {
           mode: ProcessStartMode.detached);
       
       await BackendManager().startProcess('COM', comPath, []);
-
+      await initTrackingService();
       // 轮询健康检查接口
       bool ready = false;
       int retryCount = 0;

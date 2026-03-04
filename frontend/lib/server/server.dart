@@ -80,63 +80,6 @@ Future<void> _killPort(int port) async {
   }
 }
 
-final ProcessManager _processManager = const LocalProcessManager();
-
-Future<void> fuckEverything() async{
-
-  final setGlobal = await Process.run(
-      'git', ['config', '--global', 'core.autocrlf', 'false']);
-  if (setGlobal.exitCode == 0) {
-    print('✓ 已设置全局 core.autocrlf = false');
-  } else {
-    print('✗ 设置失败: ${setGlobal.stderr}');
-  }
-  // Start Heidegger service in background
-  try {
-    final scriptDir = p.dirname(Platform.script.toFilePath());
-    final heideggerPath = p.join(scriptDir, 'Heidegger.exe');
-    if (File(heideggerPath).existsSync()) {
-      await _killPort(5000);
-      print('Starting Heidegger service from $heideggerPath...');
-      // 使用 PowerShell 启动 Heidegger.exe，完全隐藏窗口
-      await _processManager.start([
-        'powershell',
-        '-WindowStyle',
-        'Hidden',
-        '-Command',
-        'Start-Process -FilePath "$heideggerPath" -WindowStyle Hidden'
-      ], mode: ProcessStartMode.normal, runInShell: false);
-    } else {
-      print('Heidegger.exe not found at $heideggerPath');
-    }
-  } catch (e) {
-    print('Failed to start Heidegger: $e');
-  }
-  // Start COM service in background
-  try {
-    final scriptDir = p.dirname(Platform.script.toFilePath());
-    final comPath = p.join(scriptDir, 'COM.exe');
-    if (File(comPath).existsSync()) {
-      print('Starting COM service from $comPath...');
-      // 使用 PowerShell 启动 COM.exe，完全隐藏窗口
-      await _processManager.start([
-        'powershell',
-        '-WindowStyle',
-        'Hidden',
-        '-Command',
-        'Start-Process -FilePath "$comPath" -WindowStyle Hidden'
-      ], mode: ProcessStartMode.normal, runInShell: false);
-    } else {
-      print('COM.exe not found at $comPath');
-    }
-  } catch (e) {
-    print('Failed to start COM: $e');
-  }
-
-
-  await initTrackingService();
-}
-
 class _MultipartPart {
   final String? name;
   final String? filename;
