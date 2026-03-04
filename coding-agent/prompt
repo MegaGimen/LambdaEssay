@@ -17,7 +17,7 @@
 - services.dart：包含与后端交互的服务，如文件上传、下载、版本比较等
 - views.dart：定义Flutter界面，如文档列表、版本比较、文件操作等
 
-后端源代码文件在server文件夹下。包含了git_service.dart，用于处理与Git相关的操作，如初始化仓库、添加文件、提交变更等。和server.dart，用于处理与前端对接的操作
+后端源代码文件在frontend/lib/server文件夹下。包含了git_service.dart，用于处理与Git相关的操作，如初始化仓库、添加文件、提交变更等。和server.dart，用于处理与前端对接的操作
 
 不要使用flutter build和flutter clean，只需用flutter analyze检查错误
 
@@ -214,7 +214,7 @@ LambdaEssay项目通过类似Git的方式管理Word文档版本，但避免了Gi
   3. 每次备份生成一个父仓库的Commit，代表子仓库在某一时刻的完整快照。
   4. **区块链存证**：将备份的Hash链记录到区块链（或模拟区块链）中，确保不可篡改。
 
-#### 2. 客户端服务 (Dart - server/lib/backup_service.dart)
+#### 2. 客户端服务 (Dart - frontend/lib/server/backup_service.dart)
 - **职责**：负责与备份服务器交互，下载和还原备份。
 - **缓存机制**：
   - 下载的备份存储在 `gitdocx_history_cache` 目录。
