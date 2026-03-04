@@ -84,9 +84,10 @@ Future<dynamic> postJson(
   }
 }
 
-Future<dynamic> getJson(String url) async {
-  final uri = Uri.parse(url);
-  final path = uri.path;
+Future<dynamic> getJson(String urlpath) async {
+  final prefix="http://localhost:8080";
+  final path = urlpath;
+  final uri=Uri.parse(prefix).resolve(path);
 
   // 查找路由处理器
   final handler = routeMap[path];
@@ -351,7 +352,6 @@ class _BootstrapAppState extends State<BootstrapApp> {
       await BackendManager().startProcess('COM', comPath, []);
 
       // 轮询健康检查接口
-      const healthUrl = 'http://localhost:8080/health';
       bool ready = false;
       int retryCount = 0;
 
@@ -361,7 +361,7 @@ class _BootstrapAppState extends State<BootstrapApp> {
             _statusMessage = '正在连接服务器... (尝试 ${retryCount + 1})';
           });
 
-          final body = await getJson(healthUrl);
+          final body = await getJson('/health');
           if (body['status'] == 'ok') {
             ready = true;
           }
