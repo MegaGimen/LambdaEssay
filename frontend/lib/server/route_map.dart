@@ -3,7 +3,7 @@ import 'server.dart';
 final Map<String, Function> routeMap = {
   '/health': handleHealth,
   '/ws': handleWs,
-  '/ws/client': handleWsClient,
+  // '/ws/client': handleWsClient, // Removed: Unified process uses NotificationService
   '/api/health': handleApiHealth,
   '/api/save': handleApiSave,
   '/api/document': handleApiDocument,

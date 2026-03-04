@@ -17,9 +17,12 @@ import 'package:http/http.dart' as http;
 
 import 'package:uuid/uuid.dart';
 import 'dart:async';
+// import 'notification_service.dart';
+
+// 全局回调
+Function(Map<String, dynamic> data)? onNotification;
 
 List<WebSocketChannel> _activePluginSockets = [];
-List<WebSocketChannel> _activeFrontendSockets = [];
 final _pendingRequests = <String, Completer<dynamic>>{};
 final _uuid = Uuid();
 
@@ -79,12 +82,7 @@ Future<void> _killPort(int port) async {
 
 final ProcessManager _processManager = const LocalProcessManager();
 
-
-Future<void> main(List<String> args) async {
-  if (args.contains('--debugMode')) {
-    setDebugMode(true);
-    print('Debug mode enabled');
-  }
+Future<void> fuckEverything() async{
 
   final setGlobal = await Process.run(
       'git', ['config', '--global', 'core.autocrlf', 'false']);
@@ -137,169 +135,6 @@ Future<void> main(List<String> args) async {
 
 
   await initTrackingService();
-  final router = Router();
-
-  router.get('/health', handleHealth);
-
-  // WebSocket endpoint for Word Plugin
-  router.get('/ws', handleWs);
-
-  // WebSocket endpoint for Frontend Client
-  router.get('/ws/client', handleWsClient);
-
-  // Word Plugin API: Health Check
-  router.get('/api/health', handleApiHealth);
-
-  // Word Plugin API: Trigger Save
-  router.post('/api/save', handleApiSave);
-
-  // Word Plugin API: Replace Document
-  router.post('/api/document', handleApiDocument);
-
-  router.post('/reset', handleReset);
-
-  router.options('/<ignored|.*>', optionsHandler);
-
-  router.post('/fetch', handleFetch);
-
-  router.post('/project/delete', handleProjectDelete);
-
-  router.post('/project/dirty_status', handleProjectDirtyStatus);
-
-  router.post('/project/save', handleProjectSave);
-
-  router.post('/project/save_as', handleProjectSaveAs);
-
-  router.get('/project/list', handleProjectList);
-
-  router.post('/project/copy', handleProjectCopy);
-
-  router.post('/branches', handleBranches);
-
-  router.post('/graph', handleGraph);
-
-  router.post('/remote_graph', handleRemoteGraph);
-
-  router.post('/compare', handleCompare);
-
-  router.post('/summarizeDiff', handleSummarizeDiff);
-
-  router.post('/summarize_commit', handleSummarizeCommit);
-
-  router.post('/backup/graph', handleBackupGraph);
-
-  router.post('/compare_repos', handleCompareRepos);
-
-  router.post('/backup/preview', handleBackupPreview);
-
-  router.post('/commit', handleCommit);
-
-  router.post('/branch/create', handleBranchCreate);
-
-  router.post('/branch/switch', handleBranchSwitch);
-
-  router.post('/compare_working', handleCompareWorking);
-
-  router.post('/preview', handlePreview);
-
-  // 🔥 新增：AI 对比端点
-  router.post('/compare_ai', handleCompareAi);
-
-  // 🔥 新增：AI 缓存统计端点
-  router.get('/ai_cache/stats', handleAiCacheStats);
-
-  // 🔥 新增：清空 AI 缓存端点
-  router.delete('/ai_cache', handleAiCacheClear);
-
-  router.post('/preview_cache', handlePreviewCache);
-
-  router.post('/rollback', handleRollback);
-
-  router.post('/convert', handleConvert);
-
-  router.post('/track/create', handleTrackCreate);
-
-  router.post('/restore_docx', handleRestoreDocx);
-
-  router.post('/track/open', handleTrackOpen);
-
-  router.post('/track/expand', handleTrackExpand);
-
-  router.post('/track/repos', handleTrackRepos);
-
-  router.post('/track/update', handleTrackUpdate);
-
-  router.post('/track/sync_folder', handleTrackSyncFolder);
-
-  router.post('/track/find_identical', handleTrackFindIdentical);
-
-  router.post('/track/info', handleTrackInfo);
-
-  router.get('/track/list', handleTrackList);
-
-  router.post('/reset_branch', handleResetBranch);
-
-  router.post('/push', handlePush);
-
-  router.post('/remote/list', handleRemoteList);
-
-  router.post('/remote/add', handleRemoteAdd);
-
-  router.post('/get_remotes', handleGetRemotes);
-
-  router.post('/request_code', handleRequestCode);
-
-  router.post('/register', handleRegister);
-
-  router.post('/login', handleLogin);
-
-  router.post('/create_user', handleCreateUser);
-
-  router.post('/share', handleShare);
-
-  router.post('/pull_rebase', handlePullRebase);
-
-  router.post('/fork_local', handleForkLocal);
-
-  router.post('/pull/cancel', handlePullCancel);
-
-  router.post('/pull/preview', handlePullPreview);
-
-  router.post('/check_pull_status', handleCheckPullStatus);
-
-  router.post('/summarizeDiff', handleSummarizeDiff);
-
-  router.post('/summarize_commit', handleSummarizeCommit);
-
-  router.post('/pull', handlePull);
-
-  router.post('/prepare_merge', handlePrepareMerge);
-
-  router.post('/complete_merge', handleCompleteMerge);
-
-  router.post('/edge/add', handleEdgeAdd);
-  router.post('/backup/commits', handleBackupCommits);
-
-  final handler = const Pipeline()
-      .addMiddleware(logRequests(logger: (String msg, bool isError) {
-        if (msg.contains('/project/dirty_status')) return;
-        if (isError) {
-          print('[ERROR] $msg');
-        } else {
-          print(msg);
-        }
-      }))
-      .addHandler(router);
-  final server = await serve((req) async => _cors(await handler(req)),
-      InternetAddress.loopbackIPv4, 8080);
-  stdout.writeln(
-      'Server listening on http://${server.address.host}:${server.port}');
-
-  // 优雅退出处理
-  server.autoCompress = false;
-
-  // 监听服务器关闭
-  print('服务器启动完成，按 Ctrl+C 退出');
 }
 
 class _MultipartPart {
@@ -2109,18 +1944,14 @@ Future<Response> handleBackupCommits(Request req) async {
   try {
     final result = await listBackupCommits(repoName, token,
         onProgress: (percent, received, total) {
-      final msg = jsonEncode({
+      final msg = {
         'type': 'backup_progress',
         'repo': repoName,
         'percent': percent,
         'received': received,
         'total': total
-      });
-      for (final socket in _activeFrontendSockets) {
-        try {
-          socket.sink.add(msg);
-        } catch (_) {}
-      }
+      };
+      onNotification?.call(msg);
     });
     print("chainViewUrl: ${result['chainViewUrl']}");
     return _cors(Response.ok(jsonEncode(result), headers: {
@@ -2141,6 +1972,7 @@ Future<Response> handleHealth(Request req) async {
 
 FutureOr<Response> handleWs(Request req) {
   return webSocketHandler((channel, protocol) {
+    onNotification?.call({'type': 'com_status', 'status': 'connected'});
     print('Word Plugin connected');
     _activePluginSockets.add(channel);
 
@@ -2218,12 +2050,7 @@ FutureOr<Response> handleWs(Request req) {
         comSender = null;
       }
       // Notify frontend
-      for (final socket in _activeFrontendSockets) {
-        try {
-          socket.sink.add(
-              jsonEncode({'type': 'com_status', 'status': 'disconnected'}));
-        } catch (_) {}
-      }
+      onNotification?.call({'type': 'com_status', 'status': 'disconnected'});
     }, onError: (e) {
       print('WebSocket error: $e');
       _activePluginSockets.remove(channel);
@@ -2231,29 +2058,7 @@ FutureOr<Response> handleWs(Request req) {
         comSender = null;
       }
       // Notify frontend
-      for (final socket in _activeFrontendSockets) {
-        try {
-          socket.sink.add(
-              jsonEncode({'type': 'com_status', 'status': 'disconnected'}));
-        } catch (_) {}
-      }
-    });
-  })(req);
-}
-
-FutureOr<Response> handleWsClient(Request req) {
-  return webSocketHandler((channel, protocol) {
-    print('Frontend Client connected');
-    _activeFrontendSockets.add(channel);
-
-    channel.stream.listen((message) {
-      // Client usually just listens
-    }, onDone: () {
-      print('Frontend Client disconnected');
-      _activeFrontendSockets.remove(channel);
-    }, onError: (e) {
-      print('Frontend WebSocket error: $e');
-      _activeFrontendSockets.remove(channel);
+      onNotification?.call({'type': 'com_status', 'status': 'disconnected'});
     });
   })(req);
 }

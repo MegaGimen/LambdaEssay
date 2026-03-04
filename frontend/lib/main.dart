@@ -10,13 +10,12 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'dart:ui' as ui;
 import 'package:http/http.dart' as http;
-import 'package:web_socket_channel/web_socket_channel.dart';
-import 'package:web_socket_channel/io.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 // import 'package:file_tree_view/file_tree_view.dart';
 import 'widgets/custom_file_tree.dart';
 import 'server/server.dart';
 import 'server/route_map.dart';
+// import 'server/notification_service.dart';
 import 'package:shelf/shelf.dart' as shelf;
 
 import 'package:file_picker/file_picker.dart';
@@ -523,8 +522,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   void dispose() {
     _listener.dispose();
     _dirtyCheckTimer?.cancel();
-    _channel?.sink.close();
-    _reconnectTimer?.cancel();
+    // _channel?.sink.close(); // Removed: Unified process
+    // _reconnectTimer?.cancel(); // Removed: Unified process
     _sidebarFlashCtrl.dispose();
     _sharedController.dispose();
     pathCtrl.dispose();
@@ -559,9 +558,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   }
 
 
-  WebSocketChannel? _channel;
-  Timer? _reconnectTimer;
-  bool _isConnecting = false;
+  // StreamSubscription? _notificationSubscription;
 
   @override
   void initState() {
@@ -574,7 +571,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       duration: const Duration(seconds: 1),
     )..repeat(reverse: true);
     _checkLogin();
-    _connectWebSocket();
+    _initNotifications();
     _startDirtyCheck();
   }
 
@@ -656,83 +653,34 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   }
 
 
-  Future<void> _connectWebSocket() async {
-    if (!mounted) return;
-    if (_isConnecting) return; // Prevent concurrent connection attempts
-    _isConnecting = true;
-    _reconnectTimer?.cancel();
-    _reconnectTimer = null;
-
-    try {
-      // Use dart:io WebSocket to catch connection errors properly
-      final ws = await WebSocket.connect('ws://localhost:8080/ws/client');
-      if (!mounted) {
-        ws.close();
-        _isConnecting = false;
-        return;
-      }
-
-      _channel = IOWebSocketChannel(ws);
-      // Update UI to show success state
-      setState(() {
-        _comConnected =
-            true; // Assume connected if websocket is open, server will send updates
-      });
-
-      _channel!.stream.listen((message) {
-        if (!mounted) return;
-        try {
-          final data = jsonDecode(message);
-          if (data['type'] == 'loading_status') {
-            setState(() {
-              loading = data['loading'] == true;
+  void _initNotifications() {
+    onNotification = (data) {
+      if (!mounted) return;
+      try {
+        if (data['type'] == 'loading_status') {
+          setState(() {
+            loading = data['loading'] == true;
+          });
+        } else if (data['type'] == 'com_status') {
+          setState(() {
+            _comConnected = data['status'] == 'connected';
+          });
+        } else if (data['type'] == 'repo_updated') {
+          print("Received repo update notification");
+          if (currentProjectName != null) {
+            _onUpdateRepoAction().whenComplete(() {
+              if (mounted) {
+                setState(() {
+                  loading = false;
+                });
+              }
             });
-          } else if (data['type'] == 'com_status') {
-            setState(() {
-              _comConnected = data['status'] == 'connected';
-            });
-          } else if (data['type'] == 'repo_updated') {
-            print("Received repo update notification");
-            if (currentProjectName != null) {
-              _onUpdateRepoAction().whenComplete(() {
-                if (mounted) {
-                  setState(() {
-                    loading = false;
-                  });
-                }
-              });
-            }
           }
-        } catch (e) {
-          print("WebSocket message error: $e");
         }
-      }, onError: (e) {
-        print("WebSocket connection error: ${e.toString().split('\n').first}");
-        _scheduleReconnect();
-      }, onDone: () {
-        print("WebSocket connection closed");
-        _scheduleReconnect();
-      });
-    } catch (e) {
-      print("WebSocket connection failed: ${e.toString().split('\n').first}");
-      _scheduleReconnect();
-    } finally {
-      if (mounted) {
-        _isConnecting = false;
+      } catch (e) {
+        print("Notification error: $e");
       }
-    }
-  }
-
-  void _scheduleReconnect() {
-    if (!mounted) return;
-    if (_reconnectTimer != null && _reconnectTimer!.isActive) return;
-
-    setState(() {
-      _channel = null;
-      _comConnected = false;
-    });
-
-    _reconnectTimer = Timer(const Duration(seconds: 5), _connectWebSocket);
+    };
   }
 
   Future<void> _requestPreviewCache(String commitId) async {
@@ -4722,9 +4670,9 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                       children: [
                         const Text('Server: ',
                             style: TextStyle(fontSize: 12, color: Colors.grey)),
-                        Icon(
-                          _channel != null ? Icons.circle : Icons.circle,
-                          color: _channel != null ? Colors.green : Colors.red,
+                        const Icon(
+                          Icons.circle,
+                          color: Colors.green, // Always green for internal server
                           size: 12,
                         ),
                         const SizedBox(width: 12),
