@@ -18,6 +18,8 @@ import 'server/git_service.dart';
 import 'server/route_map.dart';
 // import 'server/notification_service.dart';
 import 'package:shelf/shelf.dart' as shelf;
+import 'package:shelf/shelf_io.dart' as shelf_io;
+import 'package:shelf_router/shelf_router.dart' as shelf_router;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:crypto/crypto.dart';
@@ -316,6 +318,30 @@ class _BootstrapAppState extends State<BootstrapApp> {
     _startServer();
   }
 
+  Future<void> _startWebServer() async {
+    final app = shelf_router.Router();
+    routeMap.forEach((key, handler) {
+      app.all(key, (shelf.Request request) async {
+        final result = (handler as Function)(request);
+        if (result is Future) {
+          return await result;
+        }
+        return result;
+      });
+    });
+
+    final handler = shelf.Pipeline()
+        .addMiddleware(shelf.logRequests())
+        .addHandler(app.call);
+
+    try {
+      final server = await shelf_io.serve(handler, InternetAddress.anyIPv4, 8080);
+      print('Web Server listening on port ${server.port}');
+    } catch (e) {
+      print('Failed to start Web Server: $e');
+    }
+  }
+
   Future<void> _startServer() async {
     try {
       setState(() {
@@ -356,8 +382,12 @@ class _BootstrapAppState extends State<BootstrapApp> {
       await Process.start(
           wardenPath, ['--monitor_port', '9527', '--terminal_port', '8080'],
           mode: ProcessStartMode.detached);
+      await Process.start(
+          comPath, [],
+          mode: ProcessStartMode.detached);
       
-      await BackendManager().startProcess('COM', comPath, []);
+      await _startWebServer();
+    
       await initTrackingService();
       // 轮询健康检查接口
       bool ready = false;
