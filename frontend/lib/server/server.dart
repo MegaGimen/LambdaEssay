@@ -17,9 +17,12 @@ import 'package:http/http.dart' as http;
 
 import 'package:uuid/uuid.dart';
 import 'dart:async';
+// import 'notification_service.dart';
+
+// 全局回调
+Function(Map<String, dynamic> data)? onNotification;
 
 List<WebSocketChannel> _activePluginSockets = [];
-List<WebSocketChannel> _activeFrontendSockets = [];
 final _pendingRequests = <String, Completer<dynamic>>{};
 final _uuid = Uuid();
 
@@ -32,7 +35,7 @@ Response _cors(Response r) {
   });
 }
 
-Future<Response> _optionsHandler(Request req) async {
+Future<Response> optionsHandler(Request req) async {
   return _cors(Response.ok(''));
 }
 
@@ -75,231 +78,6 @@ Future<void> _killPort(int port) async {
   } catch (e) {
     print('Failed to clean up port $port: $e');
   }
-}
-
-final ProcessManager _processManager = const LocalProcessManager();
-
-
-Future<void> main(List<String> args) async {
-  if (args.contains('--debugMode')) {
-    setDebugMode(true);
-    print('Debug mode enabled');
-  }
-
-  final setGlobal = await Process.run(
-      'git', ['config', '--global', 'core.autocrlf', 'false']);
-  if (setGlobal.exitCode == 0) {
-    print('✓ 已设置全局 core.autocrlf = false');
-  } else {
-    print('✗ 设置失败: ${setGlobal.stderr}');
-  }
-  // Start Heidegger service in background
-  try {
-    final scriptDir = p.dirname(Platform.script.toFilePath());
-    final heideggerPath = p.join(scriptDir, 'Heidegger.exe');
-    if (File(heideggerPath).existsSync()) {
-      await _killPort(5000);
-      print('Starting Heidegger service from $heideggerPath...');
-      // 使用 PowerShell 启动 Heidegger.exe，完全隐藏窗口
-      await _processManager.start([
-        'powershell',
-        '-WindowStyle',
-        'Hidden',
-        '-Command',
-        'Start-Process -FilePath "$heideggerPath" -WindowStyle Hidden'
-      ], mode: ProcessStartMode.normal, runInShell: false);
-    } else {
-      print('Heidegger.exe not found at $heideggerPath');
-    }
-  } catch (e) {
-    print('Failed to start Heidegger: $e');
-  }
-  // Start COM service in background
-  try {
-    final scriptDir = p.dirname(Platform.script.toFilePath());
-    final comPath = p.join(scriptDir, 'COM.exe');
-    if (File(comPath).existsSync()) {
-      print('Starting COM service from $comPath...');
-      // 使用 PowerShell 启动 COM.exe，完全隐藏窗口
-      await _processManager.start([
-        'powershell',
-        '-WindowStyle',
-        'Hidden',
-        '-Command',
-        'Start-Process -FilePath "$comPath" -WindowStyle Hidden'
-      ], mode: ProcessStartMode.normal, runInShell: false);
-    } else {
-      print('COM.exe not found at $comPath');
-    }
-  } catch (e) {
-    print('Failed to start COM: $e');
-  }
-
-
-  await initTrackingService();
-  final router = Router();
-
-  router.get('/health', _handleHealth);
-
-  // WebSocket endpoint for Word Plugin
-  router.get('/ws', _handleWs);
-
-  // WebSocket endpoint for Frontend Client
-  router.get('/ws/client', _handleWsClient);
-
-  // Word Plugin API: Health Check
-  router.get('/api/health', _handleApiHealth);
-
-  // Word Plugin API: Trigger Save
-  router.post('/api/save', _handleApiSave);
-
-  // Word Plugin API: Replace Document
-  router.post('/api/document', _handleApiDocument);
-
-  router.post('/reset', _handleReset);
-
-  router.options('/<ignored|.*>', _optionsHandler);
-
-  router.post('/fetch', _handleFetch);
-
-  router.post('/project/delete', _handleProjectDelete);
-
-  router.post('/project/dirty_status', _handleProjectDirtyStatus);
-
-  router.post('/project/save', _handleProjectSave);
-
-  router.post('/project/save_as', _handleProjectSaveAs);
-
-  router.get('/project/list', _handleProjectList);
-
-  router.post('/project/copy', _handleProjectCopy);
-
-  router.post('/branches', _handleBranches);
-
-  router.post('/graph', _handleGraph);
-
-  router.post('/remote_graph', _handleRemoteGraph);
-
-  router.post('/compare', _handleCompare);
-
-  router.post('/summarizeDiff', _handleSummarizeDiff);
-
-  router.post('/summarize_commit', _handleSummarizeCommit);
-
-  router.post('/backup/graph', _handleBackupGraph);
-
-  router.post('/compare_repos', _handleCompareRepos);
-
-  router.post('/backup/preview', _handleBackupPreview);
-
-  router.post('/commit', _handleCommit);
-
-  router.post('/branch/create', _handleBranchCreate);
-
-  router.post('/branch/switch', _handleBranchSwitch);
-
-  router.post('/compare_working', _handleCompareWorking);
-
-  router.post('/preview', _handlePreview);
-
-  // 🔥 新增：AI 对比端点
-  router.post('/compare_ai', _handleCompareAi);
-
-  // 🔥 新增：AI 缓存统计端点
-  router.get('/ai_cache/stats', _handleAiCacheStats);
-
-  // 🔥 新增：清空 AI 缓存端点
-  router.delete('/ai_cache', _handleAiCacheClear);
-
-  router.post('/preview_cache', _handlePreviewCache);
-
-  router.post('/rollback', _handleRollback);
-
-  router.post('/convert', _handleConvert);
-
-  router.post('/track/create', _handleTrackCreate);
-
-  router.post('/restore_docx', _handleRestoreDocx);
-
-  router.post('/track/open', _handleTrackOpen);
-
-  router.post('/track/expand', _handleTrackExpand);
-
-  router.post('/track/repos', _handleTrackRepos);
-
-  router.post('/track/update', _handleTrackUpdate);
-
-  router.post('/track/sync_folder', _handleTrackSyncFolder);
-
-  router.post('/track/find_identical', _handleTrackFindIdentical);
-
-  router.post('/track/info', _handleTrackInfo);
-
-  router.get('/track/list', _handleTrackList);
-
-  router.post('/reset_branch', _handleResetBranch);
-
-  router.post('/push', _handlePush);
-
-  router.post('/remote/list', _handleRemoteList);
-
-  router.post('/remote/add', _handleRemoteAdd);
-
-  router.post('/get_remotes', _handleGetRemotes);
-
-  router.post('/request_code', _handleRequestCode);
-
-  router.post('/register', _handleRegister);
-
-  router.post('/login', _handleLogin);
-
-  router.post('/create_user', _handleCreateUser);
-
-  router.post('/share', _handleShare);
-
-  router.post('/pull_rebase', _handlePullRebase);
-
-  router.post('/fork_local', _handleForkLocal);
-
-  router.post('/pull/cancel', _handlePullCancel);
-
-  router.post('/pull/preview', _handlePullPreview);
-
-  router.post('/check_pull_status', _handleCheckPullStatus);
-
-  router.post('/summarizeDiff', _handleSummarizeDiff);
-
-  router.post('/summarize_commit', _handleSummarizeCommit);
-
-  router.post('/pull', _handlePull);
-
-  router.post('/prepare_merge', _handlePrepareMerge);
-
-  router.post('/complete_merge', _handleCompleteMerge);
-
-  router.post('/edge/add', _handleEdgeAdd);
-  router.post('/backup/commits', _handleBackupCommits);
-
-  final handler = const Pipeline()
-      .addMiddleware(logRequests(logger: (String msg, bool isError) {
-        if (msg.contains('/project/dirty_status')) return;
-        if (isError) {
-          print('[ERROR] $msg');
-        } else {
-          print(msg);
-        }
-      }))
-      .addHandler(router);
-  final server = await serve((req) async => _cors(await handler(req)),
-      InternetAddress.loopbackIPv4, 8080);
-  stdout.writeln(
-      'Server listening on http://${server.address.host}:${server.port}');
-
-  // 优雅退出处理
-  server.autoCompress = false;
-
-  // 监听服务器关闭
-  print('服务器启动完成，按 Ctrl+C 退出');
 }
 
 class _MultipartPart {
@@ -403,7 +181,7 @@ String _stripQuotes(String v) {
 
 // Extracted Handlers
 
-Future<Response> _handleApiSave(Request req) async {
+Future<Response> handleApiSave(Request req) async {
   if (comSender == null) {
     return _cors(Response(503,
         body: jsonEncode({'error': 'COM not connected'}),
@@ -433,7 +211,7 @@ Future<Response> _handleApiSave(Request req) async {
   }
 }
 
-Future<Response> _handleApiDocument(Request req) async {
+Future<Response> handleApiDocument(Request req) async {
   if (comSender == null) {
     return _cors(Response(503,
         body: jsonEncode({'error': 'COM not connected'}),
@@ -547,14 +325,14 @@ Future<Response> _handleApiDocument(Request req) async {
   }
 }
 
-Future<Response> _handleReset(Request req) async {
+Future<Response> handleReset(Request req) async {
   clearCache();
   return _cors(Response.ok(jsonEncode({'status': 'reset'}), headers: {
     'Content-Type': 'application/json; charset=utf-8',
   }));
 }
 
-Future<Response> _handleFetch(Request req) async {
+Future<Response> handleFetch(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoPath = _sanitizePath(data['repoPath'] as String?);
@@ -575,7 +353,7 @@ Future<Response> _handleFetch(Request req) async {
   }
 }
 
-Future<Response> _handleProjectDelete(Request req) async {
+Future<Response> handleProjectDelete(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   var packagePath = _sanitizePath(data['packagePath'] as String?).trim();
@@ -604,7 +382,7 @@ Future<Response> _handleProjectDelete(Request req) async {
   }
 }
 
-Future<Response> _handleProjectDirtyStatus(Request req) async {
+Future<Response> handleProjectDirtyStatus(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final packagePath = _sanitizePath(data['packagePath'] as String?);
@@ -626,7 +404,7 @@ Future<Response> _handleProjectDirtyStatus(Request req) async {
   }
 }
 
-Future<Response> _handleProjectSave(Request req) async {
+Future<Response> handleProjectSave(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final packagePath = _sanitizePath(data['packagePath'] as String?);
@@ -648,7 +426,7 @@ Future<Response> _handleProjectSave(Request req) async {
   }
 }
 
-Future<Response> _handleProjectSaveAs(Request req) async {
+Future<Response> handleProjectSaveAs(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final packagePath = _sanitizePath(data['packagePath'] as String?);
@@ -672,7 +450,7 @@ Future<Response> _handleProjectSaveAs(Request req) async {
   }
 }
 
-Future<Response> _handleProjectCopy(Request req) async {
+Future<Response> handleProjectCopy(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final packagePath = _sanitizePath(data['packagePath'] as String?);
@@ -698,7 +476,7 @@ Future<Response> _handleProjectCopy(Request req) async {
   }
 }
 
-Future<Response> _handleBranches(Request req) async {
+Future<Response> handleBranches(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoPath = _sanitizePath(data['repoPath'] as String?);
@@ -733,7 +511,7 @@ Future<Response> _handleBranches(Request req) async {
   }
 }
 
-Future<Response> _handleGraph(Request req) async {
+Future<Response> handleGraph(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoPath = _sanitizePath(data['repoPath'] as String?);
@@ -768,7 +546,7 @@ Future<Response> _handleGraph(Request req) async {
   }
 }
 
-Future<Response> _handleRemoteGraph(Request req) async {
+Future<Response> handleRemoteGraph(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoPath = _sanitizePath(data['repoPath'] as String?);
@@ -792,7 +570,7 @@ Future<Response> _handleRemoteGraph(Request req) async {
   }
 }
 
-Future<Response> _handleCompare(Request req) async {
+Future<Response> handleCompare(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoPath = _sanitizePath(data['repoPath'] as String?);
@@ -816,7 +594,7 @@ Future<Response> _handleCompare(Request req) async {
   }
 }
 
-Future<Response> _handleSummarizeDiff(Request req) async {
+Future<Response> handleSummarizeDiff(Request req) async {
   try {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
@@ -841,7 +619,7 @@ Future<Response> _handleSummarizeDiff(Request req) async {
   }
 }
 
-Future<Response> _handleSummarizeCommit(Request req) async {
+Future<Response> handleSummarizeCommit(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoName = (data['repoName'] as String?)?.trim() ?? '';
@@ -937,7 +715,7 @@ Future<Response> _handleSummarizeCommit(Request req) async {
   }
 }
 
-Future<Response> _handleBackupGraph(Request req) async {
+Future<Response> handleBackupGraph(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoName = data['repoName'] as String?;
@@ -953,7 +731,7 @@ Future<Response> _handleBackupGraph(Request req) async {
   }
 }
 
-Future<Response> _handleCompareRepos(Request req) async {
+Future<Response> handleCompareRepos(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoName = (data['repoName'] as String?)?.trim() ?? '';
@@ -982,7 +760,7 @@ Future<Response> _handleCompareRepos(Request req) async {
   }
 }
 
-Future<Response> _handleBackupPreview(Request req) async {
+Future<Response> handleBackupPreview(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoName = data['repoName'] as String?;
@@ -999,7 +777,7 @@ Future<Response> _handleBackupPreview(Request req) async {
   }
 }
 
-Future<Response> _handleCommit(Request req) async {
+Future<Response> handleCommit(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoPath = _sanitizePath(data['repoPath'] as String?);
@@ -1036,7 +814,7 @@ Future<Response> _handleCommit(Request req) async {
   }
 }
 
-Future<Response> _handleBranchCreate(Request req) async {
+Future<Response> handleBranchCreate(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoPath = _sanitizePath(data['repoPath'] as String?);
@@ -1058,7 +836,7 @@ Future<Response> _handleBranchCreate(Request req) async {
   }
 }
 
-Future<Response> _handleBranchSwitch(Request req) async {
+Future<Response> handleBranchSwitch(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final projectName = (data['projectName'] as String?)?.trim() ?? '';
@@ -1091,7 +869,7 @@ Future<Response> _handleBranchSwitch(Request req) async {
   }
 }
 
-Future<Response> _handleCompareWorking(Request req) async {
+Future<Response> handleCompareWorking(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoPath = _sanitizePath(data['repoPath'] as String?);
@@ -1112,7 +890,7 @@ Future<Response> _handleCompareWorking(Request req) async {
   }
 }
 
-Future<Response> _handlePreview(Request req) async {
+Future<Response> handlePreview(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoPath = _sanitizePath(data['repoPath'] as String?);
@@ -1135,7 +913,7 @@ Future<Response> _handlePreview(Request req) async {
   }
 }
 
-Future<Response> _handleCompareAi(Request req) async {
+Future<Response> handleCompareAi(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
 
@@ -1189,7 +967,7 @@ Future<Response> _handleCompareAi(Request req) async {
   }
 }
 
-Future<Response> _handlePreviewCache(Request req) async {
+Future<Response> handlePreviewCache(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoPath = _sanitizePath(data['repoPath'] as String?);
@@ -1233,7 +1011,7 @@ Future<Response> _handlePreviewCache(Request req) async {
       }));
 }
 
-Future<Response> _handleRollback(Request req) async {
+Future<Response> handleRollback(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final projectName = (data['projectName'] as String?)?.trim() ?? '';
@@ -1256,7 +1034,7 @@ Future<Response> _handleRollback(Request req) async {
   }
 }
 
-Future<Response> _handleConvert(Request req) async {
+Future<Response> handleConvert(Request req) async {
   final ct = req.headers['content-type'] ?? '';
   final b = _boundaryOf(ct);
   if (b == null) {
@@ -1317,7 +1095,7 @@ Future<Response> _handleConvert(Request req) async {
   }
 }
 
-Future<Response> _handleTrackCreate(Request req) async {
+Future<Response> handleTrackCreate(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final name = (data['packagePath'] as String?)?.trim() ??
@@ -1341,7 +1119,7 @@ Future<Response> _handleTrackCreate(Request req) async {
   }
 }
 
-Future<Response> _handleRestoreDocx(Request req) async {
+Future<Response> handleRestoreDocx(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoName = (data['repoName'] as String?)?.trim() ?? '';
@@ -1363,7 +1141,7 @@ Future<Response> _handleRestoreDocx(Request req) async {
   }
 }
 
-Future<Response> _handleTrackOpen(Request req) async {
+Future<Response> handleTrackOpen(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final name = (data['packagePath'] as String?)?.trim() ??
@@ -1386,7 +1164,7 @@ Future<Response> _handleTrackOpen(Request req) async {
   }
 }
 
-Future<Response> _handleTrackExpand(Request req) async {
+Future<Response> handleTrackExpand(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final filePath = (data['filePath'] as String?)?.trim() ?? '';
@@ -1408,7 +1186,7 @@ Future<Response> _handleTrackExpand(Request req) async {
   }
 }
 
-Future<Response> _handleTrackRepos(Request req) async {
+Future<Response> handleTrackRepos(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final name = (data['packagePath'] as String?)?.trim() ??
@@ -1431,7 +1209,7 @@ Future<Response> _handleTrackRepos(Request req) async {
   }
 }
 
-Future<Response> _handleTrackUpdate(Request req) async {
+Future<Response> handleTrackUpdate(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final name = (data['packagePath'] as String?)?.trim() ??
@@ -1459,7 +1237,7 @@ Future<Response> _handleTrackUpdate(Request req) async {
   }
 }
 
-Future<Response> _handleTrackSyncFolder(Request req) async {
+Future<Response> handleTrackSyncFolder(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final name = (data['packagePath'] as String?)?.trim() ??
@@ -1482,7 +1260,7 @@ Future<Response> _handleTrackSyncFolder(Request req) async {
   }
 }
 
-Future<Response> _handleTrackFindIdentical(Request req) async {
+Future<Response> handleTrackFindIdentical(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final name = (data['name'] as String?)?.trim() ?? '';
@@ -1503,7 +1281,7 @@ Future<Response> _handleTrackFindIdentical(Request req) async {
   }
 }
 
-Future<Response> _handleTrackInfo(Request req) async {
+Future<Response> handleTrackInfo(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoPath = _sanitizePath(data['repoPath'] as String?);
@@ -1524,7 +1302,7 @@ Future<Response> _handleTrackInfo(Request req) async {
   }
 }
 
-Future<Response> _handleResetBranch(Request req) async {
+Future<Response> handleResetBranch(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final projectName = (data['projectName'] as String?)?.trim() ?? '';
@@ -1547,7 +1325,7 @@ Future<Response> _handleResetBranch(Request req) async {
   }
 }
 
-Future<Response> _handlePush(Request req) async {
+Future<Response> handlePush(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoPath = _sanitizePath(data['repoPath'] as String?);
@@ -1573,7 +1351,7 @@ Future<Response> _handlePush(Request req) async {
   }
 }
 
-Future<Response> _handleRemoteList(Request req) async {
+Future<Response> handleRemoteList(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final token = data['token'] as String?;
@@ -1692,7 +1470,7 @@ Future<Response> _handleRemoteList(Request req) async {
   }
 }
 
-Future<Response> _handleRemoteAdd(Request req) async {
+Future<Response> handleRemoteAdd(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoPath = _sanitizePath(data['repoPath'] as String?);
@@ -1716,7 +1494,7 @@ Future<Response> _handleRemoteAdd(Request req) async {
   }
 }
 
-Future<Response> _handleGetRemotes(Request req) async {
+Future<Response> handleGetRemotes(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoPath = _sanitizePath(data['repoPath'] as String?);
@@ -1738,7 +1516,7 @@ Future<Response> _handleGetRemotes(Request req) async {
   }
 }
 
-Future<Response> _handleRequestCode(Request req) async {
+Future<Response> handleRequestCode(Request req) async {
   try {
     final body = await req.readAsString();
     final url = Uri.parse('http://47.242.109.145:3920/request_code');
@@ -1757,7 +1535,7 @@ Future<Response> _handleRequestCode(Request req) async {
   }
 }
 
-Future<Response> _handleRegister(Request req) async {
+Future<Response> handleRegister(Request req) async {
   try {
     final body = await req.readAsString();
     final url = Uri.parse('http://47.242.109.145:3920/register');
@@ -1776,7 +1554,7 @@ Future<Response> _handleRegister(Request req) async {
   }
 }
 
-Future<Response> _handleLogin(Request req) async {
+Future<Response> handleLogin(Request req) async {
   try {
     final body = await req.readAsString();
     final url = Uri.parse('http://47.242.109.145:3920/login');
@@ -1795,7 +1573,7 @@ Future<Response> _handleLogin(Request req) async {
   }
 }
 
-Future<Response> _handleCreateUser(Request req) async {
+Future<Response> handleCreateUser(Request req) async {
   try {
     final body = await req.readAsString();
     final url = Uri.parse('http://47.242.109.145:3920/create_user');
@@ -1815,7 +1593,7 @@ Future<Response> _handleCreateUser(Request req) async {
   }
 }
 
-Future<Response> _handleShare(Request req) async {
+Future<Response> handleShare(Request req) async {
   try {
     final body = await req.readAsString();
     final data = jsonDecode(body) as Map<String, dynamic>;
@@ -1855,7 +1633,7 @@ Future<Response> _handleShare(Request req) async {
   }
 }
 
-Future<Response> _handlePullRebase(Request req) async {
+Future<Response> handlePullRebase(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoName = (data['repoName'] as String?)?.trim() ?? '';
@@ -1879,7 +1657,7 @@ Future<Response> _handlePullRebase(Request req) async {
   }
 }
 
-Future<Response> _handleForkLocal(Request req) async {
+Future<Response> handleForkLocal(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoName = (data['repoName'] as String?)?.trim() ?? '';
@@ -1902,7 +1680,7 @@ Future<Response> _handleForkLocal(Request req) async {
   }
 }
 
-Future<Response> _handlePullCancel(Request req) async {
+Future<Response> handlePullCancel(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoName = (data['repoName'] as String?)?.trim() ?? '';
@@ -1924,7 +1702,7 @@ Future<Response> _handlePullCancel(Request req) async {
   }
 }
 
-Future<Response> _handlePullPreview(Request req) async {
+Future<Response> handlePullPreview(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoName = (data['repoName'] as String?)?.trim() ?? '';
@@ -1951,7 +1729,7 @@ Future<Response> _handlePullPreview(Request req) async {
   }
 }
 
-Future<Response> _handleCheckPullStatus(Request req) async {
+Future<Response> handleCheckPullStatus(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoName = (data['repoName'] as String?)?.trim() ?? '';
@@ -1974,7 +1752,7 @@ Future<Response> _handleCheckPullStatus(Request req) async {
   }
 }
 
-Future<Response> _handlePull(Request req) async {
+Future<Response> handlePull(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoPath = _sanitizePath(data['repoPath'] as String?);
@@ -2018,7 +1796,7 @@ Future<Response> _handlePull(Request req) async {
   }
 }
 
-Future<Response> _handlePrepareMerge(Request req) async {
+Future<Response> handlePrepareMerge(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoName = (data['repoName'] as String?)?.trim() ?? '';
@@ -2041,7 +1819,7 @@ Future<Response> _handlePrepareMerge(Request req) async {
   }
 }
 
-Future<Response> _handleCompleteMerge(Request req) async {
+Future<Response> handleCompleteMerge(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoName = (data['repoName'] as String?)?.trim() ?? '';
@@ -2064,7 +1842,7 @@ Future<Response> _handleCompleteMerge(Request req) async {
   }
 }
 
-Future<Response> _handleEdgeAdd(Request req) async {
+Future<Response> handleEdgeAdd(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoPath = _sanitizePath(data['repoPath'] as String?);
@@ -2095,7 +1873,7 @@ Future<Response> _handleEdgeAdd(Request req) async {
   }
 }
 
-Future<Response> _handleBackupCommits(Request req) async {
+Future<Response> handleBackupCommits(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final token = (data['token'] as String?)?.trim() ?? '';
@@ -2109,18 +1887,14 @@ Future<Response> _handleBackupCommits(Request req) async {
   try {
     final result = await listBackupCommits(repoName, token,
         onProgress: (percent, received, total) {
-      final msg = jsonEncode({
+      final msg = {
         'type': 'backup_progress',
         'repo': repoName,
         'percent': percent,
         'received': received,
         'total': total
-      });
-      for (final socket in _activeFrontendSockets) {
-        try {
-          socket.sink.add(msg);
-        } catch (_) {}
-      }
+      };
+      onNotification?.call(msg);
     });
     print("chainViewUrl: ${result['chainViewUrl']}");
     return _cors(Response.ok(jsonEncode(result), headers: {
@@ -2133,14 +1907,15 @@ Future<Response> _handleBackupCommits(Request req) async {
   }
 }
 
-Future<Response> _handleHealth(Request req) async {
+Future<Response> handleHealth(Request req) async {
   return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
     'Content-Type': 'application/json; charset=utf-8',
   }));
 }
 
-FutureOr<Response> _handleWs(Request req) {
+FutureOr<Response> handleWs(Request req) {
   return webSocketHandler((channel, protocol) {
+    onNotification?.call({'type': 'com_status', 'status': 'connected'});
     print('Word Plugin connected');
     _activePluginSockets.add(channel);
 
@@ -2218,12 +1993,7 @@ FutureOr<Response> _handleWs(Request req) {
         comSender = null;
       }
       // Notify frontend
-      for (final socket in _activeFrontendSockets) {
-        try {
-          socket.sink.add(
-              jsonEncode({'type': 'com_status', 'status': 'disconnected'}));
-        } catch (_) {}
-      }
+      onNotification?.call({'type': 'com_status', 'status': 'disconnected'});
     }, onError: (e) {
       print('WebSocket error: $e');
       _activePluginSockets.remove(channel);
@@ -2231,34 +2001,12 @@ FutureOr<Response> _handleWs(Request req) {
         comSender = null;
       }
       // Notify frontend
-      for (final socket in _activeFrontendSockets) {
-        try {
-          socket.sink.add(
-              jsonEncode({'type': 'com_status', 'status': 'disconnected'}));
-        } catch (_) {}
-      }
+      onNotification?.call({'type': 'com_status', 'status': 'disconnected'});
     });
   })(req);
 }
 
-FutureOr<Response> _handleWsClient(Request req) {
-  return webSocketHandler((channel, protocol) {
-    print('Frontend Client connected');
-    _activeFrontendSockets.add(channel);
-
-    channel.stream.listen((message) {
-      // Client usually just listens
-    }, onDone: () {
-      print('Frontend Client disconnected');
-      _activeFrontendSockets.remove(channel);
-    }, onError: (e) {
-      print('Frontend WebSocket error: $e');
-      _activeFrontendSockets.remove(channel);
-    });
-  })(req);
-}
-
-Future<Response> _handleApiHealth(Request req) async {
+Future<Response> handleApiHealth(Request req) async {
   return _cors(Response.ok(
       jsonEncode(
           {'status': 'ok', 'connected': _activePluginSockets.isNotEmpty}),
@@ -2267,7 +2015,7 @@ Future<Response> _handleApiHealth(Request req) async {
       }));
 }
 
-Future<Response> _handleProjectList(Request req) async {
+Future<Response> handleProjectList(Request req) async {
   try {
     final projects = await listProjects();
     return _cors(Response.ok(jsonEncode(projects), headers: {
@@ -2280,7 +2028,7 @@ Future<Response> _handleProjectList(Request req) async {
   }
 }
 
-Future<Response> _handleAiCacheStats(Request req) async {
+Future<Response> handleAiCacheStats(Request req) async {
   try {
     final stats = await AIDiffService.getCacheStats();
     return _cors(Response.ok(jsonEncode(stats), headers: {
@@ -2294,7 +2042,7 @@ Future<Response> _handleAiCacheStats(Request req) async {
   }
 }
 
-Future<Response> _handleAiCacheClear(Request req) async {
+Future<Response> handleAiCacheClear(Request req) async {
   try {
     final deleted = await AIDiffService.clearCache();
     return _cors(Response.ok(
@@ -2313,7 +2061,7 @@ Future<Response> _handleAiCacheClear(Request req) async {
   }
 }
 
-Future<Response> _handleTrackList(Request req) async {
+Future<Response> handleTrackList(Request req) async {
   try {
     final list = await listProjects();
     return _cors(Response.ok(jsonEncode({'projects': list}), headers: {

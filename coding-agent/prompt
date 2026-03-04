@@ -7,7 +7,7 @@
 采用Windows环境开发
 
 查找文件时，如果搜索工具失败，可以使用ls命令
-代码修改完成后，只需用flutter analyze检查编译错误，不需要运行flutter run，除非我明确指示。如果你只修改了前端，就对frontend文件夹执行analyze，如果只修改了后端，就对server进行analyze，不要每次都同时analyze两个
+代码修改完成后，只需用flutter analyze | Select-String "error"  检查编译错误，不需要运行flutter run，除非我明确指示。如果你只修改了前端，就对frontend文件夹执行analyze，如果只修改了后端，就对server进行analyze，不要每次都同时analyze两个
 
 只要编译成功，就不需要进一步的系统调试，因为图形界面调试需要我亲自操作
 
@@ -17,9 +17,9 @@
 - services.dart：包含与后端交互的服务，如文件上传、下载、版本比较等
 - views.dart：定义Flutter界面，如文档列表、版本比较、文件操作等
 
-后端源代码文件在server文件夹下。包含了git_service.dart，用于处理与Git相关的操作，如初始化仓库、添加文件、提交变更等。和server.dart，用于处理与前端对接的操作
+后端源代码文件在frontend/lib/server文件夹下。包含了git_service.dart，用于处理与Git相关的操作，如初始化仓库、添加文件、提交变更等。和server.dart，用于处理与前端对接的操作
 
-不要使用flutter build和flutter clean，只需用flutter analyze检查错误
+不要使用flutter build和flutter clean，只需用flutter analyze | Select-String "error"  检查错误
 
 没有我的命令不要以任何形式启动代码，只能使用analyze。**必须同时对后端（server）和前端（frontend）进行analyze**
 
@@ -52,13 +52,13 @@ edges文件定义了需要渲染的合并边，格式为：第一行为零，后
 
 如果发现问题，可适当添加调试信息，我会提供输出内容
 
-flutter analyze只能在修改后使用，不能在写代码过程中使用
+flutter analyze | Select-String "error"  只能在修改后使用，不能在写代码过程中使用
 
 当我询问是否有某个功能时，如果没有，则自动添加
 
 修改代码时，严禁在注释中加入推理过程，注释应简洁明了
 
-如果修改的只有cpp文件，不需要执行flutter analyze，只需用g++编译（生成同名exe文件）：
+如果修改的只有cpp文件，不需要执行flutter analyze | Select-String "error"  ，只需用g++编译（生成同名exe文件）：
 C:\Users\m1369>g++ --version
 g++ (Rev8, Built by MSYS2 project) 15.2.0
 Copyright (C) 2025 Free Software Foundation, Inc.
@@ -87,7 +87,7 @@ Copyright (C) 2025 Free Software Foundation, Inc.
 
 对于复杂逻辑，可生成测试脚本；简单逻辑不需要
 
-如果中断了dart analyze/flutter analyze操作，不需要重新执行
+如果中断了dart analyze/flutter analyze | Select-String "error"  操作，不需要重新执行
 
 ## 项目背景
 
@@ -214,7 +214,7 @@ LambdaEssay项目通过类似Git的方式管理Word文档版本，但避免了Gi
   3. 每次备份生成一个父仓库的Commit，代表子仓库在某一时刻的完整快照。
   4. **区块链存证**：将备份的Hash链记录到区块链（或模拟区块链）中，确保不可篡改。
 
-#### 2. 客户端服务 (Dart - server/lib/backup_service.dart)
+#### 2. 客户端服务 (Dart - frontend/lib/server/backup_service.dart)
 - **职责**：负责与备份服务器交互，下载和还原备份。
 - **缓存机制**：
   - 下载的备份存储在 `gitdocx_history_cache` 目录。
@@ -226,4 +226,4 @@ LambdaEssay项目通过类似Git的方式管理Word文档版本，但避免了Gi
 ### 注意事项：
 1. 在增加新的功能时，要时刻加上每一步的调试信息，服务器返回500状态码的同时，后端必须定位到报错的位置
 2. 在debug的时候加入调试信息。为了更好地区分，当在修复一个bug时，用“=============”（*50）来隔开debug的区域和其它区域的输出
-3. 每次只需在所有修改结束后的最后才执行flutter analyze，中间不必执行，这样可以节省时间。
+3. 每次只需在所有修改结束后的最后才执行flutter analyze | Select-String "error"  ，中间不必执行，这样可以节省时间。

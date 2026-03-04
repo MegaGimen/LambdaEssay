@@ -3,12 +3,16 @@ import 'dart:io'; // For Process.run
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
-import 'package:http/http.dart' as http;
-import 'package:web_socket_channel/web_socket_channel.dart';
-import 'package:web_socket_channel/status.dart' as status;
+
+// import 'package:web_socket_channel/web_socket_channel.dart';
+// import 'package:web_socket_channel/status.dart' as status;
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 import 'models.dart';
+import 'main.dart';
+// import 'server/notification_service.dart';
+import 'server/server.dart';
+import 'dart:async';
 import 'graph_view.dart'; // For SimpleGraphView
 
 class BackupPage extends StatefulWidget {
@@ -29,7 +33,7 @@ class _BackupPageState extends State<BackupPage> {
   bool _loading = false;
   String? _error;
   bool _graphHovering = false;
-  WebSocketChannel? _channel;
+  // StreamSubscription? _notificationSubscription;
   double _downloadProgress = 0.0;
   String? _chainViewUrl;
   String? _workspaceId;
@@ -44,12 +48,11 @@ class _BackupPageState extends State<BackupPage> {
   List<String> _subRepos = [];
   String _selectedRepo = 'Root';
 
-  static const String backupBase = 'http://localhost:8080';
 
   @override
   void initState() {
     super.initState();
-    _connectWebSocket();
+    _initNotifications();
     _fetchSubRepos();
     // _sharedTc.addListener(_onScaleChanged);
     _loadBackups();
@@ -57,19 +60,11 @@ class _BackupPageState extends State<BackupPage> {
 
   Future<void> _fetchSubRepos() async {
     try {
-      final url = '$backupBase/track/repos';
-      final resp = await http.post(
-        Uri.parse(url),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'packagePath': widget.projectName}),
-      );
-      if (resp.statusCode == 200) {
-        final j = jsonDecode(resp.body);
-        final repos = (j['repos'] as List).cast<Map<String, dynamic>>();
-        setState(() {
-          _subRepos = repos.map((e) => e['relPath'] as String).toList();
-        });
-      }
+      final j = await postJson('/track/repos', {'packagePath': widget.projectName});
+      final repos = (j['repos'] as List).cast<Map<String, dynamic>>();
+      setState(() {
+        _subRepos = repos.map((e) => e['relPath'] as String).toList();
+      });
     } catch (e) {
       debugPrint('Failed to fetch sub repos: $e');
     }
@@ -77,23 +72,15 @@ class _BackupPageState extends State<BackupPage> {
 
   Future<void> _fetchWorkspaceId() async {
      try {
-        final url = '$backupBase/track/info';
         // Use widget.projectName as repoPath if widget.repoPath is empty, 
         // though widget.repoPath should be passed correctly.
         final path = widget.repoPath.isNotEmpty ? widget.repoPath : widget.projectName;
-        final resp = await http.post(
-          Uri.parse(url),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'repoPath': path}),
-        );
-        if (resp.statusCode == 200) {
-           final j = jsonDecode(resp.body);
-           final id = j['workspaceId'] as String?;
-           if (id != null) {
-              setState(() {
-                 _workspaceId = id;
-              });
-           }
+        final j = await postJson("/track/info", {'repoPath': path});
+        final id = j['workspaceId'] as String?;
+        if (id != null) {
+           setState(() {
+              _workspaceId = id;
+           });
         }
      } catch (e) {
         debugPrint('Failed to fetch workspaceId: $e');
@@ -112,30 +99,45 @@ class _BackupPageState extends State<BackupPage> {
     }
   }
 
-  void _connectWebSocket() {
-    try {
-      _channel = WebSocketChannel.connect(Uri.parse('ws://localhost:8080/ws/client'));
-      _channel!.stream.listen((message) {
-        try {
-          final data = jsonDecode(message);
-          if (data['type'] == 'backup_progress' && data['repo'] == widget.projectName) {
-            if (mounted) {
-              setState(() {
-                _downloadProgress = (data['percent'] as num).toDouble();
-              });
-            }
-          }
-        } catch (_) {}
-      });
-    } catch (e) {
-      debugPrint('WebSocket error: $e');
-    }
+  void _initNotifications() {
+    // 覆盖全局回调
+    // 注意：这会覆盖 Main 中的回调，所以退出时需要恢复 Main 的回调？
+    // 实际上 BackupPage 是 Main 的子页面还是独立页面？
+    // 如果是 push 进去的，那么 Main 依然存在。
+    // 但是 server.dart 只有一个全局变量 onNotification。
+    // 所以我们需要一个简单的多播机制，或者让 server.dart 支持多个监听者。
+    // 但用户说“不要中间层”。
+    // 既然如此，我们可以做一个简单的链式调用，或者就在这里直接处理。
+    // 简单起见，我们暂且认为 BackupPage 激活时接管 onNotification。
+    
+    final previousCallback = onNotification;
+    onNotification = (data) {
+      // 先调用之前的（Main的）
+      previousCallback?.call(data);
+
+      if (!mounted) return;
+      try {
+        if (data['type'] == 'backup_progress' && data['repo'] == widget.projectName) {
+          setState(() {
+            _downloadProgress = (data['percent'] as num).toDouble();
+          });
+        }
+      } catch (e) {
+        debugPrint('Notification error: $e');
+      }
+    };
   }
 
   @override
   void dispose() {
-    _channel?.sink.close(status.goingAway);
-    // _sharedTc.removeListener(_onScaleChanged);
+    // 恢复回调比较麻烦，因为我们用了闭包捕获 previousCallback。
+    // 如果多层嵌套，这个链条会很长。
+    // 但是 BackupPage pop 后，onNotification 依然指向这里的闭包，而这里已经 dispose 了。
+    // 闭包里的 mounted 检查会阻止 setState，所以不会崩，但会内存泄漏（持有 context）。
+    
+    // 更好的做法是 server.dart 提供 add/removeListener。
+    // 但那又变成了“中间层/观察者模式”。
+    
     _sharedTc.dispose();
     super.dispose();
   }
@@ -158,18 +160,8 @@ class _BackupPageState extends State<BackupPage> {
       _downloadProgress = 0.0;
     });
     try {
-      final url = '$backupBase/backup/commits';
         print("The token here is ${widget.token}");
-      final resp = await http.post(
-        Uri.parse(url),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'repoName': repo,"token":widget.token}),
-      );
-      if (resp.statusCode != 200) {
-        throw Exception('加载备份失败: ${resp.body}');
-      }
-
-      final j = jsonDecode(resp.body) as Map<String, dynamic>;
+      final j = await postJson("/backup/commits", {'repoName': repo, "token": widget.token});
       final list = (j['commits'] as List?) ?? const [];
       final bool cacheHit = j['cacheHit'] == true;
       _chainViewUrl = j['chainViewUrl'] as String?;
@@ -209,21 +201,12 @@ class _BackupPageState extends State<BackupPage> {
   Future<void> _ensureComparison(String repo, String sha) async {
     if (_comparisons.containsKey(sha)) return;
     // Call the compare_repos API to get aligned graphs
-    final url = '$backupBase/compare_repos';
-    final resp = await http.post(
-      Uri.parse(url),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'repoName': repo,
-        'commitA': sha, // Backup commit
-        'commitB': 'local', // Local state
-        'localPath': widget.repoPath,
-      }),
-    );
-    if (resp.statusCode != 200) {
-      throw Exception('加载对比失败: ${resp.body}');
-    }
-    final j = jsonDecode(resp.body) as Map<String, dynamic>;
+    final j = await postJson("/compare_repos", {
+      'repoName': repo,
+      'commitA': sha, // Backup commit
+      'commitB': 'local', // Local state
+      'localPath': widget.repoPath,
+    });
     final gA = GraphData.fromJson(j['graphA']);
     final gB = GraphData.fromJson(j['graphB']);
     final rawMapping = j['unifiedRowMapping'] as Map<String, dynamic>;

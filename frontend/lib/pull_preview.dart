@@ -1,7 +1,8 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+
 import 'models.dart';
+import 'main.dart';
 import 'graph_view.dart';
 
 class PullPreviewPage extends StatefulWidget {
@@ -46,24 +47,13 @@ class _PullPreviewPageState extends State<PullPreviewPage> {
 
   Future<void> _loadPreview() async {
     try {
-      final url = 'http://localhost:8080/pull/preview';
-      final resp = await http.post(
-        Uri.parse(url),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
+      final data = await postJson('/pull/preview', {
           'repoName': widget.repoName,
           'username': widget.username,
           'token': widget.token,
           'type': widget.type,
-        }),
-      );
+      });
 
-      if (resp.statusCode != 200) {
-        throw Exception(jsonDecode(resp.body)['error']);
-      }
-
-      final data = jsonDecode(resp.body);
-      
       setState(() {
         _current = GraphData.fromJson(data['current']);
         _target = GraphData.fromJson(data['target']);
@@ -91,14 +81,9 @@ class _PullPreviewPageState extends State<PullPreviewPage> {
       _cancelLoading = true;
     });
     try {
-      final url = 'http://localhost:8080/pull/cancel';
-      await http.post(
-        Uri.parse(url),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'repoName': widget.repoName,
-        }),
-      );
+      await postJson("/pull/cancel", {
+        'repoName': widget.repoName,
+      });
     } catch (e) {
       print('Cancel failed: $e');
     } finally {

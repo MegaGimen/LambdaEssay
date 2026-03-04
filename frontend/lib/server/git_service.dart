@@ -226,7 +226,7 @@ Future<void> _writeExternalDocx(String repoPath, String sourcePath) async {
   bool handled = false;
 
   if (comSender == null) {
-    print('[Warn] comSender is null. Is WordCOM.exe running and connected to ws://localhost:8080/ws?');
+    print('[Warn] comSender is null. Is WordCOM.exe running?');
   }
 
   if (comSender != null && File(sourcePath).existsSync()) {
