@@ -22,7 +22,6 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
   String? error;
   late TabController _tabController;
 
-  static const String baseUrl = 'http://localhost:8080';
 
   @override
   void initState() {
@@ -56,7 +55,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
       setState(() => loading = true);
       try {
         // Attempt to login/refresh token
-        final body = await postJson('$baseUrl/create_user', {
+        final body = await postJson('/create_user', {
             'username': username,
             'password': password,
           });
@@ -89,7 +88,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
       error = null;
     });
     try {
-      await postJson('$baseUrl/request_code', {'email': email});
+      await postJson('/request_code', {'email': email});
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('验证码已发送，请检查邮箱')),
@@ -119,7 +118,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
 
     try {
       // 1. Register
-      await postJson('$baseUrl/register', {
+      await postJson('/register', {
           'email': email,
           'username': username,
           'password': password,
@@ -161,13 +160,13 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
       Map<String, dynamic> body;
       try {
         // First try /login
-        body = await postJson('$baseUrl/login', {
+        body = await postJson('/login', {
           'username': username,
           'password': password,
         });
       } catch (_) {
         // Try create_user if login fails (legacy logic from main.dart)
-         body = await postJson('$baseUrl/create_user', {
+         body = await postJson('/create_user', {
             'username': username,
             'password': password,
           });

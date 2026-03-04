@@ -45,7 +45,6 @@ class _BackupPageState extends State<BackupPage> {
   List<String> _subRepos = [];
   String _selectedRepo = 'Root';
 
-  static const String backupBase = 'http://localhost:8080';
 
   @override
   void initState() {
@@ -58,8 +57,7 @@ class _BackupPageState extends State<BackupPage> {
 
   Future<void> _fetchSubRepos() async {
     try {
-      final url = '$backupBase/track/repos';
-      final j = await postJson(url, {'packagePath': widget.projectName});
+      final j = await postJson('/track/repos', {'packagePath': widget.projectName});
       final repos = (j['repos'] as List).cast<Map<String, dynamic>>();
       setState(() {
         _subRepos = repos.map((e) => e['relPath'] as String).toList();
@@ -71,11 +69,10 @@ class _BackupPageState extends State<BackupPage> {
 
   Future<void> _fetchWorkspaceId() async {
      try {
-        final url = '$backupBase/track/info';
         // Use widget.projectName as repoPath if widget.repoPath is empty, 
         // though widget.repoPath should be passed correctly.
         final path = widget.repoPath.isNotEmpty ? widget.repoPath : widget.projectName;
-        final j = await postJson(url, {'repoPath': path});
+        final j = await postJson("/track/info", {'repoPath': path});
         final id = j['workspaceId'] as String?;
         if (id != null) {
            setState(() {
@@ -145,9 +142,8 @@ class _BackupPageState extends State<BackupPage> {
       _downloadProgress = 0.0;
     });
     try {
-      final url = '$backupBase/backup/commits';
         print("The token here is ${widget.token}");
-      final j = await postJson(url, {'repoName': repo, "token": widget.token});
+      final j = await postJson("/backup/commits", {'repoName': repo, "token": widget.token});
       final list = (j['commits'] as List?) ?? const [];
       final bool cacheHit = j['cacheHit'] == true;
       _chainViewUrl = j['chainViewUrl'] as String?;
@@ -187,8 +183,7 @@ class _BackupPageState extends State<BackupPage> {
   Future<void> _ensureComparison(String repo, String sha) async {
     if (_comparisons.containsKey(sha)) return;
     // Call the compare_repos API to get aligned graphs
-    final url = '$backupBase/compare_repos';
-    final j = await postJson(url, {
+    final j = await postJson("/compare_repos", {
       'repoName': repo,
       'commitA': sha, // Backup commit
       'commitB': 'local', // Local state

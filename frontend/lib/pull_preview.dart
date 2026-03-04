@@ -47,8 +47,7 @@ class _PullPreviewPageState extends State<PullPreviewPage> {
 
   Future<void> _loadPreview() async {
     try {
-      final url = 'http://localhost:8080/pull/preview';
-      final data = await postJson(url, {
+      final data = await postJson('/pull/preview', {
           'repoName': widget.repoName,
           'username': widget.username,
           'token': widget.token,
@@ -82,8 +81,7 @@ class _PullPreviewPageState extends State<PullPreviewPage> {
       _cancelLoading = true;
     });
     try {
-      final url = 'http://localhost:8080/pull/cancel';
-      await postJson(url, {
+      await postJson("/pull/cancel", {
         'repoName': widget.repoName,
       });
     } catch (e) {
