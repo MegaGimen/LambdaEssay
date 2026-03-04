@@ -14,6 +14,9 @@ import 'package:web_socket_channel/io.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 // import 'package:file_tree_view/file_tree_view.dart';
 import 'widgets/custom_file_tree.dart';
+import 'server/server.dart';
+import 'server/route_map.dart';
+import 'package:shelf/shelf.dart' as shelf;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:crypto/crypto.dart';
@@ -244,14 +247,8 @@ class _BootstrapAppState extends State<BootstrapApp> {
         binPath = p.join(exeDir, 'bin');
       }
 
-      final serverPath = p.join(binPath, 'server.exe');
       final wardenPath = p.join(binPath, 'warden.exe');
       final comPath = p.join(binPath, 'COM.exe');
-
-      if (!await File(serverPath).exists()) {
-        await _showErrorDialog(serverPath);
-        return;
-      }
       if (!await File(wardenPath).exists()) {
         await _showErrorDialog(wardenPath);
         return;
@@ -261,8 +258,6 @@ class _BootstrapAppState extends State<BootstrapApp> {
         return;
       }
 
-      // 启动进程
-      await BackendManager().startProcess('Server', serverPath, []);
       
       await Process.start(
           wardenPath, ['--monitor_port', '9527', '--terminal_port', '8080'],
@@ -333,7 +328,6 @@ class _BootstrapAppState extends State<BootstrapApp> {
       // 尝试杀死进程
       await BackendManager().stopAll();
       final processes = [
-        'server.exe',
         'warden.exe',
         'COM.exe',
       ];
@@ -2287,21 +2281,36 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     String url,
     Map<String, dynamic> body,
   ) async {
-    final resp = await http.post(
-      Uri.parse(url),
-      headers: {'Content-Type': 'application/json'},
+    final uri = Uri.parse(url);
+    final path = uri.path;
+
+    // 查找路由处理器
+    final handler = routeMap[path];
+    if (handler == null) {
+      throw Exception('Route not found: $path');
+    }
+
+    // 构造 Shelf Request
+    final request = shelf.Request(
+      'POST',
+      uri,
+      headers: {'content-type': 'application/json'},
       body: jsonEncode(body),
     );
-    if (resp.statusCode == 204) {
-      // No Content, return empty map
+
+    // 调用处理器
+    final response = await (handler as Function)(request) as shelf.Response;
+
+    // 处理响应
+    final respBody = await response.readAsString();
+    if (response.statusCode == 204) {
       return {};
     }
-    if (resp.statusCode != 200 && resp.statusCode != 201) {
-      // Allow 201 Created as well
-      throw Exception(resp.body);
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      throw Exception(respBody);
     }
-    if (resp.body.isEmpty) return {};
-    return jsonDecode(resp.body) as Map<String, dynamic>;
+    if (respBody.isEmpty) return {};
+    return jsonDecode(respBody) as Map<String, dynamic>;
   }
 
   Future<void> _handleDirTap(Directory dir, TapDownDetails details) async {
