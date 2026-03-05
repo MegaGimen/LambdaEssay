@@ -4639,8 +4639,6 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                 _buildActionButton(Icons.add, '新建分支', _onCreateBranch),
                 _buildActionButton(Icons.swap_horiz, '切换分支', _onSwitchBranch),
                 _buildActionButton(Icons.call_merge, '合并分支', _onMergeButton),
-                _buildActionButton(Icons.search, '查找相同版本', _findIdentical),
-                _buildActionButton(Icons.card_membership, '会员订阅 (Lv.$_subscriptionLevel)', _showSubscriptionDialog),
                 if (data != null) ...[
                   const Divider(height: 32),
                   const Text('视图设置',
