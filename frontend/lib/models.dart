@@ -1,3 +1,5 @@
+import 'dart:io';
+
 class CommitNode {
   final String id;
   final List<String> parents;
@@ -163,9 +165,17 @@ class SubscriptionStatus {
   });
 
   factory SubscriptionStatus.fromJson(Map<String, dynamic> json) {
+    DateTime? expire;
+    if (json['expire_at'] != null) {
+      try {
+        expire = HttpDate.parse(json['expire_at']);
+      } catch (_) {
+        expire = DateTime.tryParse(json['expire_at']);
+      }
+    }
     return SubscriptionStatus(
       subscription: json['subscription'],
-      expireAt: json['expire_at'] != null ? DateTime.parse(json['expire_at']) : null,
+      expireAt: expire,
     );
   }
 }

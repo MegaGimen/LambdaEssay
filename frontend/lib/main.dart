@@ -1166,7 +1166,11 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
            setState(() {
              _subscriptionLevel = resp['subscription'] as int? ?? 0;
              if (resp['expire_at'] != null) {
-               _expireAt = DateTime.parse(resp['expire_at']);
+               try {
+                 _expireAt = HttpDate.parse(resp['expire_at']);
+               } catch (_) {
+                 _expireAt = DateTime.parse(resp['expire_at']);
+               }
              }
            });
          }
