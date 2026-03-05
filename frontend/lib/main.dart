@@ -1158,7 +1158,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   Future<void> _checkSubscriptionStatus() async {
     if (_username == null) return;
     try {
-       final response = await http.get(Uri.parse('https://llinker.com/api/subscription/query?userid=$_username'));
+       final response = await http.get(Uri.parse('https://llinker.com/register/api/subscription/query?userid=$_username'));
        if (response.statusCode == 200) {
          final resp = jsonDecode(response.body);
          if (mounted) {
@@ -1179,7 +1179,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     if (_username == null) return;
     try {
       final response = await http.post(
-        Uri.parse('https://llinker.com/api/subscription/purchase'),
+        Uri.parse('https://llinker.com/register/api/subscription/purchase'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'userid': _username,
@@ -1224,7 +1224,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     
     List<SubscriptionPlan> plans = [];
     try {
-      final response = await http.get(Uri.parse('https://llinker.com/api/subscription/plans'));
+      final response = await http.get(Uri.parse('https://llinker.com/register/api/subscription/plans'));
       if (response.statusCode != 200) {
         throw Exception(response.body);
       }
@@ -1279,6 +1279,90 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('关闭')),
         ],
+      ),
+    );
+  }
+
+  Future<void> _doLogout() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('git_username');
+    await prefs.remove('git_password');
+    // await prefs.remove('git_token'); // If used
+
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => const LoginPage()),
+    );
+  }
+
+  Future<void> _showUserDetailsDialog() async {
+    await _checkSubscriptionStatus(); // Refresh on open
+    if (!mounted) return;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setState) {
+          return AlertDialog(
+            title: const Text('用户详情'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const CircleAvatar(child: Icon(Icons.person)),
+                    const SizedBox(width: 16),
+                    Text(_username ?? '未登录',
+                        style: const TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                const SizedBox(height: 24),
+                const Text('订阅状态:',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Text('当前级别: $_subscriptionLevel'),
+                Text('过期时间: ${_expireAt?.toString().split('.').first ?? "无"}'),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: () async {
+                        await _checkSubscriptionStatus();
+                        setState(() {}); // Refresh dialog UI
+                      },
+                      icon: const Icon(Icons.refresh, size: 16),
+                      label: const Text('刷新状态'),
+                    ),
+                    const SizedBox(width: 8),
+                    OutlinedButton(
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        _showSubscriptionDialog();
+                      },
+                      child: const Text('会员订阅/续费'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('关闭'),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _doLogout();
+                },
+                child: const Text('退出登录'),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -4837,6 +4921,15 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                   elevation: 1,
                   shadowColor: Colors.black.withOpacity(0.1),
                   actions: [
+                    TextButton.icon(
+                      onPressed: _showUserDetailsDialog,
+                      icon: const Icon(Icons.person, color: Colors.grey),
+                      label: Text(
+                        _username ?? '未登录',
+                        style: const TextStyle(color: Colors.black87),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
                     IconButton(
                       icon: const Icon(Icons.save),
                       tooltip: '保存追踪包 (Ctrl+S)',
