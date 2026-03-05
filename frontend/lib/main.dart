@@ -1158,14 +1158,17 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   Future<void> _checkSubscriptionStatus() async {
     if (_username == null) return;
     try {
-       final resp = await getJson('/api/subscription/query?userid=$_username');
-       if (mounted) {
-         setState(() {
-           _subscriptionLevel = resp['subscription'] as int? ?? 0;
-           if (resp['expire_at'] != null) {
-             _expireAt = DateTime.parse(resp['expire_at']);
-           }
-         });
+       final response = await http.get(Uri.parse('https://llinker.com/api/subscription/query?userid=$_username'));
+       if (response.statusCode == 200) {
+         final resp = jsonDecode(response.body);
+         if (mounted) {
+           setState(() {
+             _subscriptionLevel = resp['subscription'] as int? ?? 0;
+             if (resp['expire_at'] != null) {
+               _expireAt = DateTime.parse(resp['expire_at']);
+             }
+           });
+         }
        }
     } catch (e) {
       print('Check subscription failed: $e');
@@ -1175,11 +1178,19 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   Future<void> _purchase(String planId) async {
     if (_username == null) return;
     try {
-      final resp = await postJson('/api/subscription/purchase', {
-        'userid': _username,
-        'plan_id': planId,
-      });
-      
+      final response = await http.post(
+        Uri.parse('https://llinker.com/api/subscription/purchase'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'userid': _username,
+          'plan_id': planId,
+        }),
+      );
+      if (response.statusCode != 200) {
+        throw Exception(response.body);
+      }
+      final resp = jsonDecode(response.body);
+
       final payUrl = resp['pay_url'];
       if (payUrl != null && mounted) {
          if (Platform.isWindows) {
@@ -1213,9 +1224,14 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     
     List<SubscriptionPlan> plans = [];
     try {
-      final resp = await getJson('/api/subscription/plans');
+      final response = await http.get(Uri.parse('https://llinker.com/api/subscription/plans'));
+      if (response.statusCode != 200) {
+        throw Exception(response.body);
+      }
+      final resp = jsonDecode(response.body);
       plans = (resp['plans'] as List).map((e) => SubscriptionPlan.fromJson(e)).toList();
     } catch (e) {
+      print(e);
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('获取订阅计划失败: $e')));
       return;
     }
