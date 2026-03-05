@@ -1,0 +1,3 @@
+[submodule "server/remote/pay"]
+	path = server/remote/pay
+	url = https://gitcode.com/LambdaLinker/pay
