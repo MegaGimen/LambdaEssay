@@ -1159,9 +1159,14 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   Future<void> _checkSubscriptionStatus() async {
     if (_userid == null) return;
     try {
-       final response = await http.get(Uri.parse('https://llinker.com/register/api/subscription/query?userid=$_userid'));
+       final url = 'https://llinker.com/register/api/subscription/query?userid=$_userid';
+       print('Debug: [Check Subscription] Requesting: $url');
+       final response = await http.get(Uri.parse(url));
+       print('Debug: [Check Subscription] Response status: ${response.statusCode}');
+
        if (response.statusCode == 200) {
          final resp = jsonDecode(response.body);
+         print('Debug: [Check Subscription] Response body: $resp');
          if (mounted) {
            setState(() {
              _subscriptionLevel = resp['subscription'] as int? ?? 0;
@@ -1174,6 +1179,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
              }
            });
          }
+       } else {
+         print('Debug: [Check Subscription] Failed with status code: ${response.statusCode}');
        }
     } catch (e) {
       print('Check subscription failed: $e');
@@ -1227,18 +1234,29 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       return;
     }
     
+    // Add loading and logs
+    print('Debug: [Show Subscription Dialog] Fetching plans...');
+    setState(() => loading = true);
+
     List<SubscriptionPlan> plans = [];
     try {
-      final response = await http.get(Uri.parse('https://llinker.com/register/api/subscription/plans'));
+      final url = 'https://llinker.com/register/api/subscription/plans';
+      print('Debug: [Show Subscription Dialog] Requesting: $url');
+      
+      final response = await http.get(Uri.parse(url));
+      print('Debug: [Show Subscription Dialog] Response status: ${response.statusCode}');
+
       if (response.statusCode != 200) {
         throw Exception(response.body);
       }
       final resp = jsonDecode(response.body);
       plans = (resp['plans'] as List).map((e) => SubscriptionPlan.fromJson(e)).toList();
     } catch (e) {
-      print(e);
+      print('Debug: [Show Subscription Dialog] Error: $e');
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('获取订阅计划失败: $e')));
       return;
+    } finally {
+      if (mounted) setState(() => loading = false);
     }
 
     if (!mounted) return;
@@ -1302,7 +1320,17 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   }
 
   Future<void> _showUserDetailsDialog() async {
-    await _checkSubscriptionStatus(); // Refresh on open
+    print('Debug: [User Details Dialog] Clicked. Updating subscription status...');
+    setState(() => loading = true);
+    
+    try {
+      await _checkSubscriptionStatus(); // Refresh on open
+    } catch (e) {
+      print('Debug: [User Details Dialog] Error: $e');
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+    
     if (!mounted) return;
 
     await showDialog(
