@@ -1320,17 +1320,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   }
 
   Future<void> _showUserDetailsDialog() async {
-    print('Debug: [User Details Dialog] Clicked. Updating subscription status...');
-    setState(() => loading = true);
-    
-    try {
-      await _checkSubscriptionStatus(); // Refresh on open
-    } catch (e) {
-      print('Debug: [User Details Dialog] Error: $e');
-    } finally {
-      if (mounted) setState(() => loading = false);
-    }
-    
+    // 点击用户详情时，不再自动刷新订阅状态
     if (!mounted) return;
 
     await showDialog(
@@ -1432,6 +1422,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           await prefs.setString('git_userid', uid);
         }
 
+        print('Debug: [Auto Login] Checking subscription status...');
         await _checkSubscriptionStatus();
 
         final tokens = resp['tokens'] as List?;
@@ -4966,9 +4957,31 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                     TextButton.icon(
                       onPressed: _showUserDetailsDialog,
                       icon: const Icon(Icons.person, color: Colors.grey),
-                      label: Text(
-                        _username ?? '未登录',
-                        style: const TextStyle(color: Colors.black87),
+                      label: Row(
+                        children: [
+                          Text(
+                            _username ?? '未登录',
+                            style: const TextStyle(color: Colors.black87),
+                          ),
+                          if (_username != null) ...[
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.amber.shade300,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                'Lv.$_subscriptionLevel',
+                                style: const TextStyle(
+                                  color: Colors.black87,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
                     ),
                     const SizedBox(width: 8),
