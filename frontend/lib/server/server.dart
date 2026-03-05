@@ -14,6 +14,7 @@ import 'diff/repocmp.dart';
 import 'sumdiff.dart';
 import 'ai_diff_service.dart';
 import 'package:http/http.dart' as http;
+import 'subscription_service.dart';
 
 import 'package:uuid/uuid.dart';
 import 'dart:async';
@@ -577,6 +578,13 @@ Future<Response> handleCompare(Request req) async {
   final c1 = data['commit1'] as String?;
   final c2 = data['commit2'] as String?;
 
+  final userId = data['userid'] as String?;
+  if (userId == null || await SubscriptionService.checkSubscription(userId) <= 0) {
+    return _cors(Response(403,
+        body: jsonEncode({'error': 'Subscription required (Level > 0)'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+
   if (repoPath.isEmpty || c1 == null || c2 == null) {
     return _cors(Response(400,
         body: jsonEncode({'error': 'repoPath, commit1, commit2 required'}),
@@ -600,6 +608,13 @@ Future<Response> handleSummarizeDiff(Request req) async {
     final data = jsonDecode(body) as Map<String, dynamic>;
     final beforePath = _sanitizePath(data['beforePath'] as String?);
     final afterPath = _sanitizePath(data['afterPath'] as String?);
+
+    final userId = data['userid'] as String?;
+    if (userId == null || await SubscriptionService.checkSubscription(userId) <= 0) {
+      return _cors(Response(403,
+          body: jsonEncode({'error': 'Subscription required (Level > 0)'}),
+          headers: {'Content-Type': 'application/json; charset=utf-8'}));
+    }
 
     if (beforePath.isEmpty || afterPath.isEmpty) {
       return _cors(Response(400,
@@ -720,6 +735,12 @@ Future<Response> handleBackupGraph(Request req) async {
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoName = data['repoName'] as String?;
   final commitId = data['commitId'] as String?;
+
+  final userId = data['userid'] as String?;
+  if (userId == null || await SubscriptionService.checkSubscription(userId) <= 0) {
+    return _cors(Response(403, body: 'Subscription required (Level > 0)'));
+  }
+
   if (repoName == null || commitId == null) {
     return _cors(Response(400, body: 'Repo name and commitId required'));
   }
@@ -765,6 +786,11 @@ Future<Response> handleBackupPreview(Request req) async {
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoName = data['repoName'] as String?;
   final commitId = data['commitId'] as String?;
+
+  final userId = data['userid'] as String?;
+  if (userId == null || await SubscriptionService.checkSubscription(userId) <= 0) {
+    return _cors(Response(403, body: 'Subscription required (Level > 0)'));
+  }
   if (repoName == null || commitId == null) {
     return _cors(Response(400, body: 'Repo name and commitId required'));
   }
@@ -916,6 +942,13 @@ Future<Response> handlePreview(Request req) async {
 Future<Response> handleCompareAi(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
+
+  final userId = data['userid'] as String?;
+  if (userId == null || await SubscriptionService.checkSubscription(userId) <= 0) {
+    return _cors(Response(403,
+        body: jsonEncode({'error': 'Subscription required (Level > 0)'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
 
   final repoPath = _sanitizePath(data['repoPath'] as String?);
   final commit1 = (data['commit1'] as String? ?? '').trim();
@@ -1878,6 +1911,13 @@ Future<Response> handleBackupCommits(Request req) async {
   final data = jsonDecode(body) as Map<String, dynamic>;
   final token = (data['token'] as String?)?.trim() ?? '';
   final repoName = (data['repoName'] as String?)?.trim() ?? '';
+
+  final userId = data['userid'] as String?;
+  if (userId == null || await SubscriptionService.checkSubscription(userId) <= 0) {
+    return _cors(Response(403,
+        body: jsonEncode({'error': 'Subscription required (Level > 0)'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
 
   if (repoName.isEmpty) {
     return _cors(Response(400,

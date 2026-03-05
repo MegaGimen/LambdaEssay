@@ -1,4 +1,5 @@
 import 'server.dart';
+import 'subscription_service.dart';
 
 final Map<String, Function> routeMap = {
   '/health': handleHealth,
@@ -7,6 +8,9 @@ final Map<String, Function> routeMap = {
   '/api/health': handleApiHealth,
   '/api/save': handleApiSave,
   '/api/document': handleApiDocument,
+  '/api/subscription/plans': SubscriptionService.handleSubscriptionPlans,
+  '/api/subscription/purchase': SubscriptionService.handleSubscriptionPurchase,
+  '/api/subscription/query': SubscriptionService.handleSubscriptionQuery,
   '/reset': handleReset,
   '/<ignored|.*>': optionsHandler,
   '/fetch': handleFetch,

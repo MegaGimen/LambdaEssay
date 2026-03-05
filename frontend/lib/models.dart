@@ -120,3 +120,52 @@ class WorkingState {
   final String? baseId;
   WorkingState({required this.changed, this.baseId});
 }
+
+class SubscriptionPlan {
+  final String id;
+  final String name;
+  final String price;
+  final String currency;
+  final int durationDays;
+  final int subscriptionLevel;
+  final String description;
+
+  SubscriptionPlan({
+    required this.id,
+    required this.name,
+    required this.price,
+    required this.currency,
+    required this.durationDays,
+    required this.subscriptionLevel,
+    required this.description,
+  });
+
+  factory SubscriptionPlan.fromJson(Map<String, dynamic> json) {
+    return SubscriptionPlan(
+      id: json['id'],
+      name: json['name'],
+      price: json['price'],
+      currency: json['currency'],
+      durationDays: json['duration_days'],
+      subscriptionLevel: json['subscription_level'],
+      description: json['description'],
+    );
+  }
+}
+
+class SubscriptionStatus {
+  final int subscription;
+  final DateTime? expireAt;
+
+  SubscriptionStatus({
+    required this.subscription,
+    this.expireAt,
+  });
+
+  factory SubscriptionStatus.fromJson(Map<String, dynamic> json) {
+    return SubscriptionStatus(
+      subscription: json['subscription'],
+      expireAt: json['expire_at'] != null ? DateTime.parse(json['expire_at']) : null,
+    );
+  }
+}

@@ -37,6 +37,12 @@ Future<dynamic> postJson(
   String urlpath,
   Map<String, dynamic> body,
 ) async {
+  final prefs = await SharedPreferences.getInstance();
+  final username = prefs.getString('git_username');
+  if (username != null && !body.containsKey('userid')) {
+    body['userid'] = username;
+  }
+
   final prefix="http://localhost:8080";
   final path = urlpath;
   final uri=Uri.parse(prefix).resolve(path);
@@ -524,6 +530,8 @@ class GraphPage extends StatefulWidget {
 }
 
 class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
+  int _subscriptionLevel = 0;
+  DateTime? _expireAt;
   final DirectoryTreeStateNotifier _treeNotifier = DirectoryTreeStateNotifier();
   double _sidebarWidth = 250.0;
   final TextEditingController pathCtrl = TextEditingController();
@@ -1147,6 +1155,118 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
   // void _onScaleChanged() { ... } // Removed
 
+  Future<void> _checkSubscriptionStatus() async {
+    if (_username == null) return;
+    try {
+       final resp = await getJson('/api/subscription/query?userid=$_username');
+       if (mounted) {
+         setState(() {
+           _subscriptionLevel = resp['subscription'] as int? ?? 0;
+           if (resp['expire_at'] != null) {
+             _expireAt = DateTime.parse(resp['expire_at']);
+           }
+         });
+       }
+    } catch (e) {
+      print('Check subscription failed: $e');
+    }
+  }
+
+  Future<void> _purchase(String planId) async {
+    if (_username == null) return;
+    try {
+      final resp = await postJson('/api/subscription/purchase', {
+        'userid': _username,
+        'plan_id': planId,
+      });
+      
+      final payUrl = resp['pay_url'];
+      if (payUrl != null && mounted) {
+         if (Platform.isWindows) {
+            Process.run('cmd', ['/c', 'start', payUrl.toString().replaceAll('&', '^&')]); 
+         }
+         
+         await showDialog(
+           context: context,
+           builder: (ctx) => AlertDialog(
+             title: const Text('支付中'),
+             content: const Text('请在浏览器中完成支付。支付完成后请点击刷新状态。'),
+             actions: [
+               TextButton(onPressed: () async {
+                 Navigator.pop(ctx);
+                 await _checkSubscriptionStatus();
+               }, child: const Text('刷新状态')),
+             ],
+           ),
+         );
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('创建订单失败: $e')));
+    }
+  }
+
+  Future<void> _showSubscriptionDialog() async {
+    if (_username == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('请先登录')));
+      return;
+    }
+    
+    List<SubscriptionPlan> plans = [];
+    try {
+      final resp = await getJson('/api/subscription/plans');
+      plans = (resp['plans'] as List).map((e) => SubscriptionPlan.fromJson(e)).toList();
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('获取订阅计划失败: $e')));
+      return;
+    }
+
+    if (!mounted) return;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('会员订阅'),
+        content: SizedBox(
+          width: 600,
+          height: 400,
+          child: Column(
+            children: [
+              Text('当前订阅级别: $_subscriptionLevel'),
+              if (_expireAt != null) Text('过期时间: $_expireAt'),
+              const SizedBox(height: 16),
+              const Text('选择订阅计划:', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: plans.length,
+                  itemBuilder: (context, index) {
+                    final plan = plans[index];
+                    return Card(
+                      child: ListTile(
+                        title: Text(plan.name),
+                        subtitle: Text('${plan.description}\n价格: ${plan.price} ${plan.currency} / ${plan.durationDays}天'),
+                        trailing: ElevatedButton(
+                          onPressed: () async {
+                            Navigator.pop(ctx);
+                            await _purchase(plan.id);
+                          },
+                          child: const Text('购买'),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('关闭')),
+        ],
+      ),
+    );
+  }
+
   Future<void> _checkLogin() async {
     final prefs = await SharedPreferences.getInstance();
     final username = prefs.getString('git_username');
@@ -1167,6 +1287,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           'username': username,
           'password': password,
         });
+
+        await _checkSubscriptionStatus();
 
         final tokens = resp['tokens'] as List?;
         if (tokens != null && tokens.isNotEmpty) {
@@ -4374,6 +4496,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                 _buildActionButton(Icons.swap_horiz, '切换分支', _onSwitchBranch),
                 _buildActionButton(Icons.call_merge, '合并分支', _onMergeButton),
                 _buildActionButton(Icons.search, '查找相同版本', _findIdentical),
+                _buildActionButton(Icons.card_membership, '会员订阅 (Lv.$_subscriptionLevel)', _showSubscriptionDialog),
                 if (data != null) ...[
                   const Divider(height: 32),
                   const Text('视图设置',
