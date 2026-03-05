@@ -594,6 +594,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   final GlobalKey<_GraphViewState> _localGraphKey = GlobalKey();
 
   String? _username;
+  String? _userid;
   String? _token;
 
   double _uiScale = 1.0;
@@ -1156,9 +1157,9 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   // void _onScaleChanged() { ... } // Removed
 
   Future<void> _checkSubscriptionStatus() async {
-    if (_username == null) return;
+    if (_userid == null) return;
     try {
-       final response = await http.get(Uri.parse('https://llinker.com/register/api/subscription/query?userid=$_username'));
+       final response = await http.get(Uri.parse('https://llinker.com/register/api/subscription/query?userid=$_userid'));
        if (response.statusCode == 200) {
          final resp = jsonDecode(response.body);
          if (mounted) {
@@ -1176,13 +1177,13 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   }
 
   Future<void> _purchase(String planId) async {
-    if (_username == null) return;
+    if (_userid == null) return;
     try {
       final response = await http.post(
         Uri.parse('https://llinker.com/register/api/subscription/purchase'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'userid': _username,
+          'userid': _userid,
           'plan_id': planId,
         }),
       );
@@ -1287,6 +1288,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('git_username');
     await prefs.remove('git_password');
+    await prefs.remove('git_userid');
     // await prefs.remove('git_token'); // If used
 
     if (!mounted) return;
@@ -1371,12 +1373,14 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     final prefs = await SharedPreferences.getInstance();
     final username = prefs.getString('git_username');
     final password = prefs.getString('git_password');
+    final userid = prefs.getString('git_userid');
 
     // 不再从 SharedPreferences 读取 token
     // final token = prefs.getString('git_token');
 
     setState(() {
       _username = username;
+      _userid = userid;
       // _token = token;
     });
 
@@ -1387,6 +1391,14 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           'username': username,
           'password': password,
         });
+
+        if (resp['userid'] != null) {
+          final uid = resp['userid'].toString();
+          setState(() {
+            _userid = uid;
+          });
+          await prefs.setString('git_userid', uid);
+        }
 
         await _checkSubscriptionStatus();
 

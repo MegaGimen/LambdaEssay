@@ -176,6 +176,9 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('git_username', body['username'] ?? username);
       await prefs.setString('git_password', password);
+      if (body['userid'] != null) {
+        await prefs.setString('git_userid', body['userid'].toString());
+      }
 
       if (mounted) {
          Navigator.of(context).pushReplacement(
