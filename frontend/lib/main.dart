@@ -547,6 +547,10 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   int? _freeAiQuota;
   int? _freeEthQuota;
   double? _freeStorageQuota;
+  
+  // Plan Totals (level -> quotas)
+  Map<int, Map<String, dynamic>> _planTotals = {};
+  bool _plansFetched = false;
 
   final DirectoryTreeStateNotifier _treeNotifier = DirectoryTreeStateNotifier();
   double _sidebarWidth = 250.0;
@@ -1172,8 +1176,45 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
   // void _onScaleChanged() { ... } // Removed
 
+  Future<void> _fetchPlans() async {
+    if (_plansFetched) return;
+    try {
+      final url = 'https://llinker.com/register/api/subscription/plans';
+      // print('Debug: [Fetch Plans] Requesting: $url');
+      final response = await http.get(Uri.parse(url));
+      
+      if (response.statusCode == 200) {
+        final resp = jsonDecode(response.body);
+        if (resp['plans'] != null) {
+          final plans = resp['plans'] as List;
+          final Map<int, Map<String, dynamic>> newTotals = {};
+          for (var p in plans) {
+             final level = p['subscription_level'] as int? ?? 0;
+             if (p['quotas'] != null) {
+               newTotals[level] = p['quotas'];
+             }
+          }
+          if (mounted) {
+            setState(() {
+              _planTotals = newTotals;
+              _plansFetched = true;
+            });
+          }
+        }
+      }
+    } catch (e) {
+      print('Fetch plans failed: $e');
+    }
+  }
+
   Future<void> _checkSubscriptionStatus() async {
     if (_userid == null) return;
+    
+    // Ensure we have plan totals for progress bars
+    if (!_plansFetched) {
+       _fetchPlans(); // Fire and forget or await? Better not block critical path but good to start
+    }
+
     try {
        final url = 'https://llinker.com/register/api/subscription/query?userid=$_userid';
        print('Debug: [Check Subscription] Requesting: $url');
@@ -1370,14 +1411,49 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       builder: (ctx) {
         bool loading = false;
 
-        Widget buildQuotaRow(String label, num value, String unit) {
+        Widget buildQuotaRow(String label, num value, num? total, String unit) {
+            // Calculate progress
+            double progress = 0.0;
+            String text = '$value $unit';
+            if (total != null && total > 0) {
+              progress = (value / total).clamp(0.0, 1.0);
+              // For storage, show as formatted
+              if (unit == 'MB') {
+                 text = '${value.toStringAsFixed(1)} / ${total.toStringAsFixed(1)} $unit';
+              } else {
+                 text = '$value / $total $unit';
+              }
+            } else {
+              // If no total, just show value
+              if (unit == 'MB') {
+                 text = '${value.toStringAsFixed(1)} $unit';
+              }
+            }
+
             return Padding(
-              padding: const EdgeInsets.symmetric(vertical: 2),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(label, style: TextStyle(color: Colors.grey.shade700)),
-                  Text('$value $unit', style: const TextStyle(fontWeight: FontWeight.w500)),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(label, style: TextStyle(color: Colors.grey.shade700, fontSize: 13)),
+                      Text(text, style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 13)),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(2),
+                    child: LinearProgressIndicator(
+                      value: progress,
+                      backgroundColor: Colors.grey.shade200,
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                         progress < 0.2 ? Colors.red : (progress < 0.5 ? Colors.orange : Colors.green)
+                      ),
+                      minHeight: 6,
+                    ),
+                  ),
                 ],
               ),
             );
@@ -1385,6 +1461,18 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
         return StatefulBuilder(
           builder: (context, setState) {
+            // Get totals for current level
+            final totals = _planTotals[_subscriptionLevel] ?? {};
+            
+            // If free (level 0), maybe we have a level 0 plan?
+            // If not found, try to use hardcoded defaults or just null (no progress bar)
+            final freeTotals = _planTotals[0] ?? {
+               'ai': 20, 'eth': 0, 'storage': 50.0
+            }; // Fallback for free tier if not in API
+
+            // Determine which set to show
+            final bool showMember = _subscriptionLevel > 0;
+            
             return Stack(
               children: [
                 AlertDialog(
@@ -1430,80 +1518,80 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                           ),
                           const SizedBox(height: 24),
                           
-                          // Subscription Status
-                          const Text('订阅状态',
-                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                          const Divider(),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              Expanded(child: Text('当前级别: $_subscriptionLevel')),
-                              Expanded(child: Text('过期时间: ${_expireAt?.toString().split('.').first ?? "无"}')),
-                            ],
-                          ),
-                          const SizedBox(height: 24),
+                          // Removed separate "Subscription Status" section
+                          // Merged into Quota section header or sub-header
 
                           // Quotas
                           const Text('配额详情', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                           const Divider(),
                           
-                          // Plan Quotas
-                          if (_subscriptionLevel > 0 || (_planAiQuota != null && _planAiQuota! > 0)) ...[
+                          // Member Quotas (Only if Level > 0)
+                          if (showMember) ...[
                              const SizedBox(height: 8),
                              Container(
-                               padding: const EdgeInsets.all(12),
+                               padding: const EdgeInsets.all(16),
                                decoration: BoxDecoration(
                                  color: Colors.amber.shade50,
-                                 borderRadius: BorderRadius.circular(8),
+                                 borderRadius: BorderRadius.circular(12),
                                  border: Border.all(color: Colors.amber.shade200),
                                ),
                                child: Column(
                                  crossAxisAlignment: CrossAxisAlignment.start,
                                  children: [
                                    Row(
+                                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                      children: [
-                                       Icon(Icons.star, size: 16, color: Colors.amber.shade800),
-                                       const SizedBox(width: 8),
-                                       Text('会员配额 (Lv.$_subscriptionLevel)', 
-                                         style: TextStyle(fontWeight: FontWeight.bold, color: Colors.amber.shade900)),
+                                       Row(
+                                         children: [
+                                           Icon(Icons.star, size: 18, color: Colors.amber.shade800),
+                                           const SizedBox(width: 8),
+                                           Text('会员配额 (Lv.$_subscriptionLevel)', 
+                                             style: TextStyle(fontWeight: FontWeight.bold, color: Colors.amber.shade900, fontSize: 15)),
+                                         ],
+                                       ),
                                      ],
                                    ),
-                                   const SizedBox(height: 8),
-                                   buildQuotaRow('AI 请求', _planAiQuota ?? 0, '次'),
-                                   buildQuotaRow('ETH 交易', _planEthQuota ?? 0, '次'),
-                                   buildQuotaRow('存储空间', _planStorageQuota ?? 0.0, 'MB'),
+                                   if (_expireAt != null) ...[
+                                      const SizedBox(height: 4),
+                                      Text('过期时间: ${_expireAt?.toString().split('.').first}', 
+                                         style: TextStyle(fontSize: 12, color: Colors.amber.shade900.withOpacity(0.7))),
+                                   ],
+                                   const SizedBox(height: 16),
+                                   buildQuotaRow('AI 请求', _planAiQuota ?? 0, totals['ai'], '次'),
+                                   buildQuotaRow('ETH 交易', _planEthQuota ?? 0, totals['eth'], '次'),
+                                   buildQuotaRow('存储空间', _planStorageQuota ?? 0.0, totals['storage'], 'MB'),
                                  ],
                                ),
                              ),
+                          ] else ...[
+                             // Basic Quotas (Only if Level == 0)
+                             const SizedBox(height: 12),
+                             Container(
+                                padding: const EdgeInsets.all(16),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.shade50,
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(color: Colors.grey.shade300),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Icon(Icons.person_outline, size: 18, color: Colors.grey.shade700),
+                                        const SizedBox(width: 8),
+                                        Text('基础配额', 
+                                          style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey.shade800, fontSize: 15)),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 16),
+                                    buildQuotaRow('AI 请求', _freeAiQuota ?? 0, freeTotals['ai'], '次'),
+                                    buildQuotaRow('ETH 交易', _freeEthQuota ?? 0, freeTotals['eth'], '次'),
+                                    buildQuotaRow('存储空间', _freeStorageQuota ?? 0.0, freeTotals['storage'], 'MB'),
+                                  ],
+                                ),
+                             ),
                           ],
-
-                          // Free Quotas
-                          const SizedBox(height: 12),
-                          Container(
-                             padding: const EdgeInsets.all(12),
-                             decoration: BoxDecoration(
-                               color: Colors.grey.shade50,
-                               borderRadius: BorderRadius.circular(8),
-                               border: Border.all(color: Colors.grey.shade300),
-                             ),
-                             child: Column(
-                               crossAxisAlignment: CrossAxisAlignment.start,
-                               children: [
-                                 Row(
-                                   children: [
-                                     Icon(Icons.person_outline, size: 16, color: Colors.grey.shade700),
-                                     const SizedBox(width: 8),
-                                     Text('基础配额', 
-                                       style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey.shade800)),
-                                   ],
-                                 ),
-                                 const SizedBox(height: 8),
-                                 buildQuotaRow('AI 请求', _freeAiQuota ?? 0, '次'),
-                                 buildQuotaRow('ETH 交易', _freeEthQuota ?? 0, '次'),
-                                 buildQuotaRow('存储空间', _freeStorageQuota ?? 0.0, 'MB'),
-                               ],
-                             ),
-                          ),
 
                           const SizedBox(height: 16),
                           Row(
@@ -1512,6 +1600,9 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                                 onPressed: () async {
                                   setState(() => loading = true);
                                   await _checkSubscriptionStatus();
+                                  // Refresh totals too if needed
+                                  if (!_plansFetched) await _fetchPlans();
+                                  
                                   if (context.mounted) {
                                      setState(() => loading = false);
                                   }
