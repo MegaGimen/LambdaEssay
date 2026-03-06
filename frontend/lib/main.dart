@@ -16,6 +16,8 @@ import 'widgets/custom_file_tree.dart';
 import 'server/server.dart';
 import 'server/git_service.dart';
 import 'server/route_map.dart';
+import 'server/subscription_service.dart';
+
 // import 'server/notification_service.dart';
 import 'package:shelf/shelf.dart' as shelf;
 import 'package:shelf/shelf_io.dart' as shelf_io;
@@ -524,7 +526,14 @@ class GitGraphApp extends StatelessWidget {
 }
 
 class GraphPage extends StatefulWidget {
-  const GraphPage({super.key});
+  final FullSubscriptionInfo? initialSubscription;
+  final Map<int, Map<String, dynamic>>? initialPlanTotals;
+
+  const GraphPage({
+    super.key, 
+    this.initialSubscription,
+    this.initialPlanTotals,
+  });
   @override
   State<GraphPage> createState() => _GraphPageState();
 }
@@ -638,9 +647,39 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       vsync: this,
       duration: const Duration(seconds: 1),
     )..repeat(reverse: true);
+    
+    // Initialize with passed data if available
+    if (widget.initialSubscription != null) {
+      _applySubscriptionInfo(widget.initialSubscription!);
+    }
+    if (widget.initialPlanTotals != null) {
+      _planTotals = widget.initialPlanTotals!;
+      _plansFetched = true;
+    }
+
     _checkLogin();
     _initNotifications();
     _startDirtyCheck();
+  }
+
+  void _applySubscriptionInfo(FullSubscriptionInfo info) {
+    setState(() {
+      _subscriptionLevel = info.subscriptionLevel;
+      _expireAt = info.expireAt;
+      
+      final q = info.quotas;
+      _aiQuota = q.ai;
+      _ethQuota = q.eth;
+      _storageQuota = q.storage;
+      
+      _planAiQuota = q.planAi;
+      _planEthQuota = q.planEth;
+      _planStorageQuota = q.planStorage;
+      
+      _freeAiQuota = q.freeAi;
+      _freeEthQuota = q.freeEth;
+      _freeStorageQuota = q.freeStorage;
+    });
   }
 
   void _startDirtyCheck() {
@@ -1179,28 +1218,12 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   Future<void> _fetchPlans() async {
     if (_plansFetched) return;
     try {
-      final url = 'https://llinker.com/register/api/subscription/plans';
-      // print('Debug: [Fetch Plans] Requesting: $url');
-      final response = await http.get(Uri.parse(url));
-      
-      if (response.statusCode == 200) {
-        final resp = jsonDecode(response.body);
-        if (resp['plans'] != null) {
-          final plans = resp['plans'] as List;
-          final Map<int, Map<String, dynamic>> newTotals = {};
-          for (var p in plans) {
-             final level = p['subscription_level'] as int? ?? 0;
-             if (p['quotas'] != null) {
-               newTotals[level] = p['quotas'];
-             }
-          }
-          if (mounted) {
-            setState(() {
-              _planTotals = newTotals;
-              _plansFetched = true;
-            });
-          }
-        }
+      final totals = await SubscriptionService.fetchPlans();
+      if (mounted) {
+        setState(() {
+          _planTotals = totals;
+          _plansFetched = true;
+        });
       }
     } catch (e) {
       print('Fetch plans failed: $e');
@@ -1212,58 +1235,13 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     
     // Ensure we have plan totals for progress bars
     if (!_plansFetched) {
-       _fetchPlans(); // Fire and forget or await? Better not block critical path but good to start
+       _fetchPlans();
     }
 
     try {
-       final url = 'https://llinker.com/register/api/subscription/query?userid=$_userid';
-       print('Debug: [Check Subscription] Requesting: $url');
-       final response = await http.get(Uri.parse(url));
-       print('Debug: [Check Subscription] Response status: ${response.statusCode}');
-
-       if (response.statusCode == 200) {
-         final resp = jsonDecode(response.body);
-         print('Debug: [Check Subscription] Response body: $resp');
-         if (mounted) {
-           setState(() {
-             _subscriptionLevel = resp['subscription'] as int? ?? 0;
-             if (resp['expire_at'] != null) {
-               try {
-                 _expireAt = HttpDate.parse(resp['expire_at']);
-               } catch (_) {
-                 _expireAt = DateTime.parse(resp['expire_at']);
-               }
-             }
-             
-             // Parse quotas
-             if (resp['quotas'] != null) {
-               final q = resp['quotas'];
-               
-               // Total Quotas
-               if (q['ai'] != null && q['ai']['default'] != null) {
-                  _aiQuota = q['ai']['default'];
-               }
-               _ethQuota = q['eth'];
-               _storageQuota = (q['storage'] is int) ? (q['storage'] as int).toDouble() : q['storage'];
-
-               // Plan Quotas
-               if (q['plan_ai'] != null && q['plan_ai']['default'] != null) {
-                  _planAiQuota = q['plan_ai']['default'];
-               }
-               _planEthQuota = q['plan_eth'];
-               _planStorageQuota = (q['plan_storage'] is int) ? (q['plan_storage'] as int).toDouble() : q['plan_storage'];
-
-               // Free Quotas
-               if (q['free_ai'] != null && q['free_ai']['default'] != null) {
-                  _freeAiQuota = q['free_ai']['default'];
-               }
-               _freeEthQuota = q['free_eth'];
-               _freeStorageQuota = (q['free_storage'] is int) ? (q['free_storage'] as int).toDouble() : q['free_storage'];
-             }
-           });
-         }
-       } else {
-         print('Debug: [Check Subscription] Failed with status code: ${response.statusCode}');
+       final info = await SubscriptionService.checkSubscription(_userid!);
+       if (info != null && mounted) {
+         _applySubscriptionInfo(info);
        }
     } catch (e) {
       print('Check subscription failed: $e');
@@ -1419,11 +1397,10 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             String text = '';
             Color progressColor = Colors.green;
             
+            // 如果 total 未定义或为0 (且 value > 0)，我们假设它是无限的或不需要显示进度
+            // 但对于 Free 计划，我们有硬编码的 Total (20, 0, 50)
+            
             if (total != null && total > 0) {
-              // 这里的 value 是剩余量。
-              // 如果剩余量 > 总量 (total)，说明有额外配额，进度条满格并显示特殊颜色
-              // 如果剩余量 < 总量，显示比例。
-              
               if (value > total) {
                 progress = 1.0;
                 progressColor = Colors.purpleAccent; // 溢出/额外配额
@@ -1438,8 +1415,22 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
               
               text = '剩余: $valueStr / 标准: $totalStr $unit';
             } else {
-              String valueStr = (unit == 'MB') ? value.toStringAsFixed(1) : '$value';
-              text = '剩余: $valueStr $unit';
+              // Total is 0 or null.
+              // If total is 0 (e.g. Free ETH), and value is 0, progress is 0.
+              // If value > 0 (extra), progress is 1.
+              if (total == 0) {
+                 if (value > 0) {
+                   progress = 1.0;
+                   progressColor = Colors.purpleAccent;
+                   text = '剩余: $value / 标准: 0 $unit';
+                 } else {
+                   progress = 0.0;
+                   text = '剩余: 0 / 标准: 0 $unit';
+                 }
+              } else {
+                 String valueStr = (unit == 'MB') ? value.toStringAsFixed(1) : '$value';
+                 text = '剩余: $valueStr $unit';
+              }
             }
 
             return Padding(
@@ -1481,9 +1472,31 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             }; // Fallback for free tier if not in API
 
             // Determine which set to show
-            final bool showMember = _subscriptionLevel > 0;
-            
-            return Stack(
+             final bool showMember = _subscriptionLevel > 0;
+             
+             // Prepare data for display
+             final Map<String, dynamic> displayTotals;
+             final int? displayAi;
+             final int? displayEth;
+             final double? displayStorage;
+
+             if (showMember) {
+                displayTotals = totals; // Plan totals from API
+                displayAi = _planAiQuota ?? 0;
+                displayEth = _planEthQuota ?? 0;
+                displayStorage = _planStorageQuota ?? 0.0;
+             } else {
+                displayTotals = {
+                   'ai': 20,
+                   'eth': 0,
+                   'storage': 50.0
+                };
+                displayAi = _freeAiQuota ?? 0;
+                displayEth = _freeEthQuota ?? 0;
+                displayStorage = _freeStorageQuota ?? 0.0;
+             }
+
+             return Stack(
               children: [
                 AlertDialog(
                   title: const Text('用户详情'),
@@ -1567,9 +1580,9 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                                          style: TextStyle(fontSize: 12, color: Colors.amber.shade900.withOpacity(0.7))),
                                    ],
                                    const SizedBox(height: 16),
-                                   buildQuotaRow('AI 请求', _planAiQuota ?? 0, totals['ai'], '次'),
-                                   buildQuotaRow('ETH 交易', _planEthQuota ?? 0, totals['eth'], '次'),
-                                   buildQuotaRow('存储空间', _planStorageQuota ?? 0.0, totals['storage'], 'MB'),
+                                   buildQuotaRow('AI 请求', displayAi ?? 0, displayTotals['ai'], '次'),
+                                   buildQuotaRow('ETH 交易', displayEth ?? 0, displayTotals['eth'], '次'),
+                                   buildQuotaRow('存储空间', displayStorage ?? 0.0, displayTotals['storage'], 'MB'),
                                  ],
                                ),
                              ),
@@ -1595,9 +1608,9 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                                       ],
                                     ),
                                     const SizedBox(height: 16),
-                                    buildQuotaRow('AI 请求', _freeAiQuota ?? 0, freeTotals['ai'], '次'),
-                                    buildQuotaRow('ETH 交易', _freeEthQuota ?? 0, freeTotals['eth'], '次'),
-                                    buildQuotaRow('存储空间', _freeStorageQuota ?? 0.0, freeTotals['storage'], 'MB'),
+                                    buildQuotaRow('AI 请求', displayAi ?? 0, displayTotals['ai'], '次'),
+                                    buildQuotaRow('ETH 交易', displayEth ?? 0, displayTotals['eth'], '次'),
+                                    buildQuotaRow('存储空间', displayStorage ?? 0.0, displayTotals['storage'], 'MB'),
                                   ],
                                 ),
                              ),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 
 import 'package:shared_preferences/shared_preferences.dart';
+import 'server/subscription_service.dart';
 import 'main.dart'; // To navigate to GraphPage
 
 class LoginPage extends StatefulWidget {
@@ -60,15 +61,43 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
             'password': password,
           });
         
-           if (body['tokens'] != null) {
-             // Success, navigate to main page
-             if (mounted) {
-               Navigator.of(context).pushReplacement(
-                 MaterialPageRoute(builder: (_) => const GraphPage()),
-               );
-             }
-             return;
-           }
+        if (body['tokens'] != null) {
+          // Success, fetch subscription info before navigating
+          String? userid;
+          if (body['userid'] != null) {
+            userid = body['userid'].toString();
+          } else {
+            // If not in body, try to get from prefs
+            userid = prefs.getString('git_userid');
+          }
+
+          FullSubscriptionInfo? subInfo;
+          Map<int, Map<String, dynamic>>? planTotals;
+
+          if (userid != null) {
+            try {
+              // Parallel fetch
+              final results = await Future.wait([
+                SubscriptionService.checkSubscription(userid),
+                SubscriptionService.fetchPlans(),
+              ]);
+              subInfo = results[0] as FullSubscriptionInfo?;
+              planTotals = results[1] as Map<int, Map<String, dynamic>>?;
+            } catch (e) {
+              print('Pre-fetch subscription failed: $e');
+            }
+          }
+
+          if (mounted) {
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(builder: (_) => GraphPage(
+                initialSubscription: subInfo,
+                initialPlanTotals: planTotals,
+              )),
+            );
+          }
+          return;
+        }
       } catch (e) {
         // Ignore error, stay on login page
       } finally {
@@ -177,13 +206,37 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
       await prefs.setString('git_username', body['username'] ?? username);
       await prefs.setString('git_password', password);
       if (body['userid'] != null) {
-        await prefs.setString('git_userid', body['userid'].toString());
-      }
+        final uid = body['userid'].toString();
+        await prefs.setString('git_userid', uid);
+        
+        // Fetch subscription and plans before navigating
+        FullSubscriptionInfo? subInfo;
+        Map<int, Map<String, dynamic>>? planTotals;
+        try {
+           final results = await Future.wait([
+              SubscriptionService.checkSubscription(uid),
+              SubscriptionService.fetchPlans(),
+           ]);
+           subInfo = results[0] as FullSubscriptionInfo?;
+           planTotals = results[1] as Map<int, Map<String, dynamic>>?;
+        } catch (e) {
+           print('Pre-fetch subscription failed: $e');
+        }
 
-      if (mounted) {
-         Navigator.of(context).pushReplacement(
-           MaterialPageRoute(builder: (_) => const GraphPage()),
-         );
+        if (mounted) {
+           Navigator.of(context).pushReplacement(
+             MaterialPageRoute(builder: (_) => GraphPage(
+                initialSubscription: subInfo,
+                initialPlanTotals: planTotals,
+             )),
+           );
+        }
+      } else {
+        if (mounted) {
+           Navigator.of(context).pushReplacement(
+             MaterialPageRoute(builder: (_) => const GraphPage()),
+           );
+        }
       }
   }
 
