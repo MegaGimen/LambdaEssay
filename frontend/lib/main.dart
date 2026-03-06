@@ -532,6 +532,12 @@ class GraphPage extends StatefulWidget {
 class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   int _subscriptionLevel = 0;
   DateTime? _expireAt;
+  
+  // Quotas
+  int? _aiQuota;
+  int? _ethQuota;
+  double? _storageQuota;
+
   final DirectoryTreeStateNotifier _treeNotifier = DirectoryTreeStateNotifier();
   double _sidebarWidth = 250.0;
   final TextEditingController pathCtrl = TextEditingController();
@@ -1177,6 +1183,16 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                  _expireAt = DateTime.parse(resp['expire_at']);
                }
              }
+             
+             // Parse quotas
+             if (resp['quotas'] != null) {
+               final q = resp['quotas'];
+               if (q['ai'] != null && q['ai']['default'] != null) {
+                  _aiQuota = q['ai']['default'];
+               }
+               _ethQuota = q['eth'];
+               _storageQuota = (q['storage'] is int) ? (q['storage'] as int).toDouble() : q['storage'];
+             }
            });
          }
        } else {
@@ -1348,6 +1364,14 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                 const SizedBox(height: 8),
                 Text('当前级别: $_subscriptionLevel'),
                 Text('过期时间: ${_expireAt?.toString().split('.').first ?? "无"}'),
+                if (_aiQuota != null || _ethQuota != null || _storageQuota != null) ...[
+                   const SizedBox(height: 12),
+                   const Text('配额:', style: TextStyle(fontWeight: FontWeight.bold)),
+                   const SizedBox(height: 4),
+                   if (_aiQuota != null) Text('AI: $_aiQuota'),
+                   if (_ethQuota != null) Text('ETH: $_ethQuota'),
+                   if (_storageQuota != null) Text('Storage: $_storageQuota'),
+                ],
                 const SizedBox(height: 16),
                 Row(
                   children: [
