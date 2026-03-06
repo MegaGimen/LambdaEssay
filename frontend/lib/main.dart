@@ -538,6 +538,16 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   int? _ethQuota;
   double? _storageQuota;
 
+  // Plan Quotas
+  int? _planAiQuota;
+  int? _planEthQuota;
+  double? _planStorageQuota;
+
+  // Free Quotas
+  int? _freeAiQuota;
+  int? _freeEthQuota;
+  double? _freeStorageQuota;
+
   final DirectoryTreeStateNotifier _treeNotifier = DirectoryTreeStateNotifier();
   double _sidebarWidth = 250.0;
   final TextEditingController pathCtrl = TextEditingController();
@@ -1187,11 +1197,27 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
              // Parse quotas
              if (resp['quotas'] != null) {
                final q = resp['quotas'];
+               
+               // Total Quotas
                if (q['ai'] != null && q['ai']['default'] != null) {
                   _aiQuota = q['ai']['default'];
                }
                _ethQuota = q['eth'];
                _storageQuota = (q['storage'] is int) ? (q['storage'] as int).toDouble() : q['storage'];
+
+               // Plan Quotas
+               if (q['plan_ai'] != null && q['plan_ai']['default'] != null) {
+                  _planAiQuota = q['plan_ai']['default'];
+               }
+               _planEthQuota = q['plan_eth'];
+               _planStorageQuota = (q['plan_storage'] is int) ? (q['plan_storage'] as int).toDouble() : q['plan_storage'];
+
+               // Free Quotas
+               if (q['free_ai'] != null && q['free_ai']['default'] != null) {
+                  _freeAiQuota = q['free_ai']['default'];
+               }
+               _freeEthQuota = q['free_eth'];
+               _freeStorageQuota = (q['free_storage'] is int) ? (q['free_storage'] as int).toDouble() : q['free_storage'];
              }
            });
          }
@@ -1341,77 +1367,199 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
     await showDialog(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setState) {
-          return AlertDialog(
-            title: const Text('用户详情'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const CircleAvatar(child: Icon(Icons.person)),
-                    const SizedBox(width: 16),
-                    Text(_username ?? '未登录',
-                        style: const TextStyle(
-                            fontSize: 18, fontWeight: FontWeight.bold)),
-                  ],
-                ),
-                const SizedBox(height: 24),
-                const Text('订阅状态:',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
-                Text('当前级别: $_subscriptionLevel'),
-                Text('过期时间: ${_expireAt?.toString().split('.').first ?? "无"}'),
-                if (_aiQuota != null || _ethQuota != null || _storageQuota != null) ...[
-                   const SizedBox(height: 12),
-                   const Text('配额:', style: TextStyle(fontWeight: FontWeight.bold)),
-                   const SizedBox(height: 4),
-                   if (_aiQuota != null) Text('AI: $_aiQuota'),
-                   if (_ethQuota != null) Text('ETH: $_ethQuota'),
-                   if (_storageQuota != null) Text('Storage: $_storageQuota'),
+      builder: (ctx) {
+        bool loading = false;
+
+        Widget buildQuotaRow(String label, num value, String unit) {
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(label, style: TextStyle(color: Colors.grey.shade700)),
+                  Text('$value $unit', style: const TextStyle(fontWeight: FontWeight.w500)),
                 ],
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    ElevatedButton.icon(
-                      onPressed: () async {
-                        await _checkSubscriptionStatus();
-                        setState(() {}); // Refresh dialog UI
-                      },
-                      icon: const Icon(Icons.refresh, size: 16),
-                      label: const Text('刷新状态'),
+              ),
+            );
+        }
+
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return Stack(
+              children: [
+                AlertDialog(
+                  title: const Text('用户详情'),
+                  content: SizedBox(
+                    width: 500,
+                    child: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const CircleAvatar(child: Icon(Icons.person)),
+                              const SizedBox(width: 16),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(_username ?? '未登录',
+                                      style: const TextStyle(
+                                          fontSize: 18, fontWeight: FontWeight.bold)),
+                                  if (_subscriptionLevel > 0)
+                                    Container(
+                                      margin: const EdgeInsets.only(top: 4),
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: Colors.amber.shade100,
+                                        borderRadius: BorderRadius.circular(12),
+                                        border: Border.all(color: Colors.amber),
+                                      ),
+                                      child: Text(
+                                        'Lv.$_subscriptionLevel 会员',
+                                        style: TextStyle(
+                                          color: Colors.amber.shade900,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.bold
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 24),
+                          
+                          // Subscription Status
+                          const Text('订阅状态',
+                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                          const Divider(),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Expanded(child: Text('当前级别: $_subscriptionLevel')),
+                              Expanded(child: Text('过期时间: ${_expireAt?.toString().split('.').first ?? "无"}')),
+                            ],
+                          ),
+                          const SizedBox(height: 24),
+
+                          // Quotas
+                          const Text('配额详情', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                          const Divider(),
+                          
+                          // Plan Quotas
+                          if (_subscriptionLevel > 0 || (_planAiQuota != null && _planAiQuota! > 0)) ...[
+                             const SizedBox(height: 8),
+                             Container(
+                               padding: const EdgeInsets.all(12),
+                               decoration: BoxDecoration(
+                                 color: Colors.amber.shade50,
+                                 borderRadius: BorderRadius.circular(8),
+                                 border: Border.all(color: Colors.amber.shade200),
+                               ),
+                               child: Column(
+                                 crossAxisAlignment: CrossAxisAlignment.start,
+                                 children: [
+                                   Row(
+                                     children: [
+                                       Icon(Icons.star, size: 16, color: Colors.amber.shade800),
+                                       const SizedBox(width: 8),
+                                       Text('会员配额 (Lv.$_subscriptionLevel)', 
+                                         style: TextStyle(fontWeight: FontWeight.bold, color: Colors.amber.shade900)),
+                                     ],
+                                   ),
+                                   const SizedBox(height: 8),
+                                   buildQuotaRow('AI 请求', _planAiQuota ?? 0, '次'),
+                                   buildQuotaRow('ETH 交易', _planEthQuota ?? 0, '次'),
+                                   buildQuotaRow('存储空间', _planStorageQuota ?? 0.0, 'MB'),
+                                 ],
+                               ),
+                             ),
+                          ],
+
+                          // Free Quotas
+                          const SizedBox(height: 12),
+                          Container(
+                             padding: const EdgeInsets.all(12),
+                             decoration: BoxDecoration(
+                               color: Colors.grey.shade50,
+                               borderRadius: BorderRadius.circular(8),
+                               border: Border.all(color: Colors.grey.shade300),
+                             ),
+                             child: Column(
+                               crossAxisAlignment: CrossAxisAlignment.start,
+                               children: [
+                                 Row(
+                                   children: [
+                                     Icon(Icons.person_outline, size: 16, color: Colors.grey.shade700),
+                                     const SizedBox(width: 8),
+                                     Text('基础配额', 
+                                       style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey.shade800)),
+                                   ],
+                                 ),
+                                 const SizedBox(height: 8),
+                                 buildQuotaRow('AI 请求', _freeAiQuota ?? 0, '次'),
+                                 buildQuotaRow('ETH 交易', _freeEthQuota ?? 0, '次'),
+                                 buildQuotaRow('存储空间', _freeStorageQuota ?? 0.0, 'MB'),
+                               ],
+                             ),
+                          ),
+
+                          const SizedBox(height: 16),
+                          Row(
+                            children: [
+                              ElevatedButton.icon(
+                                onPressed: () async {
+                                  setState(() => loading = true);
+                                  await _checkSubscriptionStatus();
+                                  if (context.mounted) {
+                                     setState(() => loading = false);
+                                  }
+                                },
+                                icon: const Icon(Icons.refresh, size: 16),
+                                label: const Text('刷新状态'),
+                              ),
+                              const SizedBox(width: 8),
+                              OutlinedButton(
+                                onPressed: () {
+                                  Navigator.pop(ctx);
+                                  _showSubscriptionDialog();
+                                },
+                                child: const Text('会员订阅/续费'),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
-                    const SizedBox(width: 8),
-                    OutlinedButton(
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text('关闭'),
+                    ),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
                       onPressed: () {
                         Navigator.pop(ctx);
-                        _showSubscriptionDialog();
+                        _doLogout();
                       },
-                      child: const Text('会员订阅/续费'),
+                      child: const Text('退出登录'),
                     ),
                   ],
                 ),
+                if (loading)
+                  Container(
+                    color: Colors.black26,
+                    child: const Center(
+                      child: CircularProgressIndicator(),
+                    ),
+                  ),
               ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('关闭'),
-              ),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  _doLogout();
-                },
-                child: const Text('退出登录'),
-              ),
-            ],
-          );
-        },
-      ),
+            );
+          },
+        );
+      },
     );
   }
 
