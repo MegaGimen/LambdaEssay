@@ -1412,22 +1412,34 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         bool loading = false;
 
         Widget buildQuotaRow(String label, num value, num? total, String unit) {
-            // Calculate progress
+            // value: 剩余配额 (from subscription/query)
+            // total: 套餐标准 (from subscription/plans)
+            
             double progress = 0.0;
-            String text = '$value $unit';
+            String text = '';
+            Color progressColor = Colors.green;
+            
             if (total != null && total > 0) {
-              progress = (value / total).clamp(0.0, 1.0);
-              // For storage, show as formatted
-              if (unit == 'MB') {
-                 text = '${value.toStringAsFixed(1)} / ${total.toStringAsFixed(1)} $unit';
+              // 这里的 value 是剩余量。
+              // 如果剩余量 > 总量 (total)，说明有额外配额，进度条满格并显示特殊颜色
+              // 如果剩余量 < 总量，显示比例。
+              
+              if (value > total) {
+                progress = 1.0;
+                progressColor = Colors.purpleAccent; // 溢出/额外配额
               } else {
-                 text = '$value / $total $unit';
+                progress = (value / total).clamp(0.0, 1.0);
+                if (progress < 0.2) progressColor = Colors.red; // 剩余不足 20%
+                else progressColor = Colors.green;
               }
+              
+              String valueStr = (unit == 'MB') ? value.toStringAsFixed(1) : '$value';
+              String totalStr = (unit == 'MB') ? total.toStringAsFixed(1) : '$total';
+              
+              text = '剩余: $valueStr / 标准: $totalStr $unit';
             } else {
-              // If no total, just show value
-              if (unit == 'MB') {
-                 text = '${value.toStringAsFixed(1)} $unit';
-              }
+              String valueStr = (unit == 'MB') ? value.toStringAsFixed(1) : '$value';
+              text = '剩余: $valueStr $unit';
             }
 
             return Padding(
@@ -1439,7 +1451,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(label, style: TextStyle(color: Colors.grey.shade700, fontSize: 13)),
-                      Text(text, style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 13)),
+                      Text(text, style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 12)),
                     ],
                   ),
                   const SizedBox(height: 4),
@@ -1448,9 +1460,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                     child: LinearProgressIndicator(
                       value: progress,
                       backgroundColor: Colors.grey.shade200,
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                         progress < 0.2 ? Colors.red : (progress < 0.5 ? Colors.orange : Colors.green)
-                      ),
+                      valueColor: AlwaysStoppedAnimation<Color>(progressColor),
                       minHeight: 6,
                     ),
                   ),
