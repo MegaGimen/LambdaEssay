@@ -153,7 +153,7 @@ class AIDiffService {
         'use_mcp': useMcp,
         if (commitA != null) 'commit_a': commitA,
         if (commitB != null) 'commit_b': commitB,
-        if (authKey != null) 'auth_key': authKey,
+        if (authKey != null) 'authKey': authKey,
       };
 
       final response = await http.post(

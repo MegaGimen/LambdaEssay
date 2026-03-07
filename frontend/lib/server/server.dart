@@ -580,11 +580,7 @@ Future<Response> handleCompare(Request req) async {
 
   final userId = data['userid'] as String?;
   final subInfo = userId != null ? await SubscriptionService.checkSubscription(userId) : null;
-  if (userId == null || subInfo == null || subInfo.subscriptionLevel <= 0) {
-    return _cors(Response(403,
-        body: jsonEncode({'error': 'Subscription required (Level > 0)'}),
-        headers: {'Content-Type': 'application/json; charset=utf-8'}));
-  }
+
 
   if (repoPath.isEmpty || c1 == null || c2 == null) {
     return _cors(Response(400,
@@ -612,11 +608,7 @@ Future<Response> handleSummarizeDiff(Request req) async {
 
     final userId = data['userid'] as String?;
     final subInfo = userId != null ? await SubscriptionService.checkSubscription(userId) : null;
-    if (userId == null || subInfo == null || subInfo.subscriptionLevel <= 0) {
-      return _cors(Response(403,
-          body: jsonEncode({'error': 'Subscription required (Level > 0)'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
+
 
     if (beforePath.isEmpty || afterPath.isEmpty) {
       return _cors(Response(400,
@@ -740,12 +732,9 @@ Future<Response> handleBackupGraph(Request req) async {
 
   final userId = data['userid'] as String?;
   if (userId == null) {
-    return _cors(Response(403, body: 'Subscription required (Level > 0)'));
+    return _cors(Response(403, body: 'No user ID'));
   }
   final subInfo = await SubscriptionService.checkSubscription(userId);
-  if (subInfo == null || subInfo.subscriptionLevel <= 0) {
-    return _cors(Response(403, body: 'Subscription required (Level > 0)'));
-  }
 
   if (repoName == null || commitId == null) {
     return _cors(Response(400, body: 'Repo name and commitId required'));
@@ -795,12 +784,9 @@ Future<Response> handleBackupPreview(Request req) async {
 
   final userId = data['userid'] as String?;
   if (userId == null) {
-    return _cors(Response(403, body: 'Subscription required (Level > 0)'));
+    return _cors(Response(403, body: 'No userid'));
   }
   final subInfo = await SubscriptionService.checkSubscription(userId);
-  if (subInfo == null || subInfo.subscriptionLevel <= 0) {
-    return _cors(Response(403, body: 'Subscription required (Level > 0)'));
-  }
   if (repoName == null || commitId == null) {
     return _cors(Response(400, body: 'Repo name and commitId required'));
   }
@@ -956,15 +942,10 @@ Future<Response> handleCompareAi(Request req) async {
   final userId = data['userid'] as String?;
   if (userId == null) {
     return _cors(Response(403,
-        body: jsonEncode({'error': 'Subscription required (Level > 0)'}),
+        body: jsonEncode({'error': 'No userid'}),
         headers: {'Content-Type': 'application/json; charset=utf-8'}));
   }
   final subInfo = await SubscriptionService.checkSubscription(userId);
-  if (subInfo == null || subInfo.subscriptionLevel <= 0) {
-    return _cors(Response(403,
-        body: jsonEncode({'error': 'Subscription required (Level > 0)'}),
-        headers: {'Content-Type': 'application/json; charset=utf-8'}));
-  }
 
   final repoPath = _sanitizePath(data['repoPath'] as String?);
   final commit1 = (data['commit1'] as String? ?? '').trim();
@@ -1933,15 +1914,10 @@ Future<Response> handleBackupCommits(Request req) async {
   final userId = data['userid'] as String?;
     if (userId == null) {
       return _cors(Response(403,
-          body: jsonEncode({'error': 'Subscription required (Level > 0)'}),
+          body: jsonEncode({'error': 'No userid'}),
           headers: {'Content-Type': 'application/json; charset=utf-8'}));
     }
     final subInfo = await SubscriptionService.checkSubscription(userId);
-    if (subInfo == null || subInfo.subscriptionLevel <= 0) {
-      return _cors(Response(403,
-          body: jsonEncode({'error': 'Subscription required (Level > 0)'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
 
   if (repoName.isEmpty) {
     return _cors(Response(400,
