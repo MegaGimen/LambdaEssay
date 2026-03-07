@@ -2362,6 +2362,7 @@ Future<Map<String, dynamic>> compareCommitsWithAI(
   String commit1,
   String commit2, {
   String docType = 'word',
+  String? token,
 }) async {
   // 检查 AI 服务是否可用
   final available = await AIDiffService.isAvailable();
@@ -2411,6 +2412,7 @@ Future<Map<String, dynamic>> compareCommitsWithAI(
         useMcp: true, // ✓ 启用MCP服务
         commitA: commit1,
         commitB: commit2,
+        authKey: token,
       );
 
       print('[AI对比] 分析完成');

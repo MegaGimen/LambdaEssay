@@ -1072,7 +1072,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                   final currentIndex = commits.indexWhere((c) => c.id == node.id);
                   if (currentIndex >= 0 && currentIndex < commits.length - 1) {
                     final parentNode = commits[currentIndex + 1];
-                    final response = await postJson('/compare_ai', {'repoPath': pathCtrl.text.trim(), 'commit1': parentNode.id, 'commit2': node.id, 'docType': 'word'});
+                    final response = await postJson('/compare_ai', {'repoPath': pathCtrl.text.trim(), 'commit1': parentNode.id, 'commit2': node.id, 'docType': 'word', 'token': _token});
                     if (response['success'] == true && response['result'] != null) {
                       if (ctx.mounted) setState(() { aiResult = response['result'] as Map<String, dynamic>; aiLoading = false; aiError = null; });
                     } else { throw Exception('后端返回失败'); }
@@ -5867,6 +5867,7 @@ class _GraphViewState extends State<_GraphView>
         'commit1': oldC,
         'commit2': newC,
         'docType': docType,
+        'token': widget.token,
       });
       if (!mounted) return;
 

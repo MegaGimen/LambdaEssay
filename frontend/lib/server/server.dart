@@ -970,6 +970,7 @@ Future<Response> handleCompareAi(Request req) async {
   final commit1 = (data['commit1'] as String? ?? '').trim();
   final commit2 = (data['commit2'] as String? ?? '').trim();
   final docType = (data['docType'] as String? ?? 'word').trim();
+  final token = data['token'] as String?;
 
   if (repoPath.isEmpty || commit1.isEmpty || commit2.isEmpty) {
     return _cors(Response.badRequest(
@@ -993,6 +994,7 @@ Future<Response> handleCompareAi(Request req) async {
         commit1,
         commit2,
         docType: docType,
+        token: token,
       );
     }
 
