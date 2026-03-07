@@ -1078,7 +1078,10 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                     } else { throw Exception('后端返回失败'); }
 
                   } else { if (ctx.mounted) setState(() { aiLoading = false; aiError = '这是初始提交，无父节点对比'; }); }
-                } catch (e) { if (ctx.mounted) setState(() { aiLoading = false; aiError = 'AI服务不可用'; }); }
+                } catch (e, s) { 
+                  print('Frontend AI Error: $e\n$s');
+                  if (ctx.mounted) setState(() { aiLoading = false; aiError = 'AI服务错误: $e'; }); 
+                }
               });
             }
             return AlertDialog(

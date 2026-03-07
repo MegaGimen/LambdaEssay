@@ -61,6 +61,7 @@ class AIDiffService {
       final response = await http.get(url).timeout(_timeout);
       return response.statusCode == 200;
     } catch (e) {
+      print('[AIDiff] Health check failed for $_pythonApiUrl: $e');
       return false;
     }
   }
