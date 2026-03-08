@@ -51,6 +51,7 @@ class _BackupPageState extends State<BackupPage> {
   bool _graphHovering = false;
   // StreamSubscription? _notificationSubscription;
   double _downloadProgress = 0.0;
+  bool _hasDownloadStarted = false;
   String? _chainViewUrl;
   String? _workspaceId;
 
@@ -133,9 +134,11 @@ class _BackupPageState extends State<BackupPage> {
 
       if (!mounted) return;
       try {
-        if (data['type'] == 'backup_progress' && data['repo'] == widget.projectName) {
+        final expectedRepo = _getRemoteRepoName();
+        if (data['type'] == 'backup_progress' && data['repo'] == expectedRepo) {
           setState(() {
             _downloadProgress = (data['percent'] as num).toDouble();
+            _hasDownloadStarted = true;
           });
         }
       } catch (e) {
@@ -183,6 +186,7 @@ class _BackupPageState extends State<BackupPage> {
       _comparisons.clear();
       _failedComparisons.clear();
       _downloadProgress = 0.0;
+      _hasDownloadStarted = false;
     });
     print('[BackupPage] Initial setState: ${stepSw.elapsedMilliseconds}ms');
     stepSw.reset();
@@ -686,7 +690,7 @@ class _BackupPageState extends State<BackupPage> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 const CircularProgressIndicator(),
-                if (_downloadProgress > 0) ...[
+                if (_hasDownloadStarted) ...[
                   const SizedBox(height: 16),
                   Text(
                     '正在下载: ${_downloadProgress.toStringAsFixed(1)}%',

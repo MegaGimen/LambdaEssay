@@ -159,6 +159,12 @@ Future<Map<String, dynamic>> listBackupCommits(
          await zipFile.parent.create(recursive: true);
          
          final contentLength = response.contentLength;
+         
+         // Notify start immediately
+         if (onProgress != null) {
+            onProgress(0.0, 0, contentLength ?? 0);
+         }
+
          int received = 0;
          final sink = zipFile.openWrite();
          
