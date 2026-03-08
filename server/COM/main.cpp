@@ -366,6 +366,134 @@ public:
 
         return SUCCEEDED(hr);
     }
+
+    bool CompareDocument(const string& originalPath, const string& revisedPath, const string& outputPath, bool isDocx) {
+        if (!IsConnected()) return false;
+
+        Log("Comparing: " + originalPath + " vs " + revisedPath);
+
+        VARIANT vFalse, vTrue;
+        vFalse.vt = VT_BOOL; vFalse.boolVal = VARIANT_FALSE;
+        vTrue.vt = VT_BOOL; vTrue.boolVal = VARIANT_TRUE;
+
+        // 1. Open Original
+        VARIANT vFileName;
+        vFileName.vt = VT_BSTR;
+        int wlen = MultiByteToWideChar(CP_ACP, 0, originalPath.c_str(), -1, NULL, 0);
+        BSTR bstrFile = SysAllocStringLen(NULL, wlen);
+        MultiByteToWideChar(CP_ACP, 0, originalPath.c_str(), -1, bstrFile, wlen);
+        vFileName.bstrVal = bstrFile;
+
+        VARIANT vDocs;
+        VariantInit(&vDocs);
+        HRESULT hr = AutoWrap(DISPATCH_PROPERTYGET, &vDocs, pWordApp, (LPOLESTR)L"Documents", 0);
+        if (FAILED(hr) || vDocs.vt != VT_DISPATCH) {
+            SysFreeString(bstrFile);
+            return false;
+        }
+        IDispatch* pDocs = vDocs.pdispVal;
+
+        VARIANT vDoc;
+        VariantInit(&vDoc);
+        // Open(FileName, ConfirmConversions=False, ReadOnly=True)
+        // Args reversed: ReadOnly, ConfirmConversions, FileName
+        hr = AutoWrap(DISPATCH_METHOD, &vDoc, pDocs, (LPOLESTR)L"Open", 3, vTrue, vFalse, vFileName);
+        SysFreeString(bstrFile);
+        pDocs->Release();
+
+        if (FAILED(hr) || vDoc.vt != VT_DISPATCH) {
+             Log("Failed to open original document");
+             return false;
+        }
+        IDispatch* pDoc = vDoc.pdispVal;
+
+        // 2. Compare
+        VARIANT vRevisedPath;
+        vRevisedPath.vt = VT_BSTR;
+        wlen = MultiByteToWideChar(CP_ACP, 0, revisedPath.c_str(), -1, NULL, 0);
+        BSTR bstrRevised = SysAllocStringLen(NULL, wlen);
+        MultiByteToWideChar(CP_ACP, 0, revisedPath.c_str(), -1, bstrRevised, wlen);
+        vRevisedPath.bstrVal = bstrRevised;
+
+        VARIANT vAuthor;
+        vAuthor.vt = VT_BSTR;
+        vAuthor.bstrVal = SysAllocString(L"System");
+
+        VARIANT vDest;
+        vDest.vt = VT_I4;
+        vDest.lVal = 2; // wdCompareDestinationNew
+
+        // Compare(Name, AuthorName, CompareTarget, DetectFormatChanges, IgnoreAllComparisonWarnings, AddToRecentFiles, RemovePersonalInformation, RemoveDateAndTime)
+        // Reverse args: RemoveDateAndTime, RemovePersonalInformation, AddToRecentFiles, IgnoreAllComparisonWarnings, DetectFormatChanges, CompareTarget, AuthorName, Name
+        hr = AutoWrap(DISPATCH_METHOD, NULL, pDoc, (LPOLESTR)L"Compare", 8, 
+            vFalse, // RemoveDateAndTime
+            vFalse, // RemovePersonalInformation
+            vFalse, // AddToRecentFiles
+            vTrue,  // IgnoreAllComparisonWarnings
+            vTrue,  // DetectFormatChanges
+            vDest,  // CompareTarget
+            vAuthor,// AuthorName
+            vRevisedPath // Name
+        );
+
+        SysFreeString(bstrRevised);
+        SysFreeString(vAuthor.bstrVal);
+
+        if (FAILED(hr)) {
+             Log("Compare failed");
+             AutoWrap(DISPATCH_METHOD, NULL, pDoc, (LPOLESTR)L"Close", 1, vFalse);
+             pDoc->Release();
+             return false;
+        }
+
+        // 3. Get Diff Document (ActiveDocument)
+        VARIANT vActiveDoc;
+        VariantInit(&vActiveDoc);
+        hr = AutoWrap(DISPATCH_PROPERTYGET, &vActiveDoc, pWordApp, (LPOLESTR)L"ActiveDocument", 0);
+        if (FAILED(hr) || vActiveDoc.vt != VT_DISPATCH) {
+             Log("Failed to get active document after compare");
+             AutoWrap(DISPATCH_METHOD, NULL, pDoc, (LPOLESTR)L"Close", 1, vFalse);
+             pDoc->Release();
+             return false;
+        }
+        IDispatch* pDiffDoc = vActiveDoc.pdispVal;
+
+        // 4. Save
+        VARIANT vFormat;
+        vFormat.vt = VT_I4;
+        vFormat.lVal = isDocx ? 12 : 17; // wdFormatXMLDocument = 12 (docx), wdFormatPDF = 17
+        // Note: wdFormatDocumentDefault = 16 (might depend on version, 12 is safer for DOCX)
+
+        VARIANT vOutputPath;
+        vOutputPath.vt = VT_BSTR;
+        wlen = MultiByteToWideChar(CP_ACP, 0, outputPath.c_str(), -1, NULL, 0);
+        BSTR bstrOutput = SysAllocStringLen(NULL, wlen);
+        MultiByteToWideChar(CP_ACP, 0, outputPath.c_str(), -1, bstrOutput, wlen);
+        vOutputPath.bstrVal = bstrOutput;
+
+        // SaveAs2(FileName, FileFormat) -> Reverse: FileFormat, FileName
+        hr = AutoWrap(DISPATCH_METHOD, NULL, pDiffDoc, (LPOLESTR)L"SaveAs2", 2, vFormat, vOutputPath);
+        SysFreeString(bstrOutput);
+        
+        // 5. Close
+        VARIANT vNoSave;
+        vNoSave.vt = VT_I4;
+        vNoSave.lVal = 0; // wdDoNotSaveChanges
+        
+        AutoWrap(DISPATCH_METHOD, NULL, pDiffDoc, (LPOLESTR)L"Close", 1, vNoSave);
+        pDiffDoc->Release();
+
+        AutoWrap(DISPATCH_METHOD, NULL, pDoc, (LPOLESTR)L"Close", 1, vNoSave);
+        pDoc->Release();
+
+        if (SUCCEEDED(hr)) {
+            Log("Compare saved to: " + outputPath);
+            return true;
+        } else {
+            Log("SaveAs2 failed");
+            return false;
+        }
+    }
 };
 
 // --- WebSocket Client ---
@@ -461,6 +589,10 @@ struct Task {
     string type;
     string checkPath;
     bool acceptRevisions;
+    string originalPath;
+    string revisedPath;
+    string outputPath;
+    bool isDocx;
 };
 
 queue<Task> taskQueue;
@@ -496,6 +628,10 @@ int main() {
                     string type = "";
                     string checkPath = "";
                     bool acceptRevisions = false;
+                    string originalPath = "";
+                    string revisedPath = "";
+                    string outputPath = "";
+                    bool isDocx = false;
 
                     if (action == "replace") {
                         JsonValue payload = data.o_val["payload"];
@@ -515,11 +651,17 @@ int main() {
                                 acceptRevisions = options.o_val["acceptRevisions"].b_val;
                             }
                          }
+                    } else if (action == "compare") {
+                        JsonValue payload = data.o_val["payload"];
+                        originalPath = payload.o_val["original"].s_val;
+                        revisedPath = payload.o_val["revised"].s_val;
+                        outputPath = payload.o_val["output"].s_val;
+                        isDocx = payload.o_val["isDocx"].b_val;
                     }
 
                     if (!action.empty()) {
                         lock_guard<mutex> lock(taskMutex);
-                        taskQueue.push({action, id, content, type, checkPath, acceptRevisions});
+                        taskQueue.push({action, id, content, type, checkPath, acceptRevisions, originalPath, revisedPath, outputPath, isDocx});
                     }
                 }
             }
@@ -556,6 +698,11 @@ int main() {
 
                     bool ok = word.ReplaceDocument(t.content, t.type);
                     if (ok) word.SaveDocument();
+                    string status = ok ? "success" : "error";
+                    string resp = "{\"type\":\"response\",\"id\":\"" + t.id + "\",\"status\":\"" + status + "\"}";
+                    ws.Send(resp);
+                } else if (t.action == "compare") {
+                    bool ok = word.CompareDocument(t.originalPath, t.revisedPath, t.outputPath, t.isDocx);
                     string status = ok ? "success" : "error";
                     string resp = "{\"type\":\"response\",\"id\":\"" + t.id + "\",\"status\":\"" + status + "\"}";
                     ws.Send(resp);

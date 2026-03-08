@@ -1913,6 +1913,32 @@ String _doccmpPs1Path() {
 
 Future<void> _doccmpToPdf(
     String oldDocx, String newDocx, String pdfPath) async {
+  
+  // Try COM first
+  if (comSender != null) {
+    print('Using COM for doccmp: $oldDocx vs $newDocx -> $pdfPath');
+    try {
+      final success = await comSender!({
+        'action': 'compare',
+        'payload': {
+          'original': oldDocx,
+          'revised': newDocx,
+          'output': pdfPath,
+          'isDocx': pdfPath.toLowerCase().endsWith('.docx')
+        }
+      });
+      
+      if (success == true && File(pdfPath).existsSync()) {
+        return;
+      }
+      print('COM doccmp failed or returned false. Falling back to PS1.');
+    } catch (e) {
+      print('COM doccmp error: $e. Falling back to PS1.');
+    }
+  } else {
+     print('COM not connected. Using PS1 for doccmp.');
+  }
+
   final psScript = _doccmpPs1Path();
   if (!File(psScript).existsSync()) {
     throw Exception('doccmp.ps1 not found at $psScript');
