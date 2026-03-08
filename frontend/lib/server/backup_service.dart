@@ -223,8 +223,8 @@ Future<Map<String, dynamic>> listBackupCommits(
   };
 }
 
-Future<List<Map<String, dynamic>>> listBackupFailures(String username) async {
-  final url = 'https://llinker.com/gitbackup/api/failures/$username';
+Future<List<Map<String, dynamic>>> listBackupFailures(String username, String repoName) async {
+  final url = 'https://llinker.com/gitbackup/api/failures/$username?repo=$repoName';
   try {
     final response = await http.get(Uri.parse(url));
     if (response.statusCode == 200) {

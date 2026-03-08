@@ -203,7 +203,7 @@ class _BackupPageState extends State<BackupPage> {
       List<Map<String, dynamic>> failures = [];
       if (widget.username.isNotEmpty) {
         try {
-          final fResp = await postJson("/backup/failures", {'username': widget.username});
+          final fResp = await postJson("/backup/failures", {'username': widget.username, 'repoName': repo});
           print('[BackupPage] Fetch failures API: ${stepSw.elapsedMilliseconds}ms');
           stepSw.reset();
 
@@ -492,13 +492,14 @@ class _BackupPageState extends State<BackupPage> {
                       
                       if (item.failure != null) {
                         final f = item.failure!;
+                        final type = f['type'] ?? 'failure';
                         return Card(
                           margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                           color: Colors.red.shade50,
                           child: ListTile(
                             leading: const Icon(Icons.error_outline, color: Colors.red),
                             title: Text('配额问题未备份 (${f['timestamp']})'),
-                            subtitle: Text('ID: ${f['failureId']}'),
+                            subtitle: Text('ID: ${f['failureId']} | Type: $type'),
                             trailing: ElevatedButton(
                               onPressed: () => _onRetryFailure(f['failureId']),
                               child: const Text('重试'),

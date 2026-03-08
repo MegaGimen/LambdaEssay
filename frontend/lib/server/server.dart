@@ -1951,15 +1951,22 @@ Future<Response> handleBackupFailures(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
   final username = data['username'] as String?;
+  final repoName = data['repoName'] as String?;
 
   if (username == null || username.isEmpty) {
     return _cors(Response(400,
         body: jsonEncode({'error': 'username required'}),
         headers: {'Content-Type': 'application/json; charset=utf-8'}));
   }
+  
+  if (repoName == null || repoName.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'repoName required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
 
   try {
-    final failures = await listBackupFailures(username);
+    final failures = await listBackupFailures(username, repoName);
     return _cors(Response.ok(jsonEncode(failures), headers: {
       'Content-Type': 'application/json; charset=utf-8',
     }));
