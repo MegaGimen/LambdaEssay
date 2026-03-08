@@ -1989,6 +1989,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     }
 
     String? selectedBranch = branch;
+    bool skipBackup = false;
+
     if (!force && selectedBranch == null) {
       // Fetch branches for selection
       List<String> branches = [];
@@ -2004,7 +2006,9 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
       if (branches.isNotEmpty) {
         String tempSelected = currentBranch ?? branches.first;
-        selectedBranch = await showDialog<String>(
+        bool tempSkipBackup = false;
+
+        final result = await showDialog<Map<String, dynamic>>(
           context: context,
           builder: (ctx) => StatefulBuilder(
             builder: (context, setState) {
@@ -2037,6 +2041,16 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                           },
                         ),
                       ),
+                      const Divider(),
+                      CheckboxListTile(
+                        title: const Text('不备份这次推送'),
+                        value: tempSkipBackup,
+                        onChanged: (val) {
+                          setState(() {
+                            tempSkipBackup = val == true;
+                          });
+                        },
+                      ),
                     ],
                   ),
                 ),
@@ -2046,7 +2060,10 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                     child: const Text('取消'),
                   ),
                    ElevatedButton(
-                    onPressed: () => Navigator.pop(ctx, tempSelected),
+                    onPressed: () => Navigator.pop(ctx, {
+                      'branch': tempSelected,
+                      'skipBackup': tempSkipBackup
+                    }),
                     child: const Text('推送'),
                   ),
                 ],
@@ -2054,14 +2071,20 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             }
           ),
         );
-        if (selectedBranch == null) return; // Cancelled
+        if (result == null) return; // Cancelled
+        
+        selectedBranch = result['branch'] as String?;
+        skipBackup = result['skipBackup'] == true;
+        
+        if (selectedBranch == null) return;
 
         // 二次确认
         final confirm = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
             title: const Text('确认推送'),
-            content: Text('您确定要推送分支 "$selectedBranch" 到远程吗？'),
+            content: Text('您确定要推送分支 "$selectedBranch" 到远程吗？\n'
+                '${skipBackup ? "(本次推送将跳过备份)" : ""}'),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(ctx, false),
@@ -2090,6 +2113,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         'username': _username,
         'token': _token,
         'force': force,
+        'skipBackup': skipBackup,
       };
       if (selectedBranch != null) body['branch'] = selectedBranch;
 

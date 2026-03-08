@@ -3733,7 +3733,7 @@ Future<void> _ensureUniqueRemote(
 }
 
 Future<void> pushToRemote(String repoPath, String username, String token,
-    {bool force = false, String? branch}) async {
+    {bool force = false, String? branch, bool skipBackup = false}) async {
   return _withRepoLock(repoPath, () async {
     final repoName = p.basename(repoPath);
     String effectiveRemoteRepoName;
@@ -3771,14 +3771,59 @@ Future<void> pushToRemote(String repoPath, String username, String token,
     if (force) args.add('--force');
     args.add(remoteName); // Use remote alias instead of URL for push
 
+    String branchToPush;
     if (branch != null) {
-      args.add(branch);
+      branchToPush = branch;
     } else {
       final current = await getCurrentBranch(repoPath);
       if (current != null) {
-        args.add(current);
+        branchToPush = current;
       } else {
         throw Exception('Cannot push: Detached HEAD and no branch specified.');
+      }
+    }
+    args.add(branchToPush);
+
+    if (skipBackup) {
+      print('Skip backup requested. Registering skip...');
+      try {
+        // 1. Get Local Commit (After)
+        final afterRes = await _runGit(['rev-parse', branchToPush], repoPath);
+        final after = afterRes.first.trim();
+
+        // 2. Get Remote Commit (Before)
+        String before = '0000000000000000000000000000000000000000';
+        try {
+          // Use remoteUrl directly to avoid alias issues if not yet fetched?
+          // But we just ensured unique remote.
+          // ls-remote works with URL or remote name.
+          final lsRemote = await _runGit(['ls-remote', remoteUrl, branchToPush], repoPath);
+          // Output format: <hash>\trefs/heads/<branch>
+          if (lsRemote.isNotEmpty) {
+            final parts = lsRemote.first.split(RegExp(r'\s+'));
+            if (parts.isNotEmpty) {
+              before = parts.first.trim();
+            }
+          }
+        } catch (e) {
+          print('Warning: Failed to get remote hash for skip backup: $e');
+          // Assume new branch or remote empty, keep before as all zeros
+        }
+
+        print('Registering skip backup: before=$before, after=$after');
+        final resp = await http.post(
+          Uri.parse('https://llinker.com/gitbackup/register_skip'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'before': before, 'after': after}),
+        );
+
+        if (resp.statusCode == 200) {
+          print('Skip backup registered successfully.');
+        } else {
+          throw Exception('Failed to register skip backup: ${resp.statusCode} ${resp.body}');
+        }
+      } catch (e) {
+        throw Exception('Skip backup registration failed: $e');
       }
     }
 

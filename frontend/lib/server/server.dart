@@ -1365,6 +1365,7 @@ Future<Response> handlePush(Request req) async {
   final token = (data['token'] as String?)?.trim() ?? '';
   final force = data['force'] == true;
   final branch = (data['branch'] as String?)?.trim();
+  final skipBackup = data['skipBackup'] == true;
 
   if (repoPath.isEmpty || username.isEmpty || token.isEmpty) {
     return _cors(Response(400,
@@ -1372,7 +1373,7 @@ Future<Response> handlePush(Request req) async {
         headers: {'Content-Type': 'application/json; charset=utf-8'}));
   }
   try {
-    await pushToRemote(repoPath, username, token, force: force, branch: branch);
+    await pushToRemote(repoPath, username, token, force: force, branch: branch, skipBackup: skipBackup);
     return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
       'Content-Type': 'application/json; charset=utf-8',
     }));
