@@ -1947,6 +1947,52 @@ Future<Response> handleBackupCommits(Request req) async {
   }
 }
 
+Future<Response> handleBackupFailures(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final username = data['username'] as String?;
+
+  if (username == null || username.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'username required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+
+  try {
+    final failures = await listBackupFailures(username);
+    return _cors(Response.ok(jsonEncode(failures), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> handleRetryBackupFailure(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final failureId = data['failureId'] as String?;
+
+  if (failureId == null || failureId.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'failureId required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+
+  try {
+    final success = await retryBackupFailure(failureId);
+    return _cors(Response.ok(jsonEncode({'success': success}), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
 Future<Response> handleHealth(Request req) async {
   return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
     'Content-Type': 'application/json; charset=utf-8',

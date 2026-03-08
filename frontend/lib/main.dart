@@ -4937,6 +4937,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                                   projectName: currentProjectName!,
                                   repoPath: pathCtrl.text,
                                   token: _token ?? '',
+                                  username: _username ?? '',
                                 )));
                   }),
                 ],

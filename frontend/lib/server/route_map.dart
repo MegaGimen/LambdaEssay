@@ -70,4 +70,6 @@ final Map<String, Function> routeMap = {
   '/complete_merge': handleCompleteMerge,
   '/edge/add': handleEdgeAdd,
   '/backup/commits': handleBackupCommits,
+  '/backup/failures': handleBackupFailures,
+  '/backup/retry_failure': handleRetryBackupFailure,
 };

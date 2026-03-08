@@ -223,6 +223,31 @@ Future<Map<String, dynamic>> listBackupCommits(
   };
 }
 
+Future<List<Map<String, dynamic>>> listBackupFailures(String username) async {
+  final url = 'https://llinker.com/gitbackup/api/failures/$username';
+  try {
+    final response = await http.get(Uri.parse(url));
+    if (response.statusCode == 200) {
+      final List<dynamic> list = jsonDecode(response.body);
+      return list.cast<Map<String, dynamic>>();
+    }
+  } catch (e) {
+    print('Failed to list backup failures: $e');
+  }
+  return [];
+}
+
+Future<bool> retryBackupFailure(String failureId) async {
+  final url = 'https://llinker.com/gitbackup/api/failures/$failureId/retry';
+  try {
+    final response = await http.post(Uri.parse(url));
+    return response.statusCode == 200;
+  } catch (e) {
+    print('Failed to retry backup failure: $e');
+    return false;
+  }
+}
+
 Future<void> _precacheSnapshots(String repoName, String repoPath) async {
   final checkoutRoot = Directory(p.join(_checkoutBaseDir, repoName));
   if (!await checkoutRoot.exists()) {

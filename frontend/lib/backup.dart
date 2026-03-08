@@ -19,14 +19,30 @@ class BackupPage extends StatefulWidget {
   final String projectName;
   final String repoPath;
   final String token;
+  final String username;
   const BackupPage({
     super.key,
     required this.projectName,
     required this.repoPath,
     required this.token,
+    this.username = '',
   });
   @override
   State<BackupPage> createState() => _BackupPageState();
+}
+
+class BackupItem {
+  final CommitNode? commit;
+  final Map<String, dynamic>? failure;
+  BackupItem({this.commit, this.failure});
+  
+  DateTime get date {
+    try {
+      if (commit != null) return DateTime.parse(commit!.date);
+      if (failure != null) return DateTime.parse(failure!['timestamp']);
+    } catch (_) {}
+    return DateTime.fromMillisecondsSinceEpoch(0);
+  }
 }
 
 class _BackupPageState extends State<BackupPage> {
@@ -38,7 +54,7 @@ class _BackupPageState extends State<BackupPage> {
   String? _chainViewUrl;
   String? _workspaceId;
 
-  List<CommitNode> _commits = [];
+  List<BackupItem> _items = [];
   // Store comparison results for each backup commit vs local
   final Map<String, ComparisonData> _comparisons = {};
   final Set<String> _failedComparisons = {};
@@ -143,10 +159,19 @@ class _BackupPageState extends State<BackupPage> {
   }
 
   Future<void> _loadBackups() async {
+    final totalSw = Stopwatch()..start();
+    print('[BackupPage] Start loading backups...');
+    final stepSw = Stopwatch()..start();
+
     if (_workspaceId == null) {
        await _fetchWorkspaceId();
+       print('[BackupPage] _fetchWorkspaceId: ${stepSw.elapsedMilliseconds}ms');
+       stepSw.reset();
     }
     final repo = _getRemoteRepoName();
+    print('[BackupPage] _getRemoteRepoName: ${stepSw.elapsedMilliseconds}ms');
+    stepSw.reset();
+
     if (widget.projectName.isEmpty) {
       setState(() => _error = '项目名称为空');
       return;
@@ -154,18 +179,45 @@ class _BackupPageState extends State<BackupPage> {
     setState(() {
       _loading = true;
       _error = null;
-      _commits = [];
+      _items = [];
       _comparisons.clear();
       _failedComparisons.clear();
       _downloadProgress = 0.0;
     });
+    print('[BackupPage] Initial setState: ${stepSw.elapsedMilliseconds}ms');
+    stepSw.reset();
+
     try {
         print("The token here is ${widget.token}");
+      
+      // Fetch commits
       final j = await postJson("/backup/commits", {'repoName': repo, "token": widget.token});
+      print('[BackupPage] Fetch commits API: ${stepSw.elapsedMilliseconds}ms');
+      stepSw.reset();
+
       final list = (j['commits'] as List?) ?? const [];
       final bool cacheHit = j['cacheHit'] == true;
       _chainViewUrl = j['chainViewUrl'] as String?;
       
+      // Fetch failures
+      List<Map<String, dynamic>> failures = [];
+      if (widget.username.isNotEmpty) {
+        try {
+          final fResp = await postJson("/backup/failures", {'username': widget.username});
+          print('[BackupPage] Fetch failures API: ${stepSw.elapsedMilliseconds}ms');
+          stepSw.reset();
+
+          if (fResp is List) {
+             failures = fResp.cast<Map<String, dynamic>>();
+          }
+        } catch (e) {
+          debugPrint('Failed to fetch failures: $e');
+        }
+      } else {
+          print('[BackupPage] Skip fetch failures (no username): ${stepSw.elapsedMilliseconds}ms');
+          stepSw.reset();
+      }
+
       if (cacheHit && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('当前本地备份已经是最新版 (Cache Hit)')),
@@ -175,30 +227,54 @@ class _BackupPageState extends State<BackupPage> {
       final commits = list
           .map((e) => CommitNode.fromJson(e as Map<String, dynamic>))
           .toList();
-      commits.sort((a, b) => b.date.compareTo(a.date));
+      print('[BackupPage] Parse commits: ${stepSw.elapsedMilliseconds}ms');
+      stepSw.reset();
+          
+      final items = <BackupItem>[];
+      for (final c in commits) items.add(BackupItem(commit: c));
+      for (final f in failures) items.add(BackupItem(failure: f));
+      
+      items.sort((a, b) => b.date.compareTo(a.date));
+      print('[BackupPage] Merge and Sort items: ${stepSw.elapsedMilliseconds}ms');
+      stepSw.reset();
+      
       setState(() {
-        _commits = commits;
+        _items = items;
         _loading = false;
       });
-      for (final c in commits) {
-        _ensureComparison(repo, c.id).catchError((e) {
-          debugPrint('Failed to load comparison for ${c.id}: $e');
-          if (mounted) {
-            setState(() {
-              _failedComparisons.add(c.id);
-            });
-          }
-        });
+      print('[BackupPage] Update UI setState: ${stepSw.elapsedMilliseconds}ms');
+      stepSw.reset();
+
+      int count = 0;
+      for (final item in items) {
+        if (item.commit != null) {
+          count++;
+          _ensureComparison(repo, item.commit!.id).catchError((e) {
+            debugPrint('Failed to load comparison for ${item.commit!.id}: $e');
+            if (mounted) {
+              setState(() {
+                _failedComparisons.add(item.commit!.id);
+              });
+            }
+          });
+        }
       }
+      print('[BackupPage] Triggered $count comparison loads: ${stepSw.elapsedMilliseconds}ms');
+      stepSw.reset();
+
     } catch (e) {
       setState(() {
         _error = e.toString();
         _loading = false;
       });
+    } finally {
+        totalSw.stop();
+        print('[BackupPage] Total load time (until comparison trigger): ${totalSw.elapsedMilliseconds}ms');
     }
   }
 
   Future<void> _ensureComparison(String repo, String sha) async {
+    final sw = Stopwatch()..start();
     if (_comparisons.containsKey(sha)) return;
     // Call the compare_repos API to get aligned graphs
     final j = await postJson("/compare_repos", {
@@ -207,6 +283,9 @@ class _BackupPageState extends State<BackupPage> {
       'commitB': 'local', // Local state
       'localPath': widget.repoPath,
     });
+    print('[BackupPage] Compare $sha API: ${sw.elapsedMilliseconds}ms');
+    sw.reset();
+
     final gA = GraphData.fromJson(j['graphA']);
     final gB = GraphData.fromJson(j['graphB']);
     final rawMapping = j['unifiedRowMapping'] as Map<String, dynamic>;
@@ -222,12 +301,16 @@ class _BackupPageState extends State<BackupPage> {
 
     final ghostsA = gB.commits.where((c) => !commitsA.contains(c.id)).toList();
     final ghostsB = gA.commits.where((c) => !commitsB.contains(c.id)).toList();
+    
+    print('[BackupPage] Process comparison data $sha: ${sw.elapsedMilliseconds}ms');
+    sw.reset();
 
     if (!mounted) return;
     setState(() {
       _comparisons[sha] =
           ComparisonData(gA, gB, mapping, summary, colors, ghostsA, ghostsB);
     });
+    print('[BackupPage] Update UI comparison $sha: ${sw.elapsedMilliseconds}ms');
   }
 
   Map<String, Color> _computeNodeColors(Map<String, dynamic> details) {
@@ -284,9 +367,32 @@ class _BackupPageState extends State<BackupPage> {
     }
   }
 
+  Future<void> _onRetryFailure(String failureId) async {
+    setState(() => _loading = true);
+    try {
+      final resp = await postJson('/backup/retry_failure', {'failureId': failureId});
+      if (resp['success'] == true) {
+        if (mounted) {
+           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('重试成功，正在刷新...')));
+        }
+        await _loadBackups();
+      } else {
+        if (mounted) {
+           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('重试失败')));
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final commits = _commits;
+    final items = _items;
     return Listener(
       onPointerSignal: (event) {
         if (event is PointerScrollEvent) {
@@ -336,6 +442,11 @@ class _BackupPageState extends State<BackupPage> {
               ],
             ),
             actions: [
+              IconButton(
+                onPressed: _loading ? null : _loadBackups,
+                tooltip: '刷新',
+                icon: const Icon(Icons.refresh),
+              ),
               SizedBox(
                 width: 150,
                 child: Slider(
@@ -366,7 +477,7 @@ class _BackupPageState extends State<BackupPage> {
               child: Text(_error!, style: const TextStyle(color: Colors.red)),
             ),
           Expanded(
-            child: commits.isEmpty
+            child: items.isEmpty
                 ? Center(
                     child: _loading
                         ? const CircularProgressIndicator()
@@ -375,9 +486,28 @@ class _BackupPageState extends State<BackupPage> {
                     physics: _graphHovering
                         ? const NeverScrollableScrollPhysics()
                         : const ClampingScrollPhysics(),
-                    itemCount: commits.length,
+                    itemCount: items.length,
                     itemBuilder: (ctx, i) {
-                      final c = commits[i];
+                      final item = items[i];
+                      
+                      if (item.failure != null) {
+                        final f = item.failure!;
+                        return Card(
+                          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          color: Colors.red.shade50,
+                          child: ListTile(
+                            leading: const Icon(Icons.error_outline, color: Colors.red),
+                            title: Text('配额问题未备份 (${f['timestamp']})'),
+                            subtitle: Text('ID: ${f['failureId']}'),
+                            trailing: ElevatedButton(
+                              onPressed: () => _onRetryFailure(f['failureId']),
+                              child: const Text('重试'),
+                            ),
+                          ),
+                        );
+                      }
+                      
+                      final c = item.commit!;
                       final sha = c.id;
                       final comparison = _comparisons[sha];
                       return Card(
