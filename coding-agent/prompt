@@ -52,7 +52,12 @@ edges文件定义了需要渲染的合并边，格式为：第一行为零，后
 
 如果发现问题，可适当添加调试信息，我会提供输出内容
 
-flutter analyze | Select-String "error"  只能在修改后使用，不能在写代码过程中使用。如果显示“no issue found”而没有输出error，那么就是没有错误，不用进一步的调试
+flutter analyze | Select-String "error"  只能在修改后使用，不能在写代码过程中使用。如果显示“no issue found”而没有输出error，那么就是没有错误，不用进一步的调试。比如就这个而言：
+
+Flutter assets will be downloaded from https://storage.flutter-io.cn. Make sure you trust this source!
+487 issues found. (ran in 12.2s)
+
+输出这个就意味着没有错误
 
 当我询问是否有某个功能时，如果没有，则自动添加
 
