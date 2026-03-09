@@ -6562,9 +6562,10 @@ class _GraphViewState extends State<_GraphView>
       builder: (context, constraints) {
         final parentSize = constraints.biggest;
         _ensureOverlayBounds(parentSize);
-        return Stack(
-          children: [
-            MouseRegion(
+        return ExcludeSemantics(
+          child: Stack(
+            children: [
+              MouseRegion(
               onHover: (d) {
                 final scene = _toScene(d.localPosition);
                 final hit = _hitTest(scene, widget.data);
@@ -6694,24 +6695,22 @@ class _GraphViewState extends State<_GraphView>
                         child: AnimatedBuilder(
                           animation: _graphFlashCtrl,
                           builder: (context, child) {
-                            return ExcludeSemantics(
-                              child: CustomPaint(
-                                painter: GraphPainter(
-                                  widget.data,
-                                  _branchColors!,
-                                  _hoverEdgeKey(),
-                                  widget.laneWidth,
-                                  widget.rowHeight,
-                                  working: widget.working,
-                                  selectedNodes: _selectedNodes,
-                                  identicalCommitIds: widget.identicalCommitIds,
-                                  customRowMapping: widget.customRowMapping,
-                                  totalRows: widget.totalRows,
-                                  primaryBranchName: widget.primaryBranchName,
-                                  flashValue: _graphFlashCtrl.value,
-                                ),
-                                size: _canvasSize!,
+                            return CustomPaint(
+                              painter: GraphPainter(
+                                widget.data,
+                                _branchColors!,
+                                _hoverEdgeKey(),
+                                widget.laneWidth,
+                                widget.rowHeight,
+                                working: widget.working,
+                                selectedNodes: _selectedNodes,
+                                identicalCommitIds: widget.identicalCommitIds,
+                                customRowMapping: widget.customRowMapping,
+                                totalRows: widget.totalRows,
+                                primaryBranchName: widget.primaryBranchName,
+                                flashValue: _graphFlashCtrl.value,
                               ),
+                              size: _canvasSize!,
                             );
                           },
                         ),
@@ -6898,6 +6897,7 @@ class _GraphViewState extends State<_GraphView>
                 ),
               ),
           ],
+        ),
         );
       },
     );

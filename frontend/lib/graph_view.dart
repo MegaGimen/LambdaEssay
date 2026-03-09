@@ -811,64 +811,66 @@ class _SimpleGraphViewState extends State<SimpleGraphView> {
             });
           }
 
-          return Stack(
-            children: [
-              content,
-              MovableResizablePanel(
-                offset: _legendOffset,
-                size: _legendSize,
-                parentSize: parentSize,
-                title: '分支图例',
-                minSize: const Size(160, 140),
-                maxSize: const Size(520, 640),
-                elevation: 2,
-                borderRadius: BorderRadius.circular(6),
-                contentPadding: const EdgeInsets.all(8),
-                backgroundColor: Colors.white.withOpacity(0.92),
-                onOffsetChanged: (v) => setState(() => _legendOffset = v),
-                onSizeChanged: (v) => setState(() => _legendSize = v),
-                child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: _branchColors!.entries
-                        .map(
-                          (e) => Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 2),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Container(
-                                  width: 12,
-                                  height: 12,
-                                  decoration: BoxDecoration(
-                                    color: e.value,
-                                    shape: BoxShape.circle,
+          return ExcludeSemantics(
+            child: Stack(
+              children: [
+                content,
+                MovableResizablePanel(
+                  offset: _legendOffset,
+                  size: _legendSize,
+                  parentSize: parentSize,
+                  title: '分支图例',
+                  minSize: const Size(160, 140),
+                  maxSize: const Size(520, 640),
+                  elevation: 2,
+                  borderRadius: BorderRadius.circular(6),
+                  contentPadding: const EdgeInsets.all(8),
+                  backgroundColor: Colors.white.withOpacity(0.92),
+                  onOffsetChanged: (v) => setState(() => _legendOffset = v),
+                  onSizeChanged: (v) => setState(() => _legendSize = v),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: _branchColors!.entries
+                          .map(
+                            (e) => Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 2),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Container(
+                                    width: 12,
+                                    height: 12,
+                                    decoration: BoxDecoration(
+                                      color: e.value,
+                                      shape: BoxShape.circle,
+                                    ),
                                   ),
-                                ),
-                                const SizedBox(width: 8),
-                                Flexible(
-                                  child: Text(
-                                    Branch.decodeName(e.key),
-                                    style: const TextStyle(fontSize: 12),
-                                    overflow: TextOverflow.ellipsis,
+                                  const SizedBox(width: 8),
+                                  Flexible(
+                                    child: Text(
+                                      Branch.decodeName(e.key),
+                                      style: const TextStyle(fontSize: 12),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
-                          ),
-                        )
-                        .toList(),
+                          )
+                          .toList(),
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           );
         },
       );
     }
 
-    return content;
+    return ExcludeSemantics(child: content);
   }
 
   Size _computeCanvasSize() {
