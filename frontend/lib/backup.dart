@@ -373,12 +373,15 @@ class _BackupPageState extends State<BackupPage> {
 
   Future<void> _onRetryFailure(String failureId) async {
     setState(() => _loading = true);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('正在重试，请稍后进入页面后查看')),
+      );
+    }
     try {
       final resp = await postJson('/backup/retry_failure', {'failureId': failureId});
       if (resp['success'] == true) {
-        if (mounted) {
-           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('重试成功，正在刷新...')));
-        }
+        // Retry succeeded, reload list
         await _loadBackups();
       } else {
         if (mounted) {
@@ -530,10 +533,25 @@ class _BackupPageState extends State<BackupPage> {
                                   ],
                                 ),
                               ),
-                              children: const [
-                                ListTile(
+                              children: [
+                                const ListTile(
                                   title: Text('此版本由用户手动跳过备份'),
-                                )
+                                ),
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                  child: Align(
+                                    alignment: Alignment.centerRight,
+                                    child: ElevatedButton.icon(
+                                      onPressed: () => _onRetryFailure(f['failureId']),
+                                      icon: const Icon(Icons.refresh),
+                                      label: const Text('重试备份'),
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: Colors.blue.shade50,
+                                        foregroundColor: Colors.blue.shade800,
+                                      ),
+                                    ),
+                                  ),
+                                ),
                               ],
                             ),
                           );
