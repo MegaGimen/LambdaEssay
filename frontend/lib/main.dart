@@ -4846,6 +4846,84 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     );
   }
 
+  Future<String?> _showBackupTargetDialog(BuildContext context) {
+    final rootPath = packageRootCtrl.text.trim();
+    if (rootPath.isEmpty) return Future.value(null);
+    String? selected = rootPath;
+    
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setState) {
+          return AlertDialog(
+            title: const Text('选择备份查看对象'),
+            content: SizedBox(
+              width: 500,
+              height: 400,
+              child: Column(
+                children: [
+                  Text('当前项目：${p.basename(rootPath)}'),
+                  const SizedBox(height: 10),
+                  Expanded(
+                    child: Container(
+                      decoration: BoxDecoration(border: Border.all(color: Colors.grey.shade300)),
+                      child: DirectoryTreeStateProvider(
+                        notifier: DirectoryTreeStateNotifier(),
+                        child: FoldableDirectoryTree(
+                          rootPath: rootPath,
+                          selectedPath: selected,
+                          filter: (entity) {
+                            final name = p.basename(entity.path);
+                            if (name == '.git') return false;
+                            // Hide internal workspace folders
+                            if (entity is Directory &&
+                                RegExp(r'^[a-fA-F0-9]{32}$').hasMatch(name)) {
+                              return false;
+                            }
+                            return true;
+                          },
+                          fileIconBuilder: (extension) => const Icon(
+                              Icons.description,
+                              size: 16,
+                              color: Colors.blueGrey),
+                          onFileTap: (file, _) {
+                            setState(() {
+                              selected = file.path;
+                            });
+                          },
+                          onDirTap: (dir, _) {
+                            setState(() {
+                              selected = dir.path;
+                            });
+                          },
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text('已选: ${selected != null ? p.basename(selected!) : "未选择"}', 
+                      style: const TextStyle(fontWeight: FontWeight.bold)),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, null),
+                child: const Text('取消'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(ctx, selected);
+                },
+                child: const Text('确认'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
   Widget _buildTopBar() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -4992,16 +5070,22 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                           fontWeight: FontWeight.bold, color: Colors.grey)),
                   const SizedBox(height: 8),
                   _buildActionButton(Icons.home, '返回主视角', _resetView),
-                  _buildActionButton(Icons.history, '历史备份', () {
+                  _buildActionButton(Icons.history, '历史备份', () async {
                     if (currentProjectName == null || pathCtrl.text.isEmpty) {
                       return;
                     }
+                    
+                    // Allow user to select target for backup view
+                    final selected = await _showBackupTargetDialog(context);
+                    if (selected == null) return; // Cancelled
+
+                    if (!mounted) return;
                     Navigator.push(
                         context,
                         MaterialPageRoute(
                             builder: (_) => BackupPage(
                                   projectName: currentProjectName!,
-                                  repoPath: pathCtrl.text,
+                                  repoPath: selected, // Use selected path
                                   token: _token ?? '',
                                   username: _username ?? '',
                                 )));

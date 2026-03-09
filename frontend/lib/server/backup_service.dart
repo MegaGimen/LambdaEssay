@@ -140,14 +140,14 @@ Future<Map<String, dynamic>> listBackupCommits(
        final jsonData = jsonDecode(body);
        print("Debug,jsonData=$jsonData,everything cool bro!");
        if (jsonData["message"] == "success") {
-         print("File up to date");
+         print("File up to date (Cache Hit)");
          cacheHit = true;
          if (jsonData.containsKey('chain_url')) {
            chainViewUrl = jsonData['chain_url'];
          }
        }
     } else {
-       print("New file!");
+       print("New file detected (Content-Type: $ct)! Starting download...");
        cacheHit = false;
        // New file
        if (await dir.exists()) await dir.delete(recursive: true);

@@ -38,7 +38,17 @@ class BackupItem {
   
   DateTime get date {
     try {
-      if (commit != null) return DateTime.parse(commit!.date);
+      if (commit != null) {
+        // Try parse snapshot time from subject
+        // Format: snapshot time：1773042542.63755
+        // Note: Chinese colon might be used
+        final match = RegExp(r'snapshot time[：:]\s*(\d+(\.\d+)?)').firstMatch(commit!.subject);
+        if (match != null) {
+          final ts = double.parse(match.group(1)!);
+          return DateTime.fromMillisecondsSinceEpoch((ts * 1000).round());
+        }
+        return DateTime.parse(commit!.date);
+      }
       if (failure != null) return DateTime.parse(failure!['timestamp']);
     } catch (_) {}
     return DateTime.fromMillisecondsSinceEpoch(0);
@@ -54,6 +64,9 @@ class _BackupPageState extends State<BackupPage> {
   bool _hasDownloadStarted = false;
   String? _chainViewUrl;
   String? _workspaceId;
+  
+  // Track load requests to prevent race conditions
+  int _loadId = 0;
 
   List<BackupItem> _items = [];
   // Store comparison results for each backup commit vs local
@@ -162,12 +175,14 @@ class _BackupPageState extends State<BackupPage> {
   }
 
   Future<void> _loadBackups() async {
+    final myLoadId = ++_loadId;
     final totalSw = Stopwatch()..start();
-    print('[BackupPage] Start loading backups...');
+    print('[BackupPage] Start loading backups (LoadID: $myLoadId)...');
     final stepSw = Stopwatch()..start();
 
     if (_workspaceId == null) {
        await _fetchWorkspaceId();
+       if (myLoadId != _loadId) return; // Cancelled
        print('[BackupPage] _fetchWorkspaceId: ${stepSw.elapsedMilliseconds}ms');
        stepSw.reset();
     }
@@ -196,6 +211,11 @@ class _BackupPageState extends State<BackupPage> {
       
       // Fetch commits
       final j = await postJson("/backup/commits", {'repoName': repo, "token": widget.token});
+      if (myLoadId != _loadId) {
+         print('[BackupPage] LoadID $myLoadId cancelled (current: $_loadId)');
+         return;
+      }
+
       print('[BackupPage] Fetch commits API: ${stepSw.elapsedMilliseconds}ms');
       stepSw.reset();
 
@@ -242,6 +262,7 @@ class _BackupPageState extends State<BackupPage> {
       print('[BackupPage] Merge and Sort items: ${stepSw.elapsedMilliseconds}ms');
       stepSw.reset();
       
+      if (myLoadId != _loadId) return;
       setState(() {
         _items = items;
         _loading = false;
@@ -253,9 +274,9 @@ class _BackupPageState extends State<BackupPage> {
       for (final item in items) {
         if (item.commit != null) {
           count++;
-          _ensureComparison(repo, item.commit!.id).catchError((e) {
+          _ensureComparison(repo, item.commit!.id, myLoadId).catchError((e) {
             debugPrint('Failed to load comparison for ${item.commit!.id}: $e');
-            if (mounted) {
+            if (mounted && myLoadId == _loadId) {
               setState(() {
                 _failedComparisons.add(item.commit!.id);
               });
@@ -267,6 +288,7 @@ class _BackupPageState extends State<BackupPage> {
       stepSw.reset();
 
     } catch (e) {
+      if (myLoadId != _loadId) return;
       setState(() {
         _error = e.toString();
         _loading = false;
@@ -277,7 +299,8 @@ class _BackupPageState extends State<BackupPage> {
     }
   }
 
-  Future<void> _ensureComparison(String repo, String sha) async {
+  Future<void> _ensureComparison(String repo, String sha, int loadId) async {
+    if (loadId != _loadId) return;
     final sw = Stopwatch()..start();
     if (_comparisons.containsKey(sha)) return;
     // Call the compare_repos API to get aligned graphs
@@ -309,7 +332,7 @@ class _BackupPageState extends State<BackupPage> {
     print('[BackupPage] Process comparison data $sha: ${sw.elapsedMilliseconds}ms');
     sw.reset();
 
-    if (!mounted) return;
+    if (!mounted || loadId != _loadId) return;
     setState(() {
       _comparisons[sha] =
           ComparisonData(gA, gB, mapping, summary, colors, ghostsA, ghostsB);
