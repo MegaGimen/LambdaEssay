@@ -1,7 +1,9 @@
 import 'dart:io';
 import 'dart:convert';
+import 'dart:async';
 import 'package:path/path.dart' as p;
 import 'package:http/http.dart' as http;
+import 'package:archive/archive_io.dart';
 import 'models.dart';
 
 import 'package:crypto/crypto.dart';
@@ -254,6 +256,32 @@ Future<bool> retryBackupFailure(String failureId) async {
   }
 }
 
+class Semaphore {
+  final int max;
+  int _current = 0;
+  final List<Completer<void>> _waiters = [];
+
+  Semaphore(this.max);
+
+  Future<void> acquire() async {
+    if (_current < max) {
+      _current++;
+      return;
+    }
+    final completer = Completer<void>();
+    _waiters.add(completer);
+    await completer.future;
+  }
+
+  void release() {
+    if (_waiters.isNotEmpty) {
+      _waiters.removeAt(0).complete();
+    } else {
+      _current--;
+    }
+  }
+}
+
 Future<void> _precacheSnapshots(String repoName, String repoPath) async {
   final checkoutRoot = Directory(p.join(_checkoutBaseDir, repoName));
   if (!await checkoutRoot.exists()) {
@@ -283,88 +311,116 @@ Future<void> _precacheSnapshots(String repoName, String repoPath) async {
 
   print('Found ${commits.length} commits in backup repo.');
 
+  final semaphore = Semaphore(5); // Limit concurrency to 5
+  final futures = <Future>[];
+
   for (final commitId in commits) {
-    final targetDir = Directory(p.join(checkoutRoot.path, commitId));
-    if (await targetDir.exists()) {
-      // Repair logic: check if we have a dummy repo but actually have an inner repo
-      if (await Directory(p.join(targetDir.path, '.git')).exists()) {
-        bool hasInner = false;
+    futures.add(semaphore.acquire().then((_) async {
+      try {
+        final targetDir = Directory(p.join(checkoutRoot.path, commitId));
+        if (await targetDir.exists()) {
+          // Repair logic: check if we have a dummy repo but actually have an inner repo
+          if (await Directory(p.join(targetDir.path, '.git')).exists()) {
+            bool hasInner = false;
+            final subs = targetDir.listSync().whereType<Directory>();
+            for (final s in subs) {
+              if (p.basename(s.path) == '.git') continue;
+              if (await File(p.join(s.path, 'HEAD')).exists() &&
+                  await File(p.join(s.path, 'config')).exists() &&
+                  await Directory(p.join(s.path, 'refs')).exists()) {
+                hasInner = true;
+                break;
+              }
+            }
+            if (hasInner) {
+              print("Repairing cache: Removing dummy .git folder for $commitId");
+              try {
+                await Directory(p.join(targetDir.path, '.git'))
+                    .delete(recursive: true);
+              } catch (e) {
+                print("Failed to delete dummy .git: $e");
+              }
+            }
+          }
+          // Skip if already cached
+          return;
+        }
+
+        print('Caching snapshot for $commitId...');
+        await targetDir.create(recursive: true);
+
+        // Use git archive to extract content without checking out
+        // Create a temporary tar file
+        final tempTar = File(p.join(targetDir.path, 'temp_archive.tar'));
+        
+        final archiveRes = await Process.run(
+          'git',
+          ['archive', '--format=tar', '--output=${tempTar.path}', commitId],
+          workingDirectory: repoPath,
+        );
+
+        if (archiveRes.exitCode != 0) {
+          print('Failed to archive $commitId: ${archiveRes.stderr}');
+          // Clean up partial targetDir?
+          // await targetDir.delete(recursive: true);
+          return;
+        }
+
+        // Extract tar using archive package
+        try {
+            final bytes = await tempTar.readAsBytes();
+            final archive = TarDecoder().decodeBytes(bytes);
+            for (final file in archive) {
+                final filename = file.name;
+                if (file.isFile) {
+                    final data = file.content as List<int>;
+                    final outFile = File(p.join(targetDir.path, filename));
+                    await outFile.parent.create(recursive: true);
+                    await outFile.writeAsBytes(data);
+                } else {
+                    await Directory(p.join(targetDir.path, filename)).create(recursive: true);
+                }
+            }
+        } catch (e) {
+            print('Error extracting tar for $commitId: $e');
+        } finally {
+            if (await tempTar.exists()) {
+                await tempTar.delete();
+            }
+        }
+        
+        // Check if we have a bare repo in subdirectories
+        bool hasBareRepo = false;
         final subs = targetDir.listSync().whereType<Directory>();
         for (final s in subs) {
           if (p.basename(s.path) == '.git') continue;
-          if (await File(p.join(s.path, 'HEAD')).exists() &&
-              await File(p.join(s.path, 'config')).exists() &&
+          if (await File(p.join(s.path, 'HEAD')).exists() && 
+              await File(p.join(s.path, 'config')).exists() && 
               await Directory(p.join(s.path, 'refs')).exists()) {
-            hasInner = true;
+            hasBareRepo = true;
             break;
           }
         }
-        if (hasInner) {
-          print("Repairing cache: Removing dummy .git folder for $commitId");
-          try {
-            await Directory(p.join(targetDir.path, '.git'))
-                .delete(recursive: true);
-          } catch (e) {
-            print("Failed to delete dummy .git: $e");
-          }
+
+        // Ensure targetDir is a valid git repo (so getGraph works correctly for comparison)
+        // If the snapshot itself doesn't contain a .git folder (which it likely doesn't if it's just a file backup),
+        // we create a dummy one.
+        if (!hasBareRepo && !await Directory(p.join(targetDir.path, '.git')).exists()) {
+            await Process.run('git', ['init'], workingDirectory: targetDir.path);
+            await Process.run('git', ['config', 'user.email', 'backup@local'], workingDirectory: targetDir.path);
+            await Process.run('git', ['config', 'user.name', 'BackupBot'], workingDirectory: targetDir.path);
+            await Process.run('git', ['add', '.'], workingDirectory: targetDir.path);
+            await Process.run('git', ['commit', '-m', 'Snapshot state'], workingDirectory: targetDir.path);
         }
+      } catch (e, s) {
+        print('Error processing snapshot $commitId: $e\n$s');
+      } finally {
+        semaphore.release();
       }
-      // Skip if already cached
-      continue;
-    }
-
-    print('Caching snapshot for $commitId...');
-    
-    // Checkout commit in the parent repo
-    final checkoutRes = await Process.run('git', ['checkout', '-f', commitId],
-        workingDirectory: repoPath);
-    if (checkoutRes.exitCode != 0) {
-      print('Failed to checkout $commitId: ${checkoutRes.stderr}');
-      continue;
-    }
-
-    // Copy content to targetDir
-    await targetDir.create(recursive: true);
-    
-    // Use PowerShell to copy everything except .git folder of the backup repo
-    // We want to capture the workspace state at that commit.
-    final copyRes = await Process.run('powershell', [
-      '-Command',
-      'Get-ChildItem -Path "${repoPath}" -Exclude ".git" | Copy-Item -Destination "${targetDir.path}" -Recurse -Force'
-    ]);
-
-    if (copyRes.exitCode != 0) {
-      print('Failed to copy snapshot for $commitId: ${copyRes.stderr}');
-    }
-    
-    // Check if we have a bare repo in subdirectories
-    bool hasBareRepo = false;
-    final subs = targetDir.listSync().whereType<Directory>();
-    for (final s in subs) {
-      if (p.basename(s.path) == '.git') continue;
-      if (await File(p.join(s.path, 'HEAD')).exists() && 
-          await File(p.join(s.path, 'config')).exists() && 
-          await Directory(p.join(s.path, 'refs')).exists()) {
-        hasBareRepo = true;
-        break;
-      }
-    }
-
-    // Ensure targetDir is a valid git repo (so getGraph works correctly for comparison)
-    // If the snapshot itself doesn't contain a .git folder (which it likely doesn't if it's just a file backup),
-    // we create a dummy one.
-    if (!hasBareRepo && !await Directory(p.join(targetDir.path, '.git')).exists()) {
-        await Process.run('git', ['init'], workingDirectory: targetDir.path);
-        await Process.run('git', ['config', 'user.email', 'backup@local'], workingDirectory: targetDir.path);
-        await Process.run('git', ['config', 'user.name', 'BackupBot'], workingDirectory: targetDir.path);
-        await Process.run('git', ['add', '.'], workingDirectory: targetDir.path);
-        await Process.run('git', ['commit', '-m', 'Snapshot state'], workingDirectory: targetDir.path);
-    }
+    }));
   }
 
-  // Restore master
-  await Process.run('git', ['checkout', '-f', 'master'],
-    workingDirectory: repoPath);
+  await Future.wait(futures);
 }
 
 Future<List<Map<String, dynamic>>> _getCommitsFromDir(
