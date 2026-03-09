@@ -6562,7 +6562,9 @@ class _GraphViewState extends State<_GraphView>
       builder: (context, constraints) {
         final parentSize = constraints.biggest;
         _ensureOverlayBounds(parentSize);
-        return ExcludeSemantics(
+        return Semantics(
+          container: true,
+          excludeSemantics: true,
           child: Stack(
             children: [
               MouseRegion(
@@ -6695,8 +6697,9 @@ class _GraphViewState extends State<_GraphView>
                         child: AnimatedBuilder(
                           animation: _graphFlashCtrl,
                           builder: (context, child) {
-                            return CustomPaint(
-                              painter: GraphPainter(
+                            return RepaintBoundary(
+                              child: CustomPaint(
+                                painter: GraphPainter(
                                 widget.data,
                                 _branchColors!,
                                 _hoverEdgeKey(),
@@ -6711,6 +6714,7 @@ class _GraphViewState extends State<_GraphView>
                                 flashValue: _graphFlashCtrl.value,
                               ),
                               size: _canvasSize!,
+                            ),
                             );
                           },
                         ),
