@@ -497,6 +497,48 @@ class _BackupPageState extends State<BackupPage> {
                       if (item.failure != null) {
                         final f = item.failure!;
                         final type = f['type'] ?? 'failure';
+                        
+                        if (type == 'skip') {
+                          return Card(
+                            margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            child: ExpansionTile(
+                              title: Text('用户跳过这次备份 (${f['timestamp']})',
+                                  style: const TextStyle(fontWeight: FontWeight.bold)),
+                              subtitle: Container(
+                                margin: const EdgeInsets.only(top: 8),
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(4),
+                                  border: Border.all(
+                                      color: Colors.grey.withOpacity(0.3)),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(Icons.info_outline,
+                                        size: 20, color: Colors.grey),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: SelectableText('ID: ${f['failureId']}',
+                                          style: const TextStyle(
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.bold,
+                                              fontFamily: 'monospace',
+                                              color: Colors.grey)),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              children: const [
+                                ListTile(
+                                  title: Text('此版本由用户手动跳过备份'),
+                                )
+                              ],
+                            ),
+                          );
+                        }
+
                         return Card(
                           margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                           color: Colors.red.shade50,
