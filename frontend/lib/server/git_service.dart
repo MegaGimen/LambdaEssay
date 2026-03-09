@@ -3873,7 +3873,7 @@ Future<void> pushToRemote(String repoPath, String username, String token,
       // pushToRemote handles checking remote existence and fast-forward check (via standard git push).
       print('Checking if parent repository needs to be pushed: $parentFolder');
       try {
-        await pushToRemote(parentFolder, username, token);
+        await pushToRemote(parentFolder, username, token, skipBackup: skipBackup);
         print('Successfully auto-pushed parent repository.');
       } catch (e) {
         // If push fails (e.g. non-fast-forward), we just log it and continue.

@@ -1949,6 +1949,47 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     final rootPath = packageRootCtrl.text.trim();
     if (rootPath.isEmpty) return;
 
+    bool skipBackup = false;
+    final proceed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setState) {
+          return AlertDialog(
+            title: const Text('推送根仓库'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('您确定要推送当前根仓库吗？'),
+                const SizedBox(height: 16),
+                CheckboxListTile(
+                  title: const Text('跳过备份'),
+                  subtitle: const Text('本次推送将不会创建服务器备份'),
+                  value: skipBackup,
+                  onChanged: (val) {
+                    setState(() {
+                      skipBackup = val == true;
+                    });
+                  },
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('取消'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('确定推送'),
+              ),
+            ],
+          );
+        }
+      ),
+    );
+
+    if (proceed != true) return;
+
     setState(() {
       loading = true;
       error = null;
@@ -1960,6 +2001,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         'repoPath': rootPath,
         'username': _username,
         'token': _token,
+        'skipBackup': skipBackup,
       });
 
       if (!mounted) return;
