@@ -6694,22 +6694,24 @@ class _GraphViewState extends State<_GraphView>
                         child: AnimatedBuilder(
                           animation: _graphFlashCtrl,
                           builder: (context, child) {
-                            return CustomPaint(
-                              painter: GraphPainter(
-                                widget.data,
-                                _branchColors!,
-                                _hoverEdgeKey(),
-                                widget.laneWidth,
-                                widget.rowHeight,
-                                working: widget.working,
-                                selectedNodes: _selectedNodes,
-                                identicalCommitIds: widget.identicalCommitIds,
-                                customRowMapping: widget.customRowMapping,
-                                totalRows: widget.totalRows,
-                                primaryBranchName: widget.primaryBranchName,
-                                flashValue: _graphFlashCtrl.value,
+                            return ExcludeSemantics(
+                              child: CustomPaint(
+                                painter: GraphPainter(
+                                  widget.data,
+                                  _branchColors!,
+                                  _hoverEdgeKey(),
+                                  widget.laneWidth,
+                                  widget.rowHeight,
+                                  working: widget.working,
+                                  selectedNodes: _selectedNodes,
+                                  identicalCommitIds: widget.identicalCommitIds,
+                                  customRowMapping: widget.customRowMapping,
+                                  totalRows: widget.totalRows,
+                                  primaryBranchName: widget.primaryBranchName,
+                                  flashValue: _graphFlashCtrl.value,
+                                ),
+                                size: _canvasSize!,
                               ),
-                              size: _canvasSize!,
                             );
                           },
                         ),
