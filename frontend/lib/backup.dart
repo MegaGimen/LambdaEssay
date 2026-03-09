@@ -381,8 +381,8 @@ class _BackupPageState extends State<BackupPage> {
     try {
       final resp = await postJson('/backup/retry_failure', {'failureId': failureId});
       if (resp['success'] == true) {
-        // Retry succeeded, reload list
-        await _loadBackups();
+        // Retry succeeded, but do not reload list
+        //await _loadBackups();
       } else {
         if (mounted) {
            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('重试失败')));
