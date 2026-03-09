@@ -54,7 +54,7 @@ class SubscriptionService {
     try {
        final url = 'https://llinker.com/register/api/subscription/query?userid=$userid';
        // print('Debug: [Check Subscription] Requesting: $url');
-       final response = await http.get(Uri.parse(url));
+       final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 5));
 
        if (response.statusCode == 200) {
          final resp = jsonDecode(response.body);
@@ -83,7 +83,7 @@ class SubscriptionService {
     final Map<int, Map<String, dynamic>> planTotals = {};
     try {
       final url = 'https://llinker.com/register/api/subscription/plans';
-      final response = await http.get(Uri.parse(url));
+      final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 5));
       
       if (response.statusCode == 200) {
         final resp = jsonDecode(response.body);
@@ -107,7 +107,7 @@ class SubscriptionService {
     // Forward to remote API
     try {
       final url = 'https://llinker.com/register/api/subscription/plans';
-      final response = await http.get(Uri.parse(url));
+      final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 5));
       return _cors(Response(response.statusCode, body: response.body, headers: {'Content-Type': 'application/json'}));
     } catch (e) {
       return _cors(Response.internalServerError(body: jsonEncode({'error': e.toString()})));
@@ -119,7 +119,7 @@ class SubscriptionService {
     try {
       final body = await req.readAsString();
       final url = 'https://llinker.com/register/api/subscription/purchase';
-      final response = await http.post(Uri.parse(url), body: body, headers: {'Content-Type': 'application/json'});
+      final response = await http.post(Uri.parse(url), body: body, headers: {'Content-Type': 'application/json'}).timeout(const Duration(seconds: 10));
       return _cors(Response(response.statusCode, body: response.body, headers: {'Content-Type': 'application/json'}));
     } catch (e) {
       return _cors(Response.internalServerError(body: jsonEncode({'error': e.toString()})));
@@ -133,7 +133,7 @@ class SubscriptionService {
       if (userid == null) return _cors(Response.badRequest(body: 'userid required'));
       
       final url = 'https://llinker.com/register/api/subscription/query?userid=$userid';
-      final response = await http.get(Uri.parse(url));
+      final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 5));
       return _cors(Response(response.statusCode, body: response.body, headers: {'Content-Type': 'application/json'}));
     } catch (e) {
       return _cors(Response.internalServerError(body: jsonEncode({'error': e.toString()})));
