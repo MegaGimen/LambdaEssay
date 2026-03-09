@@ -418,8 +418,8 @@ class _BackupPageState extends State<BackupPage> {
       child: MediaQuery(
         data: MediaQuery.of(context).copyWith(textScaleFactor: _uiScale),
         child: Stack(
-          children: [
-            Scaffold(
+            children: [
+              Scaffold(
           appBar: AppBar(
             backgroundColor: const Color(0xFF000A3F),
             foregroundColor: Colors.white,

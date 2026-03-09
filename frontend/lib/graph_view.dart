@@ -737,7 +737,8 @@ class _SimpleGraphViewState extends State<SimpleGraphView> {
     _canvasSize ??= _computeCanvasSize();
     _branchColors ??= _assignBranchColors(widget.data.branches);
 
-    final content = Listener(
+    final content = ExcludeSemantics(
+      child: Listener(
       onPointerSignal: (event) {
         if (event is PointerScrollEvent) {
           final keys = HardwareKeyboard.instance.logicalKeysPressed;
@@ -769,31 +770,30 @@ class _SimpleGraphViewState extends State<SimpleGraphView> {
           child: SizedBox(
             width: _canvasSize!.width,
             height: _canvasSize!.height,
-            child: ExcludeSemantics(
-              child: CustomPaint(
-                painter: GraphPainter(
-                  widget.data,
-                  _branchColors!,
-                  null,
-                  _laneWidth,
-                  _rowHeight,
-                  working: null,
-                  selectedNodes: _selectedNodes,
-                  customRowMapping: widget.customRowMapping,
-                  customNodeColors: widget.customNodeColors,
-                  ghostNodes: widget.ghostNodes,
-                  showCurrentHead: widget.showCurrentHead,
-                  preCalculatedLaneOf: _cachedLaneOf,
-                  preCalculatedRowOf: _cachedRowOf,
-                  primaryBranchName: widget.primaryBranchName,
-                  totalRows: widget.totalRows,
-                ),
-                size: _canvasSize!,
+            child: CustomPaint(
+              painter: GraphPainter(
+                widget.data,
+                _branchColors!,
+                null,
+                _laneWidth,
+                _rowHeight,
+                working: null,
+                selectedNodes: _selectedNodes,
+                customRowMapping: widget.customRowMapping,
+                customNodeColors: widget.customNodeColors,
+                ghostNodes: widget.ghostNodes,
+                showCurrentHead: widget.showCurrentHead,
+                preCalculatedLaneOf: _cachedLaneOf,
+                preCalculatedRowOf: _cachedRowOf,
+                primaryBranchName: widget.primaryBranchName,
+                totalRows: widget.totalRows,
               ),
+              size: _canvasSize!,
             ),
           ),
         ),
       ),
+    ),
     );
 
     if (widget.showLegend && _branchColors != null && _branchColors!.isNotEmpty) {
