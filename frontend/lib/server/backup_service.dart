@@ -19,11 +19,7 @@ Future<String> sha1hash(String filePath) async {
     }
 
     final stream = file.openRead();
-    final hash = sha1;
-    final bytes = await stream.fold<List<int>>(
-        <int>[], (previous, element) => previous..addAll(element));
-
-    final digest = hash.convert(bytes);
+    final digest = await sha1.bind(stream).first;
     return digest.toString();
   } on FileSystemException catch (e) {
     if (e.osError?.errorCode == 13) {
@@ -44,7 +40,12 @@ String _baseDir() {
   return p.join(Directory.systemTemp.path, 'gitdocx_history_cache');
 }
 
-final String _backupBaseUrl = 'https://llinker.com/gitbackup/';
+// 使用更加健壮的 Uri 构造方式，避免双斜杠和路径拼接问题
+final Uri _backupBaseUri = Uri.parse('https://llinker.com/gitbackup');
+
+// 共享 HttpClient 以复用连接，减少握手开销
+final http.Client _sharedClient = http.Client();
+
 final String _tempDirName = p.join(_baseDir(), 'temp_backups');
 
 // New checkout base directory
@@ -54,6 +55,30 @@ final String _checkoutBaseDir =
 String _getBackupDir(String repoName) {
   final scriptDir = p.dirname(Platform.script.toFilePath());
   return p.join(p.dirname(scriptDir), _tempDirName, repoName);
+}
+
+Future<List<Map<String, dynamic>>> listBackupFailures(String username, String repoName) async {
+  final url = _backupBaseUri.replace(
+    path: '${_backupBaseUri.path}/api/failures/$username',
+    queryParameters: {'repo': repoName},
+  );
+  
+  print("${DateTime.now()}: Fetching failures from $url");
+  final startTime = DateTime.now();
+  try {
+    final response = await _sharedClient.get(url).timeout(Duration(seconds: 15));
+    final duration = DateTime.now().difference(startTime).inMilliseconds;
+    print("${DateTime.now()}: Fetching failures response status: ${response.statusCode} (took ${duration}ms)");
+    
+    if (response.statusCode == 200) {
+      final List<dynamic> list = jsonDecode(utf8.decode(response.bodyBytes));
+      return list.cast<Map<String, dynamic>>();
+    }
+  } catch (e) {
+    final duration = DateTime.now().difference(startTime).inMilliseconds;
+    print('${DateTime.now()}: Failed to list backup failures after ${duration}ms: $e');
+  }
+  return [];
 }
 
 Future<Map<String, dynamic>> listBackupCommits(
@@ -69,27 +94,20 @@ Future<Map<String, dynamic>> listBackupCommits(
      print("${DateTime.now()}: Debug: resolving repoName: $repoName");
      
      // Method: Try to get remote URL directly from git config
-     // This is the most reliable way as it reflects the actual remote repo name
      bool foundViaGit = false;
-     if (await Directory(repoName).exists() || await File(repoName).exists()) { // File check for bare repo/submodule file
+     if (await Directory(repoName).exists() || await File(repoName).exists()) {
         try {
            final res = await Process.run('git', ['remote', 'get-url', 'origin'], 
               workingDirectory: repoName);
-           print("${DateTime.now()}: Debug: git remote get-url origin result: exitCode=${res.exitCode}, stdout=${res.stdout}");
-           
            if (res.exitCode == 0) {
               final url = (res.stdout as String).trim();
               if (url.isNotEmpty) {
-                 // Extract repo name from URL
-                 // e.g., http://host:port/47f25aed...-document.git -> 47f25aed...-document
                  final uri = Uri.parse(url);
                  String lastSegment = uri.pathSegments.last;
-                 if (lastSegment.endsWith('.git')) {
-                    targetRepoName = lastSegment.substring(0, lastSegment.length - 4);
-                 } else {
-                    targetRepoName = lastSegment;
-                 }
-                 print("${DateTime.now()}: Debug: Found targetRepoName via git remote: $targetRepoName");
+                 targetRepoName = lastSegment.endsWith('.git') 
+                    ? lastSegment.substring(0, lastSegment.length - 4) 
+                    : lastSegment;
+                 print("${DateTime.now()}: Debug: Found targetRepoName via git: $targetRepoName");
                  foundViaGit = true;
               }
            }
@@ -99,12 +117,10 @@ Future<Map<String, dynamic>> listBackupCommits(
      }
 
      if (!foundViaGit) {
-        // Fallback: MD5 hash of normalized path (legacy behavior)
         final norm = p.normalize(repoName).toLowerCase();
         targetRepoName = md5.convert(utf8.encode(norm)).toString();
-        print("${DateTime.now()}: Debug: Git remote not found, fallback MD5: $targetRepoName");
+        print("${DateTime.now()}: Debug: Fallback MD5: $targetRepoName");
      }
-     print("${DateTime.now()}: Converted path '$repoName' to key '$targetRepoName'");
      print("==========================================================");
   }
 
@@ -115,31 +131,44 @@ Future<Map<String, dynamic>> listBackupCommits(
     LocalSha1 = await sha1hash('$dirPath.zip');
   }
 
-  final zipUrl =
-      '$_backupBaseUrl/backups/$targetRepoName/download?token=$AuthToken&LocalSha1=$LocalSha1';
+  // 使用 Uri 构造，确保不会出现 //
+  final zipUrl = _backupBaseUri.replace(
+    path: '${_backupBaseUri.path}/backups/$targetRepoName/download',
+    queryParameters: {
+      'token': AuthToken,
+      'LocalSha1': LocalSha1,
+    },
+  );
+  
   print("${DateTime.now()}: Debug,url=$zipUrl");
   
   bool cacheHit = false;
   String? chainViewUrl;
 
   try {
-    final request = http.Request('GET', Uri.parse(zipUrl));
-    final response = await http.Client().send(request);
+    print("${DateTime.now()}: Sending request to server (using shared client)...");
+    final startTime = DateTime.now();
+    
+    final request = http.Request('GET', zipUrl);
+    // 使用超时控制整个发送过程
+    final response = await _sharedClient.send(request).timeout(Duration(seconds: 30));
+    final headerTime = DateTime.now().difference(startTime).inMilliseconds;
+    print("${DateTime.now()}: Received response headers (took ${headerTime}ms)");
 
     if (response.statusCode != 200) {
-       final body = await response.stream.bytesToString();
-       print("${DateTime.now()}: $body");
+       final body = await response.stream.bytesToString().timeout(Duration(seconds: 5));
+       print("${DateTime.now()}: Error response: $body");
        throw Exception('Failed to download backup: ${response.statusCode}');
     }
 
     chainViewUrl = response.headers['x-chain-view-url'];
-
-    // Check content type to see if it is JSON (cache hit message) or Zip
     final ct = response.headers['content-type'] ?? '';
+    print("${DateTime.now()}: Content-Type: $ct");
+
     if (ct.contains('application/json')) {
-       final body = await response.stream.bytesToString();
+       final body = await response.stream.bytesToString().timeout(Duration(seconds: 10));
        final jsonData = jsonDecode(body);
-       print("${DateTime.now()}: Debug,jsonData=$jsonData,everything cool bro!");
+       print("${DateTime.now()}: Debug,jsonData=$jsonData");
        if (jsonData["message"] == "success") {
          print("${DateTime.now()}: File up to date (Cache Hit)");
          cacheHit = true;
@@ -148,78 +177,50 @@ Future<Map<String, dynamic>> listBackupCommits(
          }
        }
     } else {
-       print("${DateTime.now()}: New file detected (Content-Type: $ct)! Starting download...");
+       print("${DateTime.now()}: New file detected! Starting download...");
        cacheHit = false;
-       // New file
        if (await dir.exists()) await dir.delete(recursive: true);
-       if (await File('$dirPath.zip').exists())
-         await File('$dirPath.zip').delete();
-       print("${DateTime.now()}: Deleted old files");
+       if (await File('$dirPath.zip').exists()) await File('$dirPath.zip').delete();
 
        if (!await dir.exists()) {
-         print('${DateTime.now()}: Downloading backup for $repoName...');
          final zipFile = File('$dirPath.zip');
          await zipFile.parent.create(recursive: true);
-         
          final contentLength = response.contentLength;
          
-         // Notify start immediately
-         if (onProgress != null) {
-            onProgress(0.0, 0, contentLength ?? 0);
-         }
+         if (onProgress != null) onProgress(0.0, 0, contentLength ?? 0);
 
          int received = 0;
          final sink = zipFile.openWrite();
-         
-         await response.stream.listen(
-           (List<int> chunk) {
-             received += chunk.length;
-             sink.add(chunk);
-             if (contentLength != null) {
-               final percent = (received / contentLength * 100);
+         try {
+           await response.stream.timeout(Duration(minutes: 5)).listen(
+             (List<int> chunk) {
+               received += chunk.length;
+               sink.add(chunk);
                if (onProgress != null) {
-                 onProgress(percent, received, contentLength);
+                 final percent = (contentLength != null && contentLength > 0) ? (received / contentLength * 100) : 0.0;
+                 onProgress(percent, received, contentLength ?? 0);
                }
-             } else {
-               if (onProgress != null) {
-                 onProgress(0.0, received, 0);
-               }
-             }
-           },
-           onDone: () {
-             print('${DateTime.now()}: \nDownload complete.');
-           },
-           onError: (e) {
-             print('${DateTime.now()}: \nDownload error: $e');
-             throw e;
-           },
-           cancelOnError: true,
-         ).asFuture();
-         
-         await sink.close();
+             },
+             onDone: () => print('${DateTime.now()}: Download complete. ($received bytes)'),
+             onError: (e) => throw e,
+             cancelOnError: true,
+           ).asFuture();
+         } finally {
+           await sink.close();
+         }
 
-         // Unzip using PowerShell
          print('${DateTime.now()}: Unzipping $repoName...');
          final res = await Process.run('powershell', [
-           '-Command',
-           'Expand-Archive -Path "${zipFile.path}" -DestinationPath "$dirPath" -Force'
+           '-Command', 'Expand-Archive -Path "${zipFile.path}" -DestinationPath "$dirPath" -Force'
          ]);
-
-         if (res.exitCode != 0) {
-           throw Exception('Failed to unzip: ${res.stderr}');
-         }
+         if (res.exitCode != 0) throw Exception('Unzip failed: ${res.stderr}');
        }
     }
   } catch (e) {
     print('${DateTime.now()}: Error during backup sync: $e');
-    // If we have a local cache, we might want to proceed? 
-    // But for now let's just rethrow or ensure we can proceed if file exists.
-    if (!await File('$dirPath.zip').exists() && !await dir.exists()) {
-       throw e;
-    }
+    if (!await File('$dirPath.zip').exists() && !await dir.exists()) throw e;
   }
 
-  // Pre-cache all snapshots logic
   print('${DateTime.now()}: Pre-caching snapshots for $targetRepoName...');
   final effectiveRepoPath = await _findEffectiveRepoPath(targetRepoName);
   await _precacheSnapshots(targetRepoName, effectiveRepoPath);
@@ -231,22 +232,6 @@ Future<Map<String, dynamic>> listBackupCommits(
     'cacheHit': cacheHit,
     'chainViewUrl': chainViewUrl
   };
-}
-
-Future<List<Map<String, dynamic>>> listBackupFailures(String username, String repoName) async {
-  final url = 'https://llinker.com/gitbackup/api/failures/$username?repo=$repoName';
-  print("${DateTime.now()}: Fetching failures from $url");
-  try {
-    final response = await http.get(Uri.parse(url));
-    print("${DateTime.now()}: Fetching failures response status: ${response.statusCode}");
-    if (response.statusCode == 200) {
-      final List<dynamic> list = jsonDecode(response.body);
-      return list.cast<Map<String, dynamic>>();
-    }
-  } catch (e) {
-    print('${DateTime.now()}: Failed to list backup failures: $e');
-  }
-  return [];
 }
 
 Future<bool> retryBackupFailure(String failureId) async {
