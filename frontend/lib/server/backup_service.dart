@@ -59,13 +59,14 @@ String _getBackupDir(String repoName) {
 Future<Map<String, dynamic>> listBackupCommits(
     String repoName, String AuthToken,
     {Function(double percent, int received, int total)? onProgress}) async {
+  print("${DateTime.now()}: listBackupCommits start for $repoName");
   
   // Fix: If repoName is a full path, convert to hash key to match server logic
   String targetRepoName = repoName;
 
   if (p.isAbsolute(repoName) || repoName.contains(p.separator)) {
      print("==========================================================");
-     print("Debug: resolving repoName: $repoName");
+     print("${DateTime.now()}: Debug: resolving repoName: $repoName");
      
      // Method: Try to get remote URL directly from git config
      // This is the most reliable way as it reflects the actual remote repo name
@@ -74,7 +75,7 @@ Future<Map<String, dynamic>> listBackupCommits(
         try {
            final res = await Process.run('git', ['remote', 'get-url', 'origin'], 
               workingDirectory: repoName);
-           print("Debug: git remote get-url origin result: exitCode=${res.exitCode}, stdout=${res.stdout}");
+           print("${DateTime.now()}: Debug: git remote get-url origin result: exitCode=${res.exitCode}, stdout=${res.stdout}");
            
            if (res.exitCode == 0) {
               final url = (res.stdout as String).trim();
@@ -88,12 +89,12 @@ Future<Map<String, dynamic>> listBackupCommits(
                  } else {
                     targetRepoName = lastSegment;
                  }
-                 print("Debug: Found targetRepoName via git remote: $targetRepoName");
+                 print("${DateTime.now()}: Debug: Found targetRepoName via git remote: $targetRepoName");
                  foundViaGit = true;
               }
            }
         } catch (e) {
-           print("Debug: Failed to get git remote url: $e");
+           print("${DateTime.now()}: Debug: Failed to get git remote url: $e");
         }
      }
 
@@ -101,9 +102,9 @@ Future<Map<String, dynamic>> listBackupCommits(
         // Fallback: MD5 hash of normalized path (legacy behavior)
         final norm = p.normalize(repoName).toLowerCase();
         targetRepoName = md5.convert(utf8.encode(norm)).toString();
-        print("Debug: Git remote not found, fallback MD5: $targetRepoName");
+        print("${DateTime.now()}: Debug: Git remote not found, fallback MD5: $targetRepoName");
      }
-     print("Converted path '$repoName' to key '$targetRepoName'");
+     print("${DateTime.now()}: Converted path '$repoName' to key '$targetRepoName'");
      print("==========================================================");
   }
 
@@ -116,7 +117,7 @@ Future<Map<String, dynamic>> listBackupCommits(
 
   final zipUrl =
       '$_backupBaseUrl/backups/$targetRepoName/download?token=$AuthToken&LocalSha1=$LocalSha1';
-  print("Debug,url=$zipUrl");
+  print("${DateTime.now()}: Debug,url=$zipUrl");
   
   bool cacheHit = false;
   String? chainViewUrl;
@@ -127,7 +128,7 @@ Future<Map<String, dynamic>> listBackupCommits(
 
     if (response.statusCode != 200) {
        final body = await response.stream.bytesToString();
-       print(body);
+       print("${DateTime.now()}: $body");
        throw Exception('Failed to download backup: ${response.statusCode}');
     }
 
@@ -138,25 +139,25 @@ Future<Map<String, dynamic>> listBackupCommits(
     if (ct.contains('application/json')) {
        final body = await response.stream.bytesToString();
        final jsonData = jsonDecode(body);
-       print("Debug,jsonData=$jsonData,everything cool bro!");
+       print("${DateTime.now()}: Debug,jsonData=$jsonData,everything cool bro!");
        if (jsonData["message"] == "success") {
-         print("File up to date (Cache Hit)");
+         print("${DateTime.now()}: File up to date (Cache Hit)");
          cacheHit = true;
          if (jsonData.containsKey('chain_url')) {
            chainViewUrl = jsonData['chain_url'];
          }
        }
     } else {
-       print("New file detected (Content-Type: $ct)! Starting download...");
+       print("${DateTime.now()}: New file detected (Content-Type: $ct)! Starting download...");
        cacheHit = false;
        // New file
        if (await dir.exists()) await dir.delete(recursive: true);
        if (await File('$dirPath.zip').exists())
          await File('$dirPath.zip').delete();
-       print("Deleted old files");
+       print("${DateTime.now()}: Deleted old files");
 
        if (!await dir.exists()) {
-         print('Downloading backup for $repoName...');
+         print('${DateTime.now()}: Downloading backup for $repoName...');
          final zipFile = File('$dirPath.zip');
          await zipFile.parent.create(recursive: true);
          
@@ -186,10 +187,10 @@ Future<Map<String, dynamic>> listBackupCommits(
              }
            },
            onDone: () {
-             print('\nDownload complete.');
+             print('${DateTime.now()}: \nDownload complete.');
            },
            onError: (e) {
-             print('\nDownload error: $e');
+             print('${DateTime.now()}: \nDownload error: $e');
              throw e;
            },
            cancelOnError: true,
@@ -198,7 +199,7 @@ Future<Map<String, dynamic>> listBackupCommits(
          await sink.close();
 
          // Unzip using PowerShell
-         print('Unzipping $repoName...');
+         print('${DateTime.now()}: Unzipping $repoName...');
          final res = await Process.run('powershell', [
            '-Command',
            'Expand-Archive -Path "${zipFile.path}" -DestinationPath "$dirPath" -Force'
@@ -210,7 +211,7 @@ Future<Map<String, dynamic>> listBackupCommits(
        }
     }
   } catch (e) {
-    print('Error during backup sync: $e');
+    print('${DateTime.now()}: Error during backup sync: $e');
     // If we have a local cache, we might want to proceed? 
     // But for now let's just rethrow or ensure we can proceed if file exists.
     if (!await File('$dirPath.zip').exists() && !await dir.exists()) {
@@ -219,11 +220,12 @@ Future<Map<String, dynamic>> listBackupCommits(
   }
 
   // Pre-cache all snapshots logic
-  print('Pre-caching snapshots for $targetRepoName...');
+  print('${DateTime.now()}: Pre-caching snapshots for $targetRepoName...');
   final effectiveRepoPath = await _findEffectiveRepoPath(targetRepoName);
   await _precacheSnapshots(targetRepoName, effectiveRepoPath);
 
   final commits = await _getCommitsFromDir(effectiveRepoPath, targetRepoName);
+  print("${DateTime.now()}: listBackupCommits end for $repoName");
   return {
     'commits': commits,
     'cacheHit': cacheHit,
@@ -233,14 +235,16 @@ Future<Map<String, dynamic>> listBackupCommits(
 
 Future<List<Map<String, dynamic>>> listBackupFailures(String username, String repoName) async {
   final url = 'https://llinker.com/gitbackup/api/failures/$username?repo=$repoName';
+  print("${DateTime.now()}: Fetching failures from $url");
   try {
-    final response = await http.get(Uri.parse(url));
+    final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 10));
+    print("${DateTime.now()}: Fetching failures response status: ${response.statusCode}");
     if (response.statusCode == 200) {
       final List<dynamic> list = jsonDecode(response.body);
       return list.cast<Map<String, dynamic>>();
     }
   } catch (e) {
-    print('Failed to list backup failures: $e');
+    print('${DateTime.now()}: Failed to list backup failures: $e');
   }
   return [];
 }
@@ -283,6 +287,7 @@ class Semaphore {
 }
 
 Future<void> _precacheSnapshots(String repoName, String repoPath) async {
+  print("${DateTime.now()}: _precacheSnapshots start for $repoName");
   final checkoutRoot = Directory(p.join(_checkoutBaseDir, repoName));
   if (!await checkoutRoot.exists()) {
     await checkoutRoot.create(recursive: true);
@@ -293,7 +298,7 @@ Future<void> _precacheSnapshots(String repoName, String repoPath) async {
     await Process.run('git', ['config', 'core.longpaths', 'true'],
         workingDirectory: repoPath);
   } catch (e) {
-    print('Failed to enable longpaths: $e');
+    print('${DateTime.now()}: Failed to enable longpaths: $e');
   }
 
   // Get all commit hashes
@@ -309,7 +314,7 @@ Future<void> _precacheSnapshots(String repoName, String repoPath) async {
       .where((e) => e.isNotEmpty)
       .toList();
 
-  print('Found ${commits.length} commits in backup repo.');
+  print('${DateTime.now()}: Found ${commits.length} commits in backup repo.');
 
   final semaphore = Semaphore(5); // Limit concurrency to 5
   final futures = <Future>[];
@@ -333,12 +338,12 @@ Future<void> _precacheSnapshots(String repoName, String repoPath) async {
               }
             }
             if (hasInner) {
-              print("Repairing cache: Removing dummy .git folder for $commitId");
+              print("${DateTime.now()}: Repairing cache: Removing dummy .git folder for $commitId");
               try {
                 await Directory(p.join(targetDir.path, '.git'))
                     .delete(recursive: true);
               } catch (e) {
-                print("Failed to delete dummy .git: $e");
+                print("${DateTime.now()}: Failed to delete dummy .git: $e");
               }
             }
           }
@@ -346,7 +351,7 @@ Future<void> _precacheSnapshots(String repoName, String repoPath) async {
           return;
         }
 
-        print('Caching snapshot for $commitId...');
+        print('${DateTime.now()}: Caching snapshot for $commitId...');
         await targetDir.create(recursive: true);
 
         // Use git archive to extract content without checking out
@@ -360,7 +365,7 @@ Future<void> _precacheSnapshots(String repoName, String repoPath) async {
         );
 
         if (archiveRes.exitCode != 0) {
-          print('Failed to archive $commitId: ${archiveRes.stderr}');
+          print('${DateTime.now()}: Failed to archive $commitId: ${archiveRes.stderr}');
           // Clean up partial targetDir?
           // await targetDir.delete(recursive: true);
           return;
@@ -382,7 +387,7 @@ Future<void> _precacheSnapshots(String repoName, String repoPath) async {
                 }
             }
         } catch (e) {
-            print('Error extracting tar for $commitId: $e');
+            print('${DateTime.now()}: Error extracting tar for $commitId: $e');
         } finally {
             if (await tempTar.exists()) {
                 await tempTar.delete();
@@ -413,7 +418,7 @@ Future<void> _precacheSnapshots(String repoName, String repoPath) async {
             await Process.run('git', ['commit', '-m', 'Snapshot state'], workingDirectory: targetDir.path);
         }
       } catch (e, s) {
-        print('Error processing snapshot $commitId: $e\n$s');
+        print('${DateTime.now()}: Error processing snapshot $commitId: $e\n$s');
       } finally {
         semaphore.release();
       }
@@ -421,11 +426,12 @@ Future<void> _precacheSnapshots(String repoName, String repoPath) async {
   }
 
   await Future.wait(futures);
+  print("${DateTime.now()}: _precacheSnapshots end for $repoName");
 }
 
 Future<List<Map<String, dynamic>>> _getCommitsFromDir(
     String repoPath, String repoName) async {
-  print("Execute _getCommitsFromDir with param repoPath=$repoPath");
+  print("${DateTime.now()}: Execute _getCommitsFromDir with param repoPath=$repoPath");
   
   // Previously we checked for cached snapshots here, but now we rely on the backup repo's git history directly.
   
@@ -444,7 +450,7 @@ Future<List<Map<String, dynamic>>> _getCommitsFromDir(
   if (result.exitCode != 0) {
     // If git log failed and we didn't find snapshots above, it's a real error
     var stackTrace = StackTrace.current;
-    print('调用栈信息：');
+    print('${DateTime.now()}: 调用栈信息：');
     print(stackTrace);
     throw Exception('Git log failed and no snapshots found: ${result.stderr}');
   }
@@ -473,7 +479,7 @@ Future<List<Map<String, dynamic>>> _getCommitsFromDir(
         final dt = DateTime.fromMillisecondsSinceEpoch((unixTimestamp * 1000).toInt());
         date = dt.toLocal().toString();
       } catch (e) {
-        print("Error parsing snapshot time: $e");
+        print("${DateTime.now()}: Error parsing snapshot time: $e");
       }
     }
 
@@ -485,7 +491,7 @@ Future<List<Map<String, dynamic>>> _getCommitsFromDir(
       'date': date,
       'subject': subject,
     });
-    print("Found backup commit: $id, date: $date");
+    print("${DateTime.now()}: Found backup commit: $id, date: $date");
   }
 
   // Sort commits by date descending (newest first)
@@ -499,6 +505,7 @@ Future<List<Map<String, dynamic>>> _getCommitsFromDir(
     }
   });
 
+  print("${DateTime.now()}: _getCommitsFromDir end for $repoName");
   return commits;
 }
 

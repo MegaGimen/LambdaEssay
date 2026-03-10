@@ -227,7 +227,7 @@ class _BackupPageState extends State<BackupPage> {
          return;
       }
 
-      print('[BackupPage] Fetch commits API: ${stepSw.elapsedMilliseconds}ms');
+      print('[BackupPage] Fetch commits API finished: ${stepSw.elapsedMilliseconds}ms');
       stepSw.reset();
 
       final list = (j['commits'] as List?) ?? const [];
@@ -236,17 +236,19 @@ class _BackupPageState extends State<BackupPage> {
       
       // Fetch failures
       List<Map<String, dynamic>> failures = [];
+      print('[BackupPage] Checking failures for user: "${widget.username}"');
       if (widget.username.isNotEmpty) {
         try {
+          print('[BackupPage] Calling fetch failures API...');
           final fResp = await postJson("/backup/failures", {'username': widget.username, 'repoName': repo});
-          print('[BackupPage] Fetch failures API: ${stepSw.elapsedMilliseconds}ms');
+          print('[BackupPage] Fetch failures API finished: ${stepSw.elapsedMilliseconds}ms');
           stepSw.reset();
 
           if (fResp is List) {
              failures = fResp.cast<Map<String, dynamic>>();
           }
         } catch (e) {
-          debugPrint('Failed to fetch failures: $e');
+          print('[BackupPage] Failed to fetch failures: $e');
         }
       } else {
           print('[BackupPage] Skip fetch failures (no username): ${stepSw.elapsedMilliseconds}ms');
@@ -259,18 +261,20 @@ class _BackupPageState extends State<BackupPage> {
         );
       }
 
+      print('[BackupPage] Start parsing commits...');
       final commits = list
           .map((e) => CommitNode.fromJson(e as Map<String, dynamic>))
           .toList();
-      print('[BackupPage] Parse commits: ${stepSw.elapsedMilliseconds}ms');
+      print('[BackupPage] Parse commits finished: ${stepSw.elapsedMilliseconds}ms');
       stepSw.reset();
           
       final items = <BackupItem>[];
       for (final c in commits) items.add(BackupItem(commit: c));
       for (final f in failures) items.add(BackupItem(failure: f));
       
+      print('[BackupPage] Sorting items...');
       items.sort((a, b) => b.date.compareTo(a.date));
-      print('[BackupPage] Merge and Sort items: ${stepSw.elapsedMilliseconds}ms');
+      print('[BackupPage] Merge and Sort items finished: ${stepSw.elapsedMilliseconds}ms');
       stepSw.reset();
       
       if (myLoadId != _loadId) return;
