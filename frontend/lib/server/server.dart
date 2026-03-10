@@ -27,6 +27,10 @@ List<WebSocketChannel> _activePluginSockets = [];
 final _pendingRequests = <String, Completer<dynamic>>{};
 final _uuid = Uuid();
 
+void _log(String message) {
+  print('[${DateTime.now()}] $message');
+}
+
 Response _cors(Response r) {
   return r.change(headers: {
     ...r.headers,
@@ -535,7 +539,7 @@ Future<Response> handleGraph(Request req) async {
         body: jsonEncode({'error': 'not a git repo'}),
         headers: {'Content-Type': 'application/json; charset=utf-8'}));
   }
-  print('Debug: /graph - Fetching graph for $normalized (limit: $limit)');
+  _log('Debug: /graph - Fetching graph for $normalized (limit: $limit)');
   try {
     final resp = await getGraph(normalized, limit: limit);
     return _cors(Response.ok(jsonEncode(resp.toJson()),

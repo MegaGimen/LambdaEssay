@@ -13,6 +13,11 @@ import 'package:crypto/crypto.dart';
 
 bool _debugMode = false;
 void setDebugMode(bool value) => _debugMode = value;
+
+void _log(String message) {
+  print('[${DateTime.now()}] $message');
+}
+
 final scriptDir = p.dirname(Platform.script.toFilePath());
 Set<String> workingIds = {};
 String get _psScriptPath {
@@ -447,7 +452,7 @@ Future<List<String>> _runGit(List<String> args, String repoPath,
     );
     if (res.exitCode != 0) {
       if (printError) {
-        print("git error (exitCode=${res.exitCode}) args=$args");
+        _log("git error (exitCode=${res.exitCode}) args=$args");
         print(res.stderr);
         print(res.stdout);
       }
@@ -638,7 +643,7 @@ Future<GraphResponse> _getGraphUnlocked(String repoPath,
   //   return cached;
   // }
   // Disable cache for preview accuracy
-  print('Graph fetching for $key...');
+  _log('Graph fetching for $key...');
 
   final branches = <Branch>[];
   if (includeLocal) {
@@ -3785,7 +3790,7 @@ Future<void> pushToRemote(String repoPath, String username, String token,
     args.add(branchToPush);
 
     if (skipBackup) {
-      print('Skip backup requested. Registering skip...');
+      _log('Skip backup requested. Registering skip...');
       try {
         // 1. Get Local Commit (After)
         final afterRes = await _runGit(['rev-parse', branchToPush], repoPath);
@@ -3810,7 +3815,7 @@ Future<void> pushToRemote(String repoPath, String username, String token,
           // Assume new branch or remote empty, keep before as all zeros
         }
 
-        print('Registering skip backup: before=$before, after=$after');
+        _log('Registering skip backup: before=$before, after=$after');
         final resp = await http.post(
           Uri.parse('https://llinker.com/gitbackup/register_skip'),
           headers: {'Content-Type': 'application/json'},
@@ -3818,7 +3823,7 @@ Future<void> pushToRemote(String repoPath, String username, String token,
         );
 
         if (resp.statusCode == 200) {
-          print('Skip backup registered successfully.');
+          _log('Skip backup registered successfully.');
         } else {
           throw Exception('Failed to register skip backup: ${resp.statusCode} ${resp.body}');
         }
@@ -3827,11 +3832,11 @@ Future<void> pushToRemote(String repoPath, String username, String token,
       }
     }
 
-    print('Executing git push with args: $args');
+    _log('Executing git push with args: $args');
     List<String> output = [];
     try {
       output = await _runGit(args, repoPath);
-      print('Git push output: ${output.join('\n')}');
+      _log('Git push output: ${output.join('\n')}');
     } catch (e) {
       if (!force) {
         await _checkIfBehind(repoPath, remoteUrl);
@@ -3846,15 +3851,14 @@ Future<void> pushToRemote(String repoPath, String username, String token,
     }
 
     // Automatically setup webhook
-    print('Configuring webhook for: $effectiveRemoteRepoName');
+    _log('Configuring webhook for: $effectiveRemoteRepoName');
     await _ensureWebhook(effectiveRemoteRepoName, owner, token);
 
     // Update parent submodule URL if applicable
     if (parentFolder != null && !p.equals(parentFolder, repoPath)) {
       final relativePath = p.relative(repoPath, from: parentFolder);
       final submodulePath = relativePath.replaceAll(r'\', '/');
-      print(
-          'Updating parent submodule URL for $submodulePath in $parentFolder');
+      _log('Updating parent submodule URL for $submodulePath in $parentFolder');
       try {
         await _runGit(
             ['submodule', 'set-url', submodulePath, remoteUrl], parentFolder);
@@ -3871,10 +3875,10 @@ Future<void> pushToRemote(String repoPath, String username, String token,
       // Auto-push parent repository if needed
       // Logic: If the parent repo hasn't been pushed or can be fast-forwarded, push it.
       // pushToRemote handles checking remote existence and fast-forward check (via standard git push).
-      print('Checking if parent repository needs to be pushed: $parentFolder');
+      _log('Checking if parent repository needs to be pushed: $parentFolder');
       try {
         await pushToRemote(parentFolder, username, token, skipBackup: skipBackup);
-        print('Successfully auto-pushed parent repository.');
+        _log('Successfully auto-pushed parent repository.');
       } catch (e) {
         // If push fails (e.g. non-fast-forward), we just log it and continue.
         // This prevents blocking the child push if the parent push isn't trivial.
@@ -4916,7 +4920,7 @@ Future<void> _ensureWebhook(String repoName, String owner, String token) async {
       for (final hook in hooks) {
         final config = hook['config'];
         if (config != null && config['url'] == targetUrl) {
-          print('Webhook already exists for $repoName');
+          _log('Webhook already exists for $repoName');
           return;
         }
       }
