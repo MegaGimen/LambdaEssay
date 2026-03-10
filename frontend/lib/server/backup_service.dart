@@ -438,6 +438,7 @@ Future<List<Map<String, dynamic>>> _getCommitsFromDir(
       'master', // Assuming master branch of parent repo
     ],
     workingDirectory: repoPath,
+    stdoutEncoding: utf8, // Explicitly use utf8 to prevent encoding issues on Windows
   );
 
   if (result.exitCode != 0) {
@@ -450,7 +451,8 @@ Future<List<Map<String, dynamic>>> _getCommitsFromDir(
 
   final lines = (result.stdout as String).split('\n');
   final commits = <Map<String, dynamic>>[];
-  final timeRegex = RegExp(r'snapshot time[:：]\s*([\d.]+)');
+  // Robust regex: skip anything until the first digit of the timestamp
+  final timeRegex = RegExp(r'snapshot time.*?(\d[\d.]+)');
 
   for (final line in lines) {
     if (line.trim().isEmpty) continue;

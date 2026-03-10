@@ -44,8 +44,9 @@ class BackupItem {
       if (commit != null) {
         // The date might have already been parsed in backup_service.dart
         // or it might be the original git commit date.
-        // We try to parse the subject again just in case, to be sure we get the snapshot time.
-        final match = RegExp(r'snapshot time[:：]\s*([\d.]+)').firstMatch(commit!.subject);
+        // We use a robust regex to extract the timestamp from the subject, 
+        // by skipping anything until the first digit after the prefix.
+        final match = RegExp(r'snapshot time.*?(\d[\d.]+)').firstMatch(commit!.subject);
         if (match != null) {
           final ts = double.parse(match.group(1)!);
           return DateTime.fromMillisecondsSinceEpoch((ts * 1000).toInt());
