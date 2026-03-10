@@ -3867,31 +3867,51 @@ Future<void> pushToRemote(String repoPath, String username, String token,
     if (parentFolder != null && !p.equals(parentFolder, repoPath)) {
       final relativePath = p.relative(repoPath, from: parentFolder);
       final submodulePath = relativePath.replaceAll(r'\', '/');
-      _log('Updating parent submodule URL for $submodulePath in $parentFolder');
+      
+      // Check if submodule URL is already set in .gitmodules
+      // If it is, we skip updating the parent repo to avoid unnecessary commits/pushes
+      bool skipParentUpdate = false;
       try {
-        await _runGit(
-            ['submodule', 'set-url', submodulePath, remoteUrl], parentFolder);
-        await _runGit(['add', '.gitmodules'], parentFolder);
-        await _runGit([
-          'commit',
-          '-m',
-          'Update submodule remote url for $submodulePath [folder project213897]'
-        ], parentFolder, throwOnError: false);
+        final existingUrl = await _runGit(
+            ['config', '--file', '.gitmodules', '--get', 'submodule.$submodulePath.url'],
+            parentFolder,
+            throwOnError: false);
+        if (existingUrl.isNotEmpty && existingUrl.first.trim().isNotEmpty) {
+          skipParentUpdate = true;
+          _log('Submodule URL already set for $submodulePath. Skipping parent repo update.');
+        }
       } catch (e) {
-        print('Warning: Failed to update parent submodule URL: $e');
+        // If error, assume not set or something wrong, proceed with update
+        print('Error checking existing submodule URL: $e');
       }
 
-      // Auto-push parent repository if needed
-      // Logic: If the parent repo hasn't been pushed or can be fast-forwarded, push it.
-      // pushToRemote handles checking remote existence and fast-forward check (via standard git push).
-      _log('Checking if parent repository needs to be pushed: $parentFolder');
-      try {
-        await pushToRemote(parentFolder, username, token, skipBackup: skipBackup);
-        _log('Successfully auto-pushed parent repository.');
-      } catch (e) {
-        // If push fails (e.g. non-fast-forward), we just log it and continue.
-        // This prevents blocking the child push if the parent push isn't trivial.
-        print('Auto-push of parent repository skipped/failed: $e');
+      if (!skipParentUpdate) {
+        _log('Updating parent submodule URL for $submodulePath in $parentFolder');
+        try {
+          await _runGit(
+              ['submodule', 'set-url', submodulePath, remoteUrl], parentFolder);
+          await _runGit(['add', '.gitmodules'], parentFolder);
+          await _runGit([
+            'commit',
+            '-m',
+            'Update submodule remote url for $submodulePath [folder project213897]'
+          ], parentFolder, throwOnError: false);
+        } catch (e) {
+          print('Warning: Failed to update parent submodule URL: $e');
+        }
+
+        // Auto-push parent repository if needed
+        // Logic: If the parent repo hasn't been pushed or can be fast-forwarded, push it.
+        // pushToRemote handles checking remote existence and fast-forward check (via standard git push).
+        _log('Checking if parent repository needs to be pushed: $parentFolder');
+        try {
+          await pushToRemote(parentFolder, username, token, skipBackup: skipBackup);
+          _log('Successfully auto-pushed parent repository.');
+        } catch (e) {
+          // If push fails (e.g. non-fast-forward), we just log it and continue.
+          // This prevents blocking the child push if the parent push isn't trivial.
+          print('Auto-push of parent repository skipped/failed: $e');
+        }
       }
     }
   });
