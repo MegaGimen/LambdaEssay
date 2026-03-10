@@ -20,12 +20,15 @@ class BackupPage extends StatefulWidget {
   final String repoPath;
   final String token;
   final String username;
+  final String? initialSubRepo;
+
   const BackupPage({
     super.key,
     required this.projectName,
     required this.repoPath,
     required this.token,
     this.username = '',
+    this.initialSubRepo,
   });
   @override
   State<BackupPage> createState() => _BackupPageState();
@@ -76,12 +79,13 @@ class _BackupPageState extends State<BackupPage> {
   double _uiScale = 1.0;
 
   List<String> _subRepos = [];
-  String _selectedRepo = 'Root';
+  late String _selectedRepo;
 
 
   @override
   void initState() {
     super.initState();
+    _selectedRepo = widget.initialSubRepo ?? 'Root';
     _initNotifications();
     _fetchSubRepos();
     // _sharedTc.addListener(_onScaleChanged);
@@ -420,6 +424,102 @@ class _BackupPageState extends State<BackupPage> {
     }
   }
 
+  void _showRepoSelectionDialog() {
+    final Map<String, dynamic> tree = {'_children': <String, dynamic>{}};
+    
+    void insert(String pathStr) {
+      final parts = pathStr.replaceAll('\\', '/').split('/');
+      Map<String, dynamic> current = tree;
+      for (int i = 0; i < parts.length; i++) {
+        final part = parts[i];
+        if (!current['_children'].containsKey(part)) {
+          current['_children'][part] = {'_name': part, '_children': <String, dynamic>{}};
+        }
+        current = current['_children'][part];
+      }
+      current['_path'] = pathStr;
+    }
+
+    for (final r in _subRepos) {
+        insert(r);
+    }
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('选择备份查看对象'),
+        content: SizedBox(
+          width: 500,
+          height: 600,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.home),
+                  title: const Text('Root (容器仓库)'),
+                  selected: _selectedRepo == 'Root',
+                  onTap: () => Navigator.pop(ctx, 'Root'),
+                ),
+                const Divider(),
+                _buildTreeWidget(tree['_children']),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+        ],
+      ),
+    ).then((val) {
+      if (val != null && val is String) {
+        setState(() {
+          _selectedRepo = val;
+        });
+        _loadBackups();
+      }
+    });
+  }
+
+  Widget _buildTreeWidget(Map<String, dynamic> children) {
+    if (children.isEmpty) return const SizedBox.shrink();
+    
+    return Column(
+      children: children.entries.map((e) {
+        final node = e.value as Map<String, dynamic>;
+        final name = node['_name'] as String;
+        final hasChildren = (node['_children'] as Map).isNotEmpty;
+        final fullPath = node['_path'] as String?;
+        
+        if (hasChildren) {
+           return ExpansionTile(
+             leading: const Icon(Icons.folder),
+             title: Text(name),
+             childrenPadding: const EdgeInsets.only(left: 16),
+             initiallyExpanded: true,
+             children: [
+                if (fullPath != null) 
+                  ListTile(
+                    leading: const Icon(Icons.description, size: 16),
+                    title: const Text('查看此文件夹的历史'),
+                    selected: _selectedRepo == fullPath,
+                    onTap: () => Navigator.of(context).pop(fullPath),
+                  ),
+                _buildTreeWidget(node['_children']),
+             ],
+           );
+        } else {
+           return ListTile(
+             leading: const Icon(Icons.description),
+             title: Text(name),
+             selected: _selectedRepo == fullPath,
+             onTap: () => Navigator.of(context).pop(fullPath),
+           );
+        }
+      }).toList(),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final items = _items;
@@ -446,30 +546,21 @@ class _BackupPageState extends State<BackupPage> {
           appBar: AppBar(
             backgroundColor: const Color(0xFF000A3F),
             foregroundColor: Colors.white,
-            title: Row(
-              children: [
-                const Text('历史备份预览: '),
-                if (_subRepos.isNotEmpty)
-                  DropdownButton<String>(
-                    dropdownColor: const Color(0xFF000A3F),
-                    style: const TextStyle(color: Colors.white),
-                    value: _selectedRepo,
-                    items: [
-                      const DropdownMenuItem(value: 'Root', child: Text('Root')),
-                      ..._subRepos.map((r) => DropdownMenuItem(value: r, child: Text(r))),
-                    ],
-                    onChanged: (v) {
-                      if (v != null) {
-                        setState(() {
-                          _selectedRepo = v;
-                        });
-                        _loadBackups();
-                      }
-                    },
-                  )
-                else
-                  Expanded(child: Text(p.basename(widget.projectName))),
-              ],
+            title: InkWell(
+              onTap: _showRepoSelectionDialog,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('历史备份预览: '),
+                  Flexible(
+                    child: Text(
+                      _selectedRepo == 'Root' ? 'Root' : p.basename(_selectedRepo),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const Icon(Icons.arrow_drop_down),
+                ],
+              ),
             ),
             actions: [
               IconButton(

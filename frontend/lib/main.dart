@@ -4849,7 +4849,10 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   Future<String?> _showBackupTargetDialog(BuildContext context) {
     final rootPath = packageRootCtrl.text.trim();
     if (rootPath.isEmpty) return Future.value(null);
-    String? selected = rootPath;
+    String? selected = _selectedFilePath;
+    if (selected == null || (!p.equals(rootPath, selected) && !p.isWithin(rootPath, selected))) {
+      selected = rootPath;
+    }
     
     return showDialog<String>(
       context: context,
@@ -5079,6 +5082,12 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                     final selected = await _showBackupTargetDialog(context);
                     if (selected == null) return; // Cancelled
 
+                    String? initialRel;
+                    final root = packageRootCtrl.text.trim();
+                    if (selected != root && p.isWithin(root, selected)) {
+                       initialRel = p.relative(selected, from: root).replaceAll('\\', '/');
+                    }
+
                     if (!mounted) return;
                     Navigator.push(
                         context,
@@ -5088,6 +5097,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                                   repoPath: selected, // Use selected path
                                   token: _token ?? '',
                                   username: _username ?? '',
+                                  initialSubRepo: initialRel,
                                 )));
                   }),
                 ],
