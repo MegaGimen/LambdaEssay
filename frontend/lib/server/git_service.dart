@@ -2619,6 +2619,11 @@ Future<void> _addDocxSubmodule(
   await _runGit(['init'], fullSubmodulePath);
 
   await _updateContentDocx(fullSubmodulePath, docxPath);
+  await _flushDocxToContent(fullSubmodulePath);
+
+  // Create .gitignore to ignore content.docx in the submodule
+  await File(p.join(fullSubmodulePath, '.gitignore'))
+      .writeAsString('content.docx\n');
 
   // Create tracking.json in submodule
   final tracking = {'docxPath': docxPath};
@@ -2675,6 +2680,8 @@ Future<void> _initTrackingRepo(
   await _updateContentDocx(repoPath, docxPath);
   await _flushDocxToContent(repoPath);
 
+  await File(p.join(repoPath, '.gitignore')).writeAsString('content.docx\n');
+
   final tracking = {'docxPath': docxPath, 'packagePath': packagePath};
   await File(p.join(repoPath, 'tracking.json'))
       .writeAsString(jsonEncode(tracking));
@@ -2698,6 +2705,8 @@ Future<void> _initSingleRepo(String repoPath, String? sourceDocxPath) async {
     await _updateContentDocx(repoPath, sourceDocxPath);
     await _flushDocxToContent(repoPath);
   }
+
+  await File(p.join(repoPath, '.gitignore')).writeAsString('content.docx\n');
 
   final tracking = {'docxPath': sourceDocxPath ?? ''};
   await File(p.join(repoPath, 'tracking.json'))
