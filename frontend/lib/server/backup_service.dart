@@ -450,6 +450,7 @@ Future<List<Map<String, dynamic>>> _getCommitsFromDir(
 
   final lines = (result.stdout as String).split('\n');
   final commits = <Map<String, dynamic>>[];
+  final timeRegex = RegExp(r'snapshot time[:：]\s*([\d.]+)');
 
   for (final line in lines) {
     if (line.trim().isEmpty) continue;
@@ -459,8 +460,20 @@ Future<List<Map<String, dynamic>>> _getCommitsFromDir(
     final id = parts[0];
     final parents = parts[1].split(' ').where((s) => s.isNotEmpty).toList();
     final author = parts[2];
-    final date = parts[3];
+    String date = parts[3];
     final subject = parts.sublist(4).join('|');
+
+    // Parse snapshot time from subject if available
+    final match = timeRegex.firstMatch(subject);
+    if (match != null) {
+      try {
+        final unixTimestamp = double.parse(match.group(1)!);
+        final dt = DateTime.fromMillisecondsSinceEpoch((unixTimestamp * 1000).toInt());
+        date = dt.toLocal().toString();
+      } catch (e) {
+        print("Error parsing snapshot time: $e");
+      }
+    }
 
     commits.add({
       'id': id,
@@ -470,8 +483,20 @@ Future<List<Map<String, dynamic>>> _getCommitsFromDir(
       'date': date,
       'subject': subject,
     });
-    print("Found backup commit: $id");
+    print("Found backup commit: $id, date: $date");
   }
+
+  // Sort commits by date descending (newest first)
+  commits.sort((a, b) {
+    try {
+      final da = DateTime.parse(a['date']);
+      final db = DateTime.parse(b['date']);
+      return db.compareTo(da);
+    } catch (e) {
+      return 0;
+    }
+  });
+
   return commits;
 }
 

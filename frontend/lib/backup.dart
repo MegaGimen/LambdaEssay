@@ -42,17 +42,23 @@ class BackupItem {
   DateTime get date {
     try {
       if (commit != null) {
-        // Try parse snapshot time from subject
-        // Format: snapshot time：1773042542.63755
-        // Note: Chinese colon might be used
-        final match = RegExp(r'snapshot time[：:]\s*(\d+(\.\d+)?)').firstMatch(commit!.subject);
+        // The date might have already been parsed in backup_service.dart
+        // or it might be the original git commit date.
+        // We try to parse the subject again just in case, to be sure we get the snapshot time.
+        final match = RegExp(r'snapshot time[:：]\s*([\d.]+)').firstMatch(commit!.subject);
         if (match != null) {
           final ts = double.parse(match.group(1)!);
-          return DateTime.fromMillisecondsSinceEpoch((ts * 1000).round());
+          return DateTime.fromMillisecondsSinceEpoch((ts * 1000).toInt());
         }
         return DateTime.parse(commit!.date);
       }
-      if (failure != null) return DateTime.parse(failure!['timestamp']);
+      if (failure != null) {
+        final ts = failure!['timestamp'];
+        if (ts is num) {
+          return DateTime.fromMillisecondsSinceEpoch((ts * 1000).toInt());
+        }
+        return DateTime.parse(ts.toString());
+      }
     } catch (_) {}
     return DateTime.fromMillisecondsSinceEpoch(0);
   }
@@ -614,12 +620,13 @@ class _BackupPageState extends State<BackupPage> {
                       if (item.failure != null) {
                         final f = item.failure!;
                         final type = f['type'] ?? 'failure';
+                        final dateStr = item.date.toLocal().toString();
                         
                         if (type == 'skip') {
                           return Card(
                             margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                             child: ExpansionTile(
-                              title: Text('用户跳过这次备份 (${f['timestamp']})',
+                              title: Text('用户跳过这次备份 ($dateStr)',
                                   style: const TextStyle(fontWeight: FontWeight.bold)),
                               subtitle: Container(
                                 margin: const EdgeInsets.only(top: 8),
@@ -676,7 +683,7 @@ class _BackupPageState extends State<BackupPage> {
                           color: Colors.red.shade50,
                           child: ListTile(
                             leading: const Icon(Icons.error_outline, color: Colors.red),
-                            title: Text('配额问题未备份 (${f['timestamp']})'),
+                            title: Text('配额问题未备份 ($dateStr)'),
                             subtitle: Text('ID: ${f['failureId']} | Type: $type'),
                             trailing: ElevatedButton(
                               onPressed: () => _onRetryFailure(f['failureId']),
@@ -689,11 +696,13 @@ class _BackupPageState extends State<BackupPage> {
                       final c = item.commit!;
                       final sha = c.id;
                       final comparison = _comparisons[sha];
+                      final dateStr = item.date.toLocal().toString();
+
                       return Card(
                         margin: const EdgeInsets.symmetric(
                             horizontal: 12, vertical: 8),
                         child: ExpansionTile(
-                          title: Text('时间: ${c.date}',
+                          title: Text('时间: $dateStr',
                               style: const TextStyle(fontWeight: FontWeight.bold)),
                           subtitle: Container(
                             margin: const EdgeInsets.only(top: 8),
