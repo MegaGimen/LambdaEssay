@@ -64,7 +64,7 @@ Future<dynamic> postJson(
   );
 
   // 调用处理器
-  final response = await (handler as Function)(request).timeout(const Duration(seconds: 10)) as shelf.Response;
+  final response = await (handler as Function)(request) as shelf.Response;
 
   if (response.statusCode == 204) {
     return {};
