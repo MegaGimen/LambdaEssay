@@ -734,12 +734,6 @@ Future<Response> handleBackupGraph(Request req) async {
   final repoName = data['repoName'] as String?;
   final commitId = data['commitId'] as String?;
 
-  final userId = data['userid'] as String?;
-  if (userId == null) {
-    return _cors(Response(403, body: 'No user ID'));
-  }
-  final subInfo = await SubscriptionService.checkSubscription(userId);
-
   if (repoName == null || commitId == null) {
     return _cors(Response(400, body: 'Repo name and commitId required'));
   }
@@ -786,11 +780,6 @@ Future<Response> handleBackupPreview(Request req) async {
   final repoName = data['repoName'] as String?;
   final commitId = data['commitId'] as String?;
 
-  final userId = data['userid'] as String?;
-  if (userId == null) {
-    return _cors(Response(403, body: 'No userid'));
-  }
-  final subInfo = await SubscriptionService.checkSubscription(userId);
   if (repoName == null || commitId == null) {
     return _cors(Response(400, body: 'Repo name and commitId required'));
   }
@@ -1915,14 +1904,6 @@ Future<Response> handleBackupCommits(Request req) async {
   final data = jsonDecode(body) as Map<String, dynamic>;
   final token = (data['token'] as String?)?.trim() ?? '';
   final repoName = (data['repoName'] as String?)?.trim() ?? '';
-
-  final userId = data['userid'] as String?;
-    if (userId == null) {
-      return _cors(Response(403,
-          body: jsonEncode({'error': 'No userid'}),
-          headers: {'Content-Type': 'application/json; charset=utf-8'}));
-    }
-    final subInfo = await SubscriptionService.checkSubscription(userId);
 
   if (repoName.isEmpty) {
     return _cors(Response(400,

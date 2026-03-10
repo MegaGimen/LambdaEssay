@@ -237,7 +237,7 @@ Future<List<Map<String, dynamic>>> listBackupFailures(String username, String re
   final url = 'https://llinker.com/gitbackup/api/failures/$username?repo=$repoName';
   print("${DateTime.now()}: Fetching failures from $url");
   try {
-    final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 10));
+    final response = await http.get(Uri.parse(url));
     print("${DateTime.now()}: Fetching failures response status: ${response.statusCode}");
     if (response.statusCode == 200) {
       final List<dynamic> list = jsonDecode(response.body);
