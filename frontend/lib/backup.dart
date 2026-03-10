@@ -220,7 +220,34 @@ class _BackupPageState extends State<BackupPage> {
     try {
         print("The token here is ${widget.token}");
       
-      // Fetch commits
+      // 1. Fetch failures first
+      List<Map<String, dynamic>> failures = [];
+      print('[BackupPage] Checking failures for user: "${widget.username}"');
+      if (widget.username.isNotEmpty) {
+        try {
+          print('[BackupPage] Calling fetch failures API...');
+          final fResp = await postJson("/backup/failures", {'username': widget.username, 'repoName': repo});
+          print('[BackupPage] Fetch failures API finished: ${stepSw.elapsedMilliseconds}ms');
+          stepSw.reset();
+
+          if (fResp is List) {
+             failures = fResp.cast<Map<String, dynamic>>();
+             // Show failures immediately while waiting for commits
+             if (mounted && myLoadId == _loadId) {
+               setState(() {
+                 _items = failures.map((f) => BackupItem(failure: f)).toList();
+               });
+             }
+          }
+        } catch (e) {
+          print('[BackupPage] Failed to fetch failures: $e');
+        }
+      } else {
+          print('[BackupPage] Skip fetch failures (no username): ${stepSw.elapsedMilliseconds}ms');
+          stepSw.reset();
+      }
+
+      // 2. Then fetch commits (triggers download on server)
       final j = await postJson("/backup/commits", {'repoName': repo, "token": widget.token});
       if (myLoadId != _loadId) {
          print('[BackupPage] LoadID $myLoadId cancelled (current: $_loadId)');
@@ -233,27 +260,6 @@ class _BackupPageState extends State<BackupPage> {
       final list = (j['commits'] as List?) ?? const [];
       final bool cacheHit = j['cacheHit'] == true;
       _chainViewUrl = j['chainViewUrl'] as String?;
-      
-      // Fetch failures
-      List<Map<String, dynamic>> failures = [];
-      print('[BackupPage] Checking failures for user: "${widget.username}"');
-      if (widget.username.isNotEmpty) {
-        try {
-          print('[BackupPage] Calling fetch failures API...');
-          final fResp = await postJson("/backup/failures", {'username': widget.username, 'repoName': repo});
-          print('[BackupPage] Fetch failures API finished: ${stepSw.elapsedMilliseconds}ms');
-          stepSw.reset();
-
-          if (fResp is List) {
-             failures = fResp.cast<Map<String, dynamic>>();
-          }
-        } catch (e) {
-          print('[BackupPage] Failed to fetch failures: $e');
-        }
-      } else {
-          print('[BackupPage] Skip fetch failures (no username): ${stepSw.elapsedMilliseconds}ms');
-          stepSw.reset();
-      }
 
       if (cacheHit && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
