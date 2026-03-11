@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:convert';
 import 'dart:async';
+import 'dart:isolate';
 import 'package:path/path.dart' as p;
 import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart' as io_http;
@@ -51,8 +52,23 @@ final http.Client _sharedClient = () {
     ..connectionTimeout = const Duration(seconds: 10)
     ..idleTimeout = const Duration(seconds: 60);
   
-  // 禁用代理自动探测，直接连接通常更快
+  // 针对 Windows 的进一步优化
+  // 1. 禁用代理自动探测
   ioClient.findProxy = null;
+  
+  // 2. 增加并发连接数
+  ioClient.maxConnectionsPerHost = 10;
+  
+  // 3. 优化底层 Socket 连接
+  // 强制使用 IPv4 解析，避免 Windows 的 IPv6 慢解析导致的 3-5 秒延迟
+  ioClient.connectionFactory = (uri, host, port) async {
+    final addresses = await InternetAddress.lookup(host!, type: InternetAddressType.IPv4);
+    final task = await Socket.startConnect(addresses.first, port!);
+    // 注意：ConnectionTask 本身不直接支持 setOption，
+    // 我们需要在连接完成后（由 HttpClient 处理）或者通过其它方式设置。
+    // 这里主要解决 IPv4/IPv6 导致的握手延迟。
+    return task;
+  };
   
   return io_http.IOClient(ioClient);
 }();
@@ -74,21 +90,22 @@ Future<List<Map<String, dynamic>>> listBackupFailures(String username, String re
     queryParameters: {'repo': repoName},
   );
   
-  print("${DateTime.now()}: Fetching failures from $url");
+  print("${DateTime.now()}: [Failures] Start fetching from $url");
   final startTime = DateTime.now();
   try {
     // DNS 预热/诊断
     try {
       final dnsStart = DateTime.now();
-      final addresses = await InternetAddress.lookup(url.host);
-      print("${DateTime.now()}: DNS lookup for ${url.host} took ${DateTime.now().difference(dnsStart).inMilliseconds}ms (Found: ${addresses.map((a) => a.address).join(', ')})");
+      final addresses = await InternetAddress.lookup(url.host, type: InternetAddressType.IPv4);
+      print("${DateTime.now()}: [Failures] DNS lookup (IPv4) for ${url.host} took ${DateTime.now().difference(dnsStart).inMilliseconds}ms (Found: ${addresses.map((a) => a.address).join(', ')})");
     } catch (e) {
-      print("${DateTime.now()}: DNS lookup failed: $e");
+      print("${DateTime.now()}: [Failures] DNS lookup failed: $e");
     }
 
+    print("${DateTime.now()}: [Failures] Sending request...");
     final response = await _sharedClient.get(url).timeout(Duration(seconds: 15));
     final duration = DateTime.now().difference(startTime).inMilliseconds;
-    print("${DateTime.now()}: Fetching failures response status: ${response.statusCode} (took ${duration}ms)");
+    print("${DateTime.now()}: [Failures] Response received: ${response.statusCode} (took ${duration}ms)");
     
     if (response.statusCode == 200) {
       final List<dynamic> list = jsonDecode(utf8.decode(response.bodyBytes));
@@ -96,7 +113,7 @@ Future<List<Map<String, dynamic>>> listBackupFailures(String username, String re
     }
   } catch (e) {
     final duration = DateTime.now().difference(startTime).inMilliseconds;
-    print('${DateTime.now()}: Failed to list backup failures after ${duration}ms: $e');
+    print('${DateTime.now()}: [Failures] Failed after ${duration}ms: $e');
   }
   return [];
 }
@@ -160,20 +177,20 @@ Future<Map<String, dynamic>> listBackupCommits(
     },
   );
   
-  print("${DateTime.now()}: Debug,url=$zipUrl");
+  print("${DateTime.now()}: [Commits] URL: $zipUrl");
   
   bool cacheHit = false;
   String? chainViewUrl;
 
   try {
-    print("${DateTime.now()}: Sending request to server (using shared client)...");
+    print("${DateTime.now()}: [Commits] Sending request to server (using shared client)...");
     final startTime = DateTime.now();
     
     final request = http.Request('GET', zipUrl);
     // 使用超时控制整个发送过程
     final response = await _sharedClient.send(request).timeout(Duration(seconds: 30));
     final headerTime = DateTime.now().difference(startTime).inMilliseconds;
-    print("${DateTime.now()}: Received response headers (took ${headerTime}ms)");
+    print("${DateTime.now()}: [Commits] Received response headers (took ${headerTime}ms)");
 
     if (response.statusCode != 200) {
        final body = await response.stream.bytesToString().timeout(Duration(seconds: 5));
@@ -376,10 +393,15 @@ Future<void> _precacheSnapshots(String repoName, String repoPath) async {
           return;
         }
 
-        // Extract tar using archive package
+        // Extract tar using archive package in a separate isolate to avoid blocking the UI thread
         try {
             final bytes = await tempTar.readAsBytes();
-            final archive = TarDecoder().decodeBytes(bytes);
+            
+            // Define a helper function to extract tar
+            final archive = await Isolate.run(() {
+              return TarDecoder().decodeBytes(bytes);
+            });
+
             for (final file in archive) {
                 final filename = file.name;
                 if (file.isFile) {
