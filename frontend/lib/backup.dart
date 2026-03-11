@@ -220,42 +220,36 @@ class _BackupPageState extends State<BackupPage> {
     try {
         print("The token here is ${widget.token}");
       
-      // 1. Fetch failures first
-      List<Map<String, dynamic>> failures = [];
-      print('[BackupPage] Checking failures for user: "${widget.username}"');
-      if (widget.username.isNotEmpty) {
-        try {
-          print('[BackupPage] Calling fetch failures API...');
-          final fResp = await postJson("/backup/failures", {'username': widget.username, 'repoName': repo});
-          print('[BackupPage] Fetch failures API finished: ${stepSw.elapsedMilliseconds}ms');
-          stepSw.reset();
+      // 优化：并行发起 failures 和 commits 请求，减少串行等待时间
+      print('[BackupPage] Checking failures and commits in parallel...');
+      
+      final Future<dynamic> failuresFuture = widget.username.isNotEmpty 
+          ? postJson("/backup/failures", {'username': widget.username, 'repoName': repo})
+          : Future.value([]);
+          
+      final Future<dynamic> commitsFuture = postJson("/backup/commits", {'repoName': repo, "token": widget.token});
 
-          if (fResp is List) {
-             failures = fResp.cast<Map<String, dynamic>>();
-             // Show failures immediately while waiting for commits
-             if (mounted && myLoadId == _loadId) {
-               setState(() {
-                 _items = failures.map((f) => BackupItem(failure: f)).toList();
-               });
-             }
-          }
-        } catch (e) {
+      // 使用 Future.wait 同时发起请求
+      final results = await Future.wait([
+        failuresFuture.catchError((e) {
           print('[BackupPage] Failed to fetch failures: $e');
-        }
-      } else {
-          print('[BackupPage] Skip fetch failures (no username): ${stepSw.elapsedMilliseconds}ms');
-          stepSw.reset();
-      }
+          return [];
+        }),
+        commitsFuture
+      ]);
 
-      // 2. Then fetch commits (triggers download on server)
-      final j = await postJson("/backup/commits", {'repoName': repo, "token": widget.token});
-      if (myLoadId != _loadId) {
-         print('[BackupPage] LoadID $myLoadId cancelled (current: $_loadId)');
-         return;
-      }
+      if (myLoadId != _loadId) return;
 
-      print('[BackupPage] Fetch commits API finished: ${stepSw.elapsedMilliseconds}ms');
+      final fResp = results[0];
+      final j = results[1] as Map<String, dynamic>;
+
+      print('[BackupPage] Parallel fetch finished: ${stepSw.elapsedMilliseconds}ms');
       stepSw.reset();
+
+      List<Map<String, dynamic>> failures = [];
+      if (fResp is List) {
+         failures = fResp.cast<Map<String, dynamic>>();
+      }
 
       final list = (j['commits'] as List?) ?? const [];
       final bool cacheHit = j['cacheHit'] == true;
