@@ -103,6 +103,7 @@ class _BackupPageState extends State<BackupPage> {
     try {
       final j = await postJson('/track/repos', {'packagePath': widget.projectName});
       final repos = (j['repos'] as List).cast<Map<String, dynamic>>();
+      if (!mounted) return;
       setState(() {
         _subRepos = repos.map((e) => e['relPath'] as String).toList();
       });
@@ -118,7 +119,7 @@ class _BackupPageState extends State<BackupPage> {
         final path = widget.repoPath.isNotEmpty ? widget.repoPath : widget.projectName;
         final j = await postJson("/track/info", {'repoPath': path});
         final id = j['workspaceId'] as String?;
-        if (id != null) {
+        if (id != null && mounted) {
            setState(() {
               _workspaceId = id;
            });
@@ -473,7 +474,7 @@ class _BackupPageState extends State<BackupPage> {
                   onTap: () => Navigator.pop(ctx, 'Root'),
                 ),
                 const Divider(),
-                _buildTreeWidget(tree['_children']),
+                _buildTreeWidget(ctx, tree['_children']),
               ],
             ),
           ),
@@ -483,6 +484,7 @@ class _BackupPageState extends State<BackupPage> {
         ],
       ),
     ).then((val) {
+      if (!mounted) return;
       if (val != null && val is String) {
         setState(() {
           _selectedRepo = val;
@@ -492,7 +494,7 @@ class _BackupPageState extends State<BackupPage> {
     });
   }
 
-  Widget _buildTreeWidget(Map<String, dynamic> children) {
+  Widget _buildTreeWidget(BuildContext dialogCtx, Map<String, dynamic> children) {
     if (children.isEmpty) return const SizedBox.shrink();
     
     return Column(
@@ -514,9 +516,9 @@ class _BackupPageState extends State<BackupPage> {
                     leading: const Icon(Icons.description, size: 16),
                     title: const Text('查看此文件夹的历史'),
                     selected: _selectedRepo == fullPath,
-                    onTap: () => Navigator.of(context).pop(fullPath),
+                    onTap: () => Navigator.pop(dialogCtx, fullPath),
                   ),
-                _buildTreeWidget(node['_children']),
+                _buildTreeWidget(dialogCtx, node['_children']),
              ],
            );
         } else {
@@ -524,7 +526,7 @@ class _BackupPageState extends State<BackupPage> {
              leading: const Icon(Icons.description),
              title: Text(name),
              selected: _selectedRepo == fullPath,
-             onTap: () => Navigator.of(context).pop(fullPath),
+             onTap: () => Navigator.pop(dialogCtx, fullPath),
            );
         }
       }).toList(),
