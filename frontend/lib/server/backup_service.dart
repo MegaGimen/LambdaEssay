@@ -201,40 +201,52 @@ Future<Map<String, dynamic>> listBackupCommits(
          ).asFuture();
          
          await sink.close();
-
-         // Ensure directory exists for tar -C
-         if (!await dir.exists()) {
-           await dir.create(recursive: true);
-         }
-
-         // Unzip using tar -xvf
-         print('${DateTime.now()}: Unzipping $repoName with tar...');
-         final process = await Process.start('tar', [
-           '-xf',
-           zipFile.path,
-           '-v',
-           '-C',
-           dirPath
-         ]);
-
-         process.stdout.transform(utf8.decoder).transform(const LineSplitter()).listen((line) {
-           if (onUnzipOutput != null) {
-             onUnzipOutput(line);
-           }
-         });
-
-         process.stderr.transform(utf8.decoder).transform(const LineSplitter()).listen((line) {
-           // In case of errors or other output
-           if (onUnzipOutput != null) {
-             onUnzipOutput(line);
-           }
-         });
-
-         final exitCode = await process.exitCode;
-         if (exitCode != 0) {
-           throw Exception('Failed to unzip: exit code $exitCode');
-         }
        }
+    }
+
+    // Always re-unzip if zip file exists to prevent version issues
+    final zipFile = File('$dirPath.zip');
+    if (await zipFile.exists()) {
+      print('${DateTime.now()}: Re-unzipping $repoName to ensure fresh state...');
+      
+      // 1. Force delete existing folder
+      if (await dir.exists()) {
+        print('${DateTime.now()}: Deleting existing directory $dirPath...');
+        await dir.delete(recursive: true);
+      }
+      
+      // 2. Ensure directory exists for tar -C
+      await dir.create(recursive: true);
+
+      // 3. Unzip using tar -xvf
+      print('${DateTime.now()}: Unzipping $repoName with tar...');
+      final process = await Process.start('tar', [
+        '-xf',
+        zipFile.path,
+        '-v',
+        '-C',
+        dirPath
+      ]);
+
+      process.stdout.transform(utf8.decoder).transform(const LineSplitter()).listen((line) {
+        if (onUnzipOutput != null) {
+          onUnzipOutput(line);
+        }
+      });
+
+      process.stderr.transform(utf8.decoder).transform(const LineSplitter()).listen((line) {
+        if (onUnzipOutput != null) {
+          onUnzipOutput(line);
+        }
+      });
+
+      final exitCode = await process.exitCode;
+      if (exitCode != 0) {
+        throw Exception('Failed to unzip: exit code $exitCode');
+      }
+      print('${DateTime.now()}: Unzip complete for $repoName.');
+    } else {
+      print('${DateTime.now()}: Warning: Zip file not found at ${zipFile.path}, skipping unzip.');
     }
   } catch (e) {
     print('${DateTime.now()}: Error during backup sync: $e');
