@@ -53,39 +53,14 @@ final http.Client _sharedClient = () {
     ..idleTimeout = const Duration(seconds: 60);
   
   // 针对 Windows 的进一步优化
-  // 1. 禁用代理自动探测
+  // 1. 禁用代理自动探测（WPAD），这在 Windows 上是常见的延迟来源
   ioClient.findProxy = null;
   
   // 2. 增加并发连接数
   ioClient.maxConnectionsPerHost = 10;
   
-  // 3. 优化底层 Socket 连接
-  // 强制使用 IPv4 解析，避免 Windows 的 IPv6 慢解析导致的 3-5 秒延迟
-  ioClient.connectionFactory = (uri, host, port) async {
-    final targetHost = host ?? uri.host;
-    // 如果 port 为空且 uri.port 为 0 (默认值)，则根据 scheme 判断
-    final targetPort = port ?? (uri.port != 0 ? uri.port : (uri.scheme == 'https' ? 443 : 80));
-    
-    if (targetHost.isEmpty) {
-      print("${DateTime.now()}: [Socket] Error: targetHost is empty for uri: $uri");
-      throw Exception("Host is empty in connectionFactory");
-    }
-
-    try {
-      // DNS 解析
-      final addresses = await InternetAddress.lookup(targetHost, type: InternetAddressType.IPv4);
-      if (addresses.isEmpty) {
-        throw Exception("No IPv4 address found for $targetHost");
-      }
-      
-      // 使用 Socket.startConnect 建立异步连接任务
-      // Socket.startConnect 本身返回 Future<ConnectionTask<Socket>>
-      return await Socket.startConnect(addresses.first, targetPort);
-    } catch (e) {
-      print("${DateTime.now()}: [Socket] Connection failed to $targetHost:$targetPort - $e");
-      rethrow;
-    }
-  };
+  // 3. 移除自定义 connectionFactory，因为它可能导致 HTTPS SNI 握手失败
+  // 我们依靠 findProxy = null 和共享 Client 来解决大部分延迟问题
   
   return io_http.IOClient(ioClient);
 }();
