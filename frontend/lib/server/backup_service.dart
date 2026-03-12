@@ -202,6 +202,11 @@ Future<Map<String, dynamic>> listBackupCommits(
          
          await sink.close();
 
+         // Ensure directory exists for tar -C
+         if (!await dir.exists()) {
+           await dir.create(recursive: true);
+         }
+
          // Unzip using tar -xvf
          print('${DateTime.now()}: Unzipping $repoName with tar...');
          final process = await Process.start('tar', [
@@ -233,11 +238,8 @@ Future<Map<String, dynamic>> listBackupCommits(
     }
   } catch (e) {
     print('${DateTime.now()}: Error during backup sync: $e');
-    // If we have a local cache, we might want to proceed? 
-    // But for now let's just rethrow or ensure we can proceed if file exists.
-    if (!await File('$dirPath.zip').exists() && !await dir.exists()) {
-       throw e;
-    }
+    // If download or unzip fails, we should not proceed with potentially partial or missing files
+    rethrow;
   }
 
   // Pre-cache all snapshots logic
