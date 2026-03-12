@@ -54,21 +54,21 @@ final String _checkoutBaseDir =
     p.join(Directory.systemTemp.path, 'gitbin_checkout');
 
 String _getBackupDir(String repoName) {
-  final scriptDir = p.dirname(Platform.script.toFilePath());
-  return p.join(p.dirname(scriptDir), _tempDirName, repoName);
+  // Directly use the absolute _tempDirName to avoid issues with scriptDir
+  return p.join(_tempDirName, repoName);
 }
 
 Future<Map<String, dynamic>> listBackupCommits(
     String repoName, String AuthToken,
     {void Function(double percent, int received, int total)? onProgress,
     void Function(String line)? onUnzipOutput}) async {
-  print("${DateTime.now()}: listBackupCommits start for $repoName");
+  print("==========================================================");
+  print("${DateTime.now()}: [BackupService] listBackupCommits start for $repoName");
   
   // Fix: If repoName is a full path, convert to hash key to match server logic
   String targetRepoName = repoName;
 
   if (p.isAbsolute(repoName) || repoName.contains(p.separator)) {
-     print("==========================================================");
      print("${DateTime.now()}: Debug: resolving repoName: $repoName");
      
      // Method: Try to get remote URL directly from git config
@@ -107,12 +107,13 @@ Future<Map<String, dynamic>> listBackupCommits(
         targetRepoName = md5.convert(utf8.encode(norm)).toString();
         print("${DateTime.now()}: Debug: Git remote not found, fallback MD5: $targetRepoName");
      }
-     print("${DateTime.now()}: Converted path '$repoName' to key '$targetRepoName'");
-     print("==========================================================");
   }
+  print("${DateTime.now()}: Converted path '$repoName' to key '$targetRepoName'");
+  print("==========================================================");
 
   final dirPath = _getBackupDir(targetRepoName);
   final dir = Directory(dirPath);
+  print("${DateTime.now()}: Debug: targetRepoName=$targetRepoName, dirPath=$dirPath");
   String LocalSha1 = "";
   if (await File('$dirPath.zip').exists()) {
     LocalSha1 = await sha1hash('$dirPath.zip');
@@ -508,30 +509,61 @@ Future<List<Map<String, dynamic>>> _getCommitsFromDir(
 
 Future<String> _findEffectiveRepoPath(String repoName) async {
   final repoDir = _getBackupDir(repoName);
-  print("Searching for repo in: $repoDir");
+  print("${DateTime.now()}: [BackupService] Searching for repo in: $repoDir");
 
   // 1. Check if repoDir itself is a git repo
   if (await Directory(p.join(repoDir, '.git')).exists()) {
+    print("${DateTime.now()}: [BackupService] Found repo in $repoDir");
     return repoDir;
   }
 
   // 2. Check if repoDir/<repoName>_parent is a git repo
   final parentDir = Directory(p.join(repoDir, '${repoName}_parent'));
   if (await parentDir.exists() && await Directory(p.join(parentDir.path, '.git')).exists()) {
+    print("${DateTime.now()}: [BackupService] Found repo in ${parentDir.path}");
     return parentDir.path;
   }
 
-  // 3. Fallback: Check immediate subdirectories
+  // 3. Robust Search: Check if the folder might be a sibling (due to different unzip behavior)
+  // Check if _tempDirName/${repoName}_parent exists
+  final siblingParentDir = Directory(p.join(_tempDirName, '${repoName}_parent'));
+  if (await siblingParentDir.exists() && await Directory(p.join(siblingParentDir.path, '.git')).exists()) {
+    print("${DateTime.now()}: [BackupService] Found repo in sibling folder ${siblingParentDir.path}");
+    return siblingParentDir.path;
+  }
+
+  // 4. Fallback: Check immediate subdirectories of repoDir
   final dir = Directory(repoDir);
   if (await dir.exists()) {
       final subs = dir.listSync().whereType<Directory>();
       for(final sub in subs) {
           if (await Directory(p.join(sub.path, '.git')).exists()) {
+              print("${DateTime.now()}: [BackupService] Found repo in subdirectory ${sub.path}");
               return sub.path;
           }
       }
   }
 
+  // 5. Last resort: if the folder exists but has no .git, maybe it's inside a nested folder?
+  if (await dir.exists()) {
+     print("${DateTime.now()}: [BackupService] repoDir exists but no .git found. Searching deeper...");
+     // Perform a limited depth search for any .git
+     try {
+       final allSubDirs = dir.listSync(recursive: true, followLinks: false)
+          .whereType<Directory>();
+       for (final d in allSubDirs) {
+          if (p.basename(d.path) == '.git') {
+             final parent = p.dirname(d.path);
+             print("${DateTime.now()}: [BackupService] Found .git at ${d.path}, returning parent $parent");
+             return parent;
+          }
+       }
+     } catch (e) {
+       print("${DateTime.now()}: [BackupService] Error during deep search: $e");
+     }
+  }
+
+  print("${DateTime.now()}: [BackupService] FAILED to find repository in $repoDir");
   throw Exception('Parent repository not found in $repoDir');
 }
 
