@@ -72,6 +72,7 @@ class _BackupPageState extends State<BackupPage> {
   // StreamSubscription? _notificationSubscription;
   double _downloadProgress = 0.0;
   bool _hasDownloadStarted = false;
+  String? _unzipStatus;
   String? _chainViewUrl;
   String? _workspaceId;
   
@@ -165,6 +166,10 @@ class _BackupPageState extends State<BackupPage> {
             _downloadProgress = (data['percent'] as num).toDouble();
             _hasDownloadStarted = true;
           });
+        } else if (data['type'] == 'unzip_progress' && data['repo'] == expectedRepo) {
+          setState(() {
+             _unzipStatus = data['line'] as String?;
+          });
         }
       } catch (e) {
         debugPrint('Notification error: $e');
@@ -214,6 +219,7 @@ class _BackupPageState extends State<BackupPage> {
       _failedComparisons.clear();
       _downloadProgress = 0.0;
       _hasDownloadStarted = false;
+      _unzipStatus = null;
     });
     print('[BackupPage] Initial setState: ${stepSw.elapsedMilliseconds}ms');
     stepSw.reset();
@@ -895,14 +901,17 @@ class _BackupPageState extends State<BackupPage> {
                 if (_hasDownloadStarted) ...[
                   const SizedBox(height: 16),
                   Text(
-                    '正在下载: ${_downloadProgress.toStringAsFixed(1)}%',
+                    _unzipStatus != null 
+                        ? '正在解压: $_unzipStatus'
+                        : '正在下载: ${_downloadProgress.toStringAsFixed(1)}%',
                     style: const TextStyle(color: Colors.white, fontSize: 16),
+                    textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 8),
                   SizedBox(
                     width: 200,
                     child: LinearProgressIndicator(
-                      value: (_downloadProgress / 100).clamp(0.0, 1.0),
+                      value: _unzipStatus != null ? null : (_downloadProgress / 100).clamp(0.0, 1.0),
                       backgroundColor: Colors.white24,
                     ),
                   ),

@@ -60,7 +60,8 @@ String _getBackupDir(String repoName) {
 
 Future<Map<String, dynamic>> listBackupCommits(
     String repoName, String AuthToken,
-    {Function(double percent, int received, int total)? onProgress}) async {
+    {void Function(double percent, int received, int total)? onProgress,
+    void Function(String line)? onUnzipOutput}) async {
   print("${DateTime.now()}: listBackupCommits start for $repoName");
   
   // Fix: If repoName is a full path, convert to hash key to match server logic
@@ -200,15 +201,32 @@ Future<Map<String, dynamic>> listBackupCommits(
          
          await sink.close();
 
-         // Unzip using PowerShell
-         print('${DateTime.now()}: Unzipping $repoName...');
-         final res = await Process.run('powershell', [
-           '-Command',
-           'Expand-Archive -Path "${zipFile.path}" -DestinationPath "$dirPath" -Force'
+         // Unzip using tar -xvf
+         print('${DateTime.now()}: Unzipping $repoName with tar...');
+         final process = await Process.start('tar', [
+           '-xf',
+           zipFile.path,
+           '-v',
+           '-C',
+           dirPath
          ]);
 
-         if (res.exitCode != 0) {
-           throw Exception('Failed to unzip: ${res.stderr}');
+         process.stdout.transform(utf8.decoder).transform(const LineSplitter()).listen((line) {
+           if (onUnzipOutput != null) {
+             onUnzipOutput(line);
+           }
+         });
+
+         process.stderr.transform(utf8.decoder).transform(const LineSplitter()).listen((line) {
+           // In case of errors or other output
+           if (onUnzipOutput != null) {
+             onUnzipOutput(line);
+           }
+         });
+
+         final exitCode = await process.exitCode;
+         if (exitCode != 0) {
+           throw Exception('Failed to unzip: exit code $exitCode');
          }
        }
     }

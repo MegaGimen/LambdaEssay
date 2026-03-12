@@ -1921,6 +1921,13 @@ Future<Response> handleBackupCommits(Request req) async {
         'total': total
       };
       onNotification?.call(msg);
+    }, onUnzipOutput: (line) {
+      final msg = {
+        'type': 'unzip_progress',
+        'repo': repoName,
+        'line': line,
+      };
+      onNotification?.call(msg);
     });
     print("chainViewUrl: ${result['chainViewUrl']}");
     return _cors(Response.ok(jsonEncode(result), headers: {
