@@ -218,6 +218,11 @@ Future<Map<String, dynamic>> listBackupCommits(
       // 2. Ensure directory exists for tar -C
       await dir.create(recursive: true);
 
+      // Notify that we are starting extraction
+      if (onUnzipOutput != null) {
+        onUnzipOutput('准备解压文件...');
+      }
+
       // 3. Unzip using tar -xvf
       print('${DateTime.now()}: Unzipping $repoName with tar...');
       final process = await Process.start('tar', [

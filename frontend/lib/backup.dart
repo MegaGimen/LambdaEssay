@@ -169,6 +169,7 @@ class _BackupPageState extends State<BackupPage> {
         } else if (data['type'] == 'unzip_progress' && data['repo'] == expectedRepo) {
           setState(() {
              _unzipStatus = data['line'] as String?;
+             _hasDownloadStarted = true;
           });
         }
       } catch (e) {
