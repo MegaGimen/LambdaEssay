@@ -456,6 +456,27 @@ class _BackupPageState extends State<BackupPage> {
     }
   }
 
+  void _showRollbackDialog(String sha) {
+    final repoKey = _getRemoteRepoName();
+    String localPath = widget.repoPath;
+    if (_selectedRepo != 'Root') {
+      localPath = p.join(widget.repoPath, _selectedRepo);
+    }
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => RollbackDialog(
+        repoName: repoKey,
+        commitId: sha,
+        localPath: localPath,
+      ),
+    ).then((_) {
+      // Reload to reflect new branch heads
+      _loadBackups();
+    });
+  }
+
   void _showRepoSelectionDialog() {
     final Map<String, dynamic> tree = {'_children': <String, dynamic>{}};
     
@@ -771,6 +792,18 @@ class _BackupPageState extends State<BackupPage> {
                                     ),
                                   ),
                                 ],
+                                const SizedBox(width: 16),
+                                ElevatedButton.icon(
+                                  onPressed: () => _showRollbackDialog(sha),
+                                  icon: const Icon(Icons.history, size: 16),
+                                  label: const Text('分支回滚', style: TextStyle(fontSize: 12)),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.red.shade50,
+                                    foregroundColor: Colors.red.shade800,
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 8),
+                                  ),
+                                ),
                               ],
                             ),
                           ),
@@ -935,4 +968,222 @@ class ComparisonData {
   final List<CommitNode> ghostsB;
   ComparisonData(this.graphA, this.graphB, this.mapping, this.summary,
       this.colors, this.ghostsA, this.ghostsB);
+}
+
+class RollbackDialog extends StatefulWidget {
+  final String repoName;
+  final String commitId;
+  final String localPath;
+
+  const RollbackDialog({
+    super.key,
+    required this.repoName,
+    required this.commitId,
+    required this.localPath,
+  });
+
+  @override
+  State<RollbackDialog> createState() => _RollbackDialogState();
+}
+
+class _RollbackDialogState extends State<RollbackDialog> {
+  bool _loading = true;
+  List<Branch> _backupBranches = [];
+  List<Branch> _localBranches = [];
+  Map<String, String?> _mapping = {}; // backupBranchName -> localBranchName
+  List<String> _logs = [];
+  bool _rollingBack = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchData();
+  }
+
+  Future<void> _fetchData() async {
+    try {
+      final bResp = await postJson('/backup/branches', {
+        'repoName': widget.repoName,
+        'commitId': widget.commitId,
+      });
+      final lResp = await postJson('/branches', {
+        'repoPath': widget.localPath,
+      });
+
+      setState(() {
+        _backupBranches = (bResp['branches'] as List)
+            .map((e) => Branch.fromJson(e as Map<String, dynamic>))
+            .toList();
+        _localBranches = (lResp['branches'] as List)
+            .map((e) => Branch.fromJson(e as Map<String, dynamic>))
+            .toList();
+
+        // Initial mapping: try to match by name
+        for (final bb in _backupBranches) {
+          final match = _localBranches.any((lb) => lb.name == bb.name);
+          _mapping[bb.name] = match ? bb.name : null;
+        }
+        _loading = false;
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('获取分支失败: $e')));
+        Navigator.pop(context);
+      }
+    }
+  }
+
+  Future<void> _doRollback() async {
+    final selectedMappings = _mapping.entries
+        .where((e) => e.value != null)
+        .map((e) => {'backupBranch': e.key, 'localBranch': e.value})
+        .toList();
+
+    if (selectedMappings.isEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('请至少选择一个分支进行回滚')));
+      return;
+    }
+
+    setState(() {
+      _rollingBack = true;
+      _logs = ['开始回滚操作...'];
+    });
+
+    try {
+      final resp = await postJson('/backup/rollback', {
+        'repoName': widget.repoName,
+        'commitId': widget.commitId,
+        'localPath': widget.localPath,
+        'mappings': selectedMappings,
+      });
+
+      final results = resp['results'] as List;
+      final newLogs = <String>[];
+      for (final r in results) {
+        final logs = (r['logs'] as List).cast<String>();
+        newLogs.addAll(logs);
+        if (r['success'] == false) {
+          newLogs.add('错误: ${r['error']}');
+        }
+      }
+      setState(() {
+        _logs.addAll(newLogs);
+        _logs.add('回滚操作结束。');
+        _rollingBack = false;
+      });
+    } catch (e) {
+      setState(() {
+        _logs.add('发生意外错误: $e');
+        _rollingBack = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const AlertDialog(
+        content: SizedBox(
+            height: 100, child: Center(child: CircularProgressIndicator())),
+      );
+    }
+
+    return AlertDialog(
+      title: const Text('分支回滚配置'),
+      content: SizedBox(
+        width: 600,
+        height: 500,
+        child: Column(
+          children: [
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8.0),
+              child: Text('请选择需要回滚的备份分支及其对应的本地目标分支：',
+                  style: TextStyle(fontSize: 14)),
+            ),
+            Expanded(
+              flex: 2,
+              child: Container(
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.grey.shade300),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: ListView(
+                  children: _backupBranches.map((bb) {
+                    return ListTile(
+                      dense: true,
+                      title: Text('备份分支: ${bb.displayName}'),
+                      subtitle: Text('SHA: ${bb.head.substring(0, 7)}'),
+                      trailing: DropdownButton<String>(
+                        value: _mapping[bb.name],
+                        hint: const Text('选择本地分支'),
+                        underline: const SizedBox(),
+                        items: [
+                          const DropdownMenuItem<String>(
+                              value: null, child: Text('不回滚')),
+                          ..._localBranches.map((lb) => DropdownMenuItem(
+                                value: lb.name,
+                                child: Text(lb.displayName),
+                              )),
+                        ],
+                        onChanged: _rollingBack
+                            ? null
+                            : (val) {
+                                setState(() {
+                                  _mapping[bb.name] = val;
+                                });
+                              },
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text('执行日志', style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 4),
+            Expanded(
+              flex: 1,
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.black,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: ListView.builder(
+                  itemCount: _logs.length,
+                  itemBuilder: (ctx, i) => Text(_logs[i],
+                      style: const TextStyle(
+                          color: Colors.greenAccent,
+                          fontFamily: 'monospace',
+                          fontSize: 12)),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _rollingBack ? null : () => Navigator.pop(context),
+          child: const Text('关闭'),
+        ),
+        ElevatedButton(
+          onPressed: _rollingBack ? null : _doRollback,
+          style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red.shade800,
+              foregroundColor: Colors.white),
+          child: _rollingBack
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.white))
+              : const Text('确认强行回滚'),
+        ),
+      ],
+    );
+  }
 }

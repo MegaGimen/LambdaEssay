@@ -745,6 +745,82 @@ Future<Response> handleBackupGraph(Request req) async {
   }
 }
 
+Future<Response> handleBackupBranches(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoName = data['repoName'] as String?;
+  final commitId = data['commitId'] as String?;
+
+  if (repoName == null || commitId == null) {
+    return _cors(Response(400, body: 'Repo name and commitId required'));
+  }
+  try {
+    final branches = await getBackupBranches(repoName, commitId);
+    return _cors(Response.ok(
+        jsonEncode({'branches': branches.map((b) => b.toJson()).toList()})));
+  } catch (e) {
+    return _cors(Response(500, body: e.toString()));
+  }
+}
+
+Future<Response> handleBackupRollback(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoName = data['repoName'] as String?;
+  final commitId = data['commitId'] as String?;
+  final localPath = _sanitizePath(data['localPath'] as String?);
+  final mappings = data['mappings'] as List?; // [{backupBranch: '...', localBranch: '...'}]
+
+  if (repoName == null || commitId == null || localPath.isEmpty || mappings == null) {
+    return _cors(Response(400, body: 'Missing required parameters'));
+  }
+
+  try {
+    final snapshotGitPath = await resolveSnapshotGitPath(repoName, commitId);
+    final results = <Map<String, dynamic>>[];
+
+    for (final m in mappings) {
+      final backupBranch = m['backupBranch'] as String;
+      final localBranch = m['localBranch'] as String;
+      final logs = <String>[];
+      
+      try {
+        await forceUpdateBranchFromSnapshot(
+          localPath,
+          localBranch,
+          snapshotGitPath,
+          backupBranch,
+          (log) {
+            print(log);
+            logs.add(log);
+          }
+        );
+        results.add({
+          'backupBranch': backupBranch,
+          'localBranch': localBranch,
+          'success': true,
+          'logs': logs
+        });
+      } catch (e) {
+        results.add({
+          'backupBranch': backupBranch,
+          'localBranch': localBranch,
+          'success': false,
+          'error': e.toString(),
+          'logs': logs
+        });
+      }
+    }
+    
+    // Clear cache after rollback as branch heads have changed
+    clearCache();
+    
+    return _cors(Response.ok(jsonEncode({'results': results})));
+  } catch (e) {
+    return _cors(Response(500, body: e.toString()));
+  }
+}
+
 Future<Response> handleCompareRepos(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;

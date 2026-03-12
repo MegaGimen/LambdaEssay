@@ -27,6 +27,8 @@ final Map<String, Function> routeMap = {
   '/summarizeDiff': handleSummarizeDiff,
   '/summarize_commit': handleSummarizeCommit,
   '/backup/graph': handleBackupGraph,
+  '/backup/branches': handleBackupBranches,
+  '/backup/rollback': handleBackupRollback,
   '/compare_repos': handleCompareRepos,
   '/backup/preview': handleBackupPreview,
   '/commit': handleCommit,

@@ -60,6 +60,12 @@ class Branch {
   factory Branch.fromJson(Map<String, dynamic> j) =>
       Branch(name: j['name'], head: j['head'], upstream: j['upstream']);
 
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'head': head,
+        'upstream': upstream,
+      };
+
   static String encodeName(String text) {
     StringBuffer sb = StringBuffer();
     for (int i = 0; i < text.runes.length; i++) {

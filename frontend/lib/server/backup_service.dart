@@ -856,3 +856,8 @@ Future<List<int>> previewBackupChildDoc(
     }
   }
 }
+
+Future<List<Branch>> getBackupBranches(String repoName, String commitId) async {
+  final gitDir = await resolveSnapshotGitPath(repoName, commitId);
+  return _getBranchesFromGitDir(gitDir);
+}

@@ -986,6 +986,34 @@ Future<void> _updateParentSubmodule(
   }
 }
 
+Future<void> forceUpdateBranchFromSnapshot(
+    String repoPath,
+    String localBranch,
+    String snapshotGitPath,
+    String snapshotBranch,
+    void Function(String) onLog) async {
+  return _withRepoLock(repoPath, () async {
+    onLog('==========================================================');
+    onLog('正在从备份仓库获取分支 $snapshotBranch...');
+    // Use absolute path for snapshotGitPath to be safe
+    final absSnapshotPath = p.absolute(snapshotGitPath);
+
+    // 1. Fetch from snapshot
+    // Note: We fetch the specific branch into FETCH_HEAD
+    await _runGit(['fetch', absSnapshotPath, snapshotBranch], repoPath);
+
+    final fetchHead =
+        (await _runGit(['rev-parse', 'FETCH_HEAD'], repoPath)).first.trim();
+    onLog('获取成功，最新提交: $fetchHead');
+
+    // 2. Force update local branch
+    onLog('正在强行更新本地分支 $localBranch...');
+    await _runGit(['branch', '-f', localBranch, fetchHead], repoPath);
+    onLog('分支 $localBranch 已成功回滚到备份状态。');
+    onLog('==========================================================');
+  });
+}
+
 Future<void> commitChanges(
     String repoPath, String author, String message) async {
   return _withRepoLock(repoPath, () async {
