@@ -62,12 +62,29 @@ final http.Client _sharedClient = () {
   // 3. 优化底层 Socket 连接
   // 强制使用 IPv4 解析，避免 Windows 的 IPv6 慢解析导致的 3-5 秒延迟
   ioClient.connectionFactory = (uri, host, port) async {
-    final addresses = await InternetAddress.lookup(host!, type: InternetAddressType.IPv4);
-    final task = await Socket.startConnect(addresses.first, port!);
-    // 注意：ConnectionTask 本身不直接支持 setOption，
-    // 我们需要在连接完成后（由 HttpClient 处理）或者通过其它方式设置。
-    // 这里主要解决 IPv4/IPv6 导致的握手延迟。
-    return task;
+    final targetHost = host ?? uri.host;
+    // 如果 port 为空且 uri.port 为 0 (默认值)，则根据 scheme 判断
+    final targetPort = port ?? (uri.port != 0 ? uri.port : (uri.scheme == 'https' ? 443 : 80));
+    
+    if (targetHost.isEmpty) {
+      print("${DateTime.now()}: [Socket] Error: targetHost is empty for uri: $uri");
+      throw Exception("Host is empty in connectionFactory");
+    }
+
+    try {
+      // DNS 解析
+      final addresses = await InternetAddress.lookup(targetHost, type: InternetAddressType.IPv4);
+      if (addresses.isEmpty) {
+        throw Exception("No IPv4 address found for $targetHost");
+      }
+      
+      // 使用 Socket.startConnect 建立异步连接任务
+      // Socket.startConnect 本身返回 Future<ConnectionTask<Socket>>
+      return await Socket.startConnect(addresses.first, targetPort);
+    } catch (e) {
+      print("${DateTime.now()}: [Socket] Connection failed to $targetHost:$targetPort - $e");
+      rethrow;
+    }
   };
   
   return io_http.IOClient(ioClient);
