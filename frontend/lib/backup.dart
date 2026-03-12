@@ -77,6 +77,7 @@ class _BackupPageState extends State<BackupPage> {
   
   // Track load requests to prevent race conditions
   int _loadId = 0;
+  final Semaphore _comparisonSemaphore = Semaphore(2);
 
   List<BackupItem> _items = [];
   // Store comparison results for each backup commit vs local
@@ -322,43 +323,50 @@ class _BackupPageState extends State<BackupPage> {
 
   Future<void> _ensureComparison(String repo, String sha, int loadId) async {
     if (loadId != _loadId) return;
-    final sw = Stopwatch()..start();
     if (_comparisons.containsKey(sha)) return;
-    // Call the compare_repos API to get aligned graphs
-    final j = await postJson("/compare_repos", {
-      'repoName': repo,
-      'commitA': sha, // Backup commit
-      'commitB': 'local', // Local state
-      'localPath': widget.repoPath,
-    });
-    print('[BackupPage] Compare $sha API: ${sw.elapsedMilliseconds}ms');
-    sw.reset();
 
-    final gA = GraphData.fromJson(j['graphA']);
-    final gB = GraphData.fromJson(j['graphB']);
-    final rawMapping = j['unifiedRowMapping'] as Map<String, dynamic>;
-    final mapping = rawMapping.map((k, v) => MapEntry(k, v as int));
-    final summary = j['summary'] as String? ?? '';
-    final details = j['details'] as Map<String, dynamic>? ?? {};
+    await _comparisonSemaphore.acquire();
+    try {
+      if (loadId != _loadId) return;
+      final sw = Stopwatch()..start();
+      // Call the compare_repos API to get aligned graphs
+      final j = await postJson("/compare_repos", {
+        'repoName': repo,
+        'commitA': sha, // Backup commit
+        'commitB': 'local', // Local state
+        'localPath': widget.repoPath,
+      });
+      print('[BackupPage] Compare $sha API: ${sw.elapsedMilliseconds}ms');
+      sw.reset();
 
-    final colors = _computeNodeColors(details);
+      final gA = GraphData.fromJson(j['graphA']);
+      final gB = GraphData.fromJson(j['graphB']);
+      final rawMapping = j['unifiedRowMapping'] as Map<String, dynamic>;
+      final mapping = rawMapping.map((k, v) => MapEntry(k, v as int));
+      final summary = j['summary'] as String? ?? '';
+      final details = j['details'] as Map<String, dynamic>? ?? {};
 
-    // Compute ghosts
-    final commitsA = gA.commits.map((c) => c.id).toSet();
-    final commitsB = gB.commits.map((c) => c.id).toSet();
+      final colors = _computeNodeColors(details);
 
-    final ghostsA = gB.commits.where((c) => !commitsA.contains(c.id)).toList();
-    final ghostsB = gA.commits.where((c) => !commitsB.contains(c.id)).toList();
-    
-    print('[BackupPage] Process comparison data $sha: ${sw.elapsedMilliseconds}ms');
-    sw.reset();
+      // Compute ghosts
+      final commitsA = gA.commits.map((c) => c.id).toSet();
+      final commitsB = gB.commits.map((c) => c.id).toSet();
 
-    if (!mounted || loadId != _loadId) return;
-    setState(() {
-      _comparisons[sha] =
-          ComparisonData(gA, gB, mapping, summary, colors, ghostsA, ghostsB);
-    });
-    print('[BackupPage] Update UI comparison $sha: ${sw.elapsedMilliseconds}ms');
+      final ghostsA = gB.commits.where((c) => !commitsA.contains(c.id)).toList();
+      final ghostsB = gA.commits.where((c) => !commitsB.contains(c.id)).toList();
+      
+      print('[BackupPage] Process comparison data $sha: ${sw.elapsedMilliseconds}ms');
+      sw.reset();
+
+      if (!mounted || loadId != _loadId) return;
+      setState(() {
+        _comparisons[sha] =
+            ComparisonData(gA, gB, mapping, summary, colors, ghostsA, ghostsB);
+      });
+      print('[BackupPage] Update UI comparison $sha: ${sw.elapsedMilliseconds}ms');
+    } finally {
+      _comparisonSemaphore.release();
+    }
   }
 
   Map<String, Color> _computeNodeColors(Map<String, dynamic> details) {

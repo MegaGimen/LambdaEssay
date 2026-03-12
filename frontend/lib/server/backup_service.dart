@@ -8,6 +8,8 @@ import 'models.dart';
 
 import 'package:crypto/crypto.dart';
 
+final _httpClient = http.Client();
+
 Future<String> sha1hash(String filePath) async {
   print(filePath);
 
@@ -235,16 +237,19 @@ Future<Map<String, dynamic>> listBackupCommits(
 
 Future<List<Map<String, dynamic>>> listBackupFailures(String username, String repoName) async {
   final url = 'https://llinker.com/gitbackup/api/failures/$username?repo=$repoName';
-  print("${DateTime.now()}: Fetching failures from $url");
+  final sw = Stopwatch()..start();
+  print("${DateTime.now()}: [BackupService] Fetching failures from $url (Start)");
   try {
-    final response = await http.get(Uri.parse(url));
-    print("${DateTime.now()}: Fetching failures response status: ${response.statusCode}");
+    final response = await _httpClient.get(Uri.parse(url)).timeout(const Duration(seconds: 15));
+    print("${DateTime.now()}: [BackupService] Fetching failures response status: ${response.statusCode}, Time: ${sw.elapsedMilliseconds}ms");
     if (response.statusCode == 200) {
       final List<dynamic> list = jsonDecode(response.body);
       return list.cast<Map<String, dynamic>>();
     }
   } catch (e) {
-    print('${DateTime.now()}: Failed to list backup failures: $e');
+    print('${DateTime.now()}: [BackupService] Failed to list backup failures after ${sw.elapsedMilliseconds}ms: $e');
+  } finally {
+    sw.stop();
   }
   return [];
 }
@@ -252,37 +257,11 @@ Future<List<Map<String, dynamic>>> listBackupFailures(String username, String re
 Future<bool> retryBackupFailure(String failureId) async {
   final url = 'https://llinker.com/gitbackup/api/failures/$failureId/retry';
   try {
-    final response = await http.post(Uri.parse(url));
+    final response = await _httpClient.post(Uri.parse(url)).timeout(const Duration(seconds: 15));
     return response.statusCode == 200;
   } catch (e) {
     print('Failed to retry backup failure: $e');
     return false;
-  }
-}
-
-class Semaphore {
-  final int max;
-  int _current = 0;
-  final List<Completer<void>> _waiters = [];
-
-  Semaphore(this.max);
-
-  Future<void> acquire() async {
-    if (_current < max) {
-      _current++;
-      return;
-    }
-    final completer = Completer<void>();
-    _waiters.add(completer);
-    await completer.future;
-  }
-
-  void release() {
-    if (_waiters.isNotEmpty) {
-      _waiters.removeAt(0).complete();
-    } else {
-      _current--;
-    }
   }
 }
 

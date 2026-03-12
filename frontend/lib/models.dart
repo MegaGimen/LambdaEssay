@@ -1,4 +1,31 @@
 import 'dart:io';
+import 'dart:async';
+
+class Semaphore {
+  final int max;
+  int _current = 0;
+  final List<Completer<void>> _waiters = [];
+
+  Semaphore(this.max);
+
+  Future<void> acquire() async {
+    if (_current < max) {
+      _current++;
+      return;
+    }
+    final completer = Completer<void>();
+    _waiters.add(completer);
+    await completer.future;
+  }
+
+  void release() {
+    if (_waiters.isNotEmpty) {
+      _waiters.removeAt(0).complete();
+    } else {
+      _current--;
+    }
+  }
+}
 
 class CommitNode {
   final String id;
