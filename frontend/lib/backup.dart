@@ -103,7 +103,6 @@ class _BackupPageState extends State<BackupPage> {
     try {
       final j = await postJson('/track/repos', {'packagePath': widget.projectName});
       final repos = (j['repos'] as List).cast<Map<String, dynamic>>();
-      if (!mounted) return;
       setState(() {
         _subRepos = repos.map((e) => e['relPath'] as String).toList();
       });
@@ -119,7 +118,7 @@ class _BackupPageState extends State<BackupPage> {
         final path = widget.repoPath.isNotEmpty ? widget.repoPath : widget.projectName;
         final j = await postJson("/track/info", {'repoPath': path});
         final id = j['workspaceId'] as String?;
-        if (id != null && mounted) {
+        if (id != null) {
            setState(() {
               _workspaceId = id;
            });
@@ -221,36 +220,42 @@ class _BackupPageState extends State<BackupPage> {
     try {
         print("The token here is ${widget.token}");
       
-      // 优化：并行发起 failures 和 commits 请求，减少串行等待时间
-      print('[BackupPage] Checking failures and commits in parallel...');
-      
-      final Future<dynamic> failuresFuture = widget.username.isNotEmpty 
-          ? postJson("/backup/failures", {'username': widget.username, 'repoName': repo})
-          : Future.value([]);
-          
-      final Future<dynamic> commitsFuture = postJson("/backup/commits", {'repoName': repo, "token": widget.token});
-
-      // 使用 Future.wait 同时发起请求
-      final results = await Future.wait([
-        failuresFuture.catchError((e) {
-          print('[BackupPage] Failed to fetch failures: $e');
-          return [];
-        }),
-        commitsFuture
-      ]);
-
-      if (myLoadId != _loadId) return;
-
-      final fResp = results[0];
-      final j = results[1] as Map<String, dynamic>;
-
-      print('[BackupPage] Parallel fetch finished: ${stepSw.elapsedMilliseconds}ms');
-      stepSw.reset();
-
+      // 1. Fetch failures first
       List<Map<String, dynamic>> failures = [];
-      if (fResp is List) {
-         failures = fResp.cast<Map<String, dynamic>>();
+      print('[BackupPage] Checking failures for user: "${widget.username}"');
+      if (widget.username.isNotEmpty) {
+        try {
+          print('[BackupPage] Calling fetch failures API...');
+          final fResp = await postJson("/backup/failures", {'username': widget.username, 'repoName': repo});
+          print('[BackupPage] Fetch failures API finished: ${stepSw.elapsedMilliseconds}ms');
+          stepSw.reset();
+
+          if (fResp is List) {
+             failures = fResp.cast<Map<String, dynamic>>();
+             // Show failures immediately while waiting for commits
+             if (mounted && myLoadId == _loadId) {
+               setState(() {
+                 _items = failures.map((f) => BackupItem(failure: f)).toList();
+               });
+             }
+          }
+        } catch (e) {
+          print('[BackupPage] Failed to fetch failures: $e');
+        }
+      } else {
+          print('[BackupPage] Skip fetch failures (no username): ${stepSw.elapsedMilliseconds}ms');
+          stepSw.reset();
       }
+
+      // 2. Then fetch commits (triggers download on server)
+      final j = await postJson("/backup/commits", {'repoName': repo, "token": widget.token});
+      if (myLoadId != _loadId) {
+         print('[BackupPage] LoadID $myLoadId cancelled (current: $_loadId)');
+         return;
+      }
+
+      print('[BackupPage] Fetch commits API finished: ${stepSw.elapsedMilliseconds}ms');
+      stepSw.reset();
 
       final list = (j['commits'] as List?) ?? const [];
       final bool cacheHit = j['cacheHit'] == true;
@@ -474,7 +479,7 @@ class _BackupPageState extends State<BackupPage> {
                   onTap: () => Navigator.pop(ctx, 'Root'),
                 ),
                 const Divider(),
-                _buildTreeWidget(ctx, tree['_children']),
+                _buildTreeWidget(tree['_children']),
               ],
             ),
           ),
@@ -484,7 +489,6 @@ class _BackupPageState extends State<BackupPage> {
         ],
       ),
     ).then((val) {
-      if (!mounted) return;
       if (val != null && val is String) {
         setState(() {
           _selectedRepo = val;
@@ -494,7 +498,7 @@ class _BackupPageState extends State<BackupPage> {
     });
   }
 
-  Widget _buildTreeWidget(BuildContext dialogCtx, Map<String, dynamic> children) {
+  Widget _buildTreeWidget(Map<String, dynamic> children) {
     if (children.isEmpty) return const SizedBox.shrink();
     
     return Column(
@@ -516,9 +520,9 @@ class _BackupPageState extends State<BackupPage> {
                     leading: const Icon(Icons.description, size: 16),
                     title: const Text('查看此文件夹的历史'),
                     selected: _selectedRepo == fullPath,
-                    onTap: () => Navigator.pop(dialogCtx, fullPath),
+                    onTap: () => Navigator.of(context).pop(fullPath),
                   ),
-                _buildTreeWidget(dialogCtx, node['_children']),
+                _buildTreeWidget(node['_children']),
              ],
            );
         } else {
@@ -526,7 +530,7 @@ class _BackupPageState extends State<BackupPage> {
              leading: const Icon(Icons.description),
              title: Text(name),
              selected: _selectedRepo == fullPath,
-             onTap: () => Navigator.pop(dialogCtx, fullPath),
+             onTap: () => Navigator.of(context).pop(fullPath),
            );
         }
       }).toList(),
