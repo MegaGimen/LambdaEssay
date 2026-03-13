@@ -3790,7 +3790,7 @@ Future<void> pushToRemote(String repoPath, String username, String token,
     String effectiveRemoteRepoName;
 
     final parentFolder = await _findParentFolderProject(repoPath);
-    if (parentFolder == null || p.equals(parentFolder, repoPath)) {
+    if (parentFolder == null || p.equals(p.normalize(parentFolder), p.normalize(repoPath))) {
       effectiveRemoteRepoName = repoName;
     } else {
       final relativePath = p.relative(repoPath, from: parentFolder);
@@ -3800,7 +3800,7 @@ Future<void> pushToRemote(String repoPath, String username, String token,
       final relName = normalizedRelPath.replaceAll('/', '-');
       effectiveRemoteRepoName = '$rootName-$relName';
       print(
-          'Pushing sub-repo "$repoName" as remote: $effectiveRemoteRepoName (rel: $normalizedRelPath)');
+          'Pushing sub-repo "$repoName" as remote: $effectiveRemoteRepoName (rootName: $rootName, relName: $relName)');
     }
 
     String owner;
@@ -4041,9 +4041,9 @@ Future<Map<String, dynamic>> pullFromRemote(
       print('Debug: pullFromRemote - Using provided targetRepoName: $effectiveRemoteRepoName');
     } else {
       final parentFolder = await _findParentFolderProject(repoPath);
-      if (parentFolder == null || p.equals(parentFolder, repoPath)) {
+      if (parentFolder == null || p.equals(p.normalize(parentFolder), p.normalize(repoPath))) {
         effectiveRemoteRepoName = p.basename(repoPath);
-        print('Debug: pullFromRemote - Calculated effectiveRemoteRepoName (standalone): $effectiveRemoteRepoName');
+        print('Debug: pullFromRemote - Calculated effectiveRemoteRepoName (standalone): $effectiveRemoteRepoName (parentFolder: $parentFolder)');
       } else {
         final relativePath = p.relative(repoPath, from: parentFolder);
         final normalizedRelPath = relativePath.replaceAll(r'\', '/');
@@ -4052,7 +4052,7 @@ Future<Map<String, dynamic>> pullFromRemote(
         final relName = normalizedRelPath.replaceAll('/', '-');
         effectiveRemoteRepoName = '$rootName-$relName';
         print(
-            'Debug: pullFromRemote - Calculated effectiveRemoteRepoName (sub-repo): $effectiveRemoteRepoName (rel: $normalizedRelPath)');
+            'Debug: pullFromRemote - Calculated effectiveRemoteRepoName (sub-repo): $effectiveRemoteRepoName (rootName: $rootName, relName: $relName)');
       }
     }
 
@@ -4376,13 +4376,17 @@ Future<Map<String, dynamic>> checkPullStatus(
 
     String effectiveRemoteRepoName;
     final parentRoot = await _findParentFolderProject(projDir);
-    if (parentRoot != null && !p.equals(parentRoot, projDir)) {
+    if (parentRoot != null && !p.equals(p.normalize(parentRoot), p.normalize(projDir))) {
       final relativePath = p.relative(projDir, from: parentRoot);
       final normalizedRelPath = relativePath.replaceAll(r'\', '/');
-      effectiveRemoteRepoName =
-          normalizedRelPath.replaceAll(r'\', '_').replaceAll('/', '_');
+      final rootName = p.basename(parentRoot);
+      final relName = normalizedRelPath.replaceAll('/', '-');
+      effectiveRemoteRepoName = '$rootName-$relName';
+      print(
+          'Debug: checkPullStatus - Calculated effectiveRemoteRepoName (sub-repo): $effectiveRemoteRepoName (rootName: $rootName, relName: $relName)');
     } else {
       effectiveRemoteRepoName = p.basename(projDir);
+      print('Debug: checkPullStatus - Calculated effectiveRemoteRepoName (standalone): $effectiveRemoteRepoName');
     }
 
     final remoteName = effectiveRemoteRepoName.toLowerCase();
@@ -4495,13 +4499,17 @@ Future<void> rebasePull(String repoName, String username, String token) async {
 
   String effectiveRemoteRepoName;
   final parentRoot = await _findParentFolderProject(projDir);
-  if (parentRoot != null && !p.equals(parentRoot, projDir)) {
+  if (parentRoot != null && !p.equals(p.normalize(parentRoot), p.normalize(projDir))) {
     final relativePath = p.relative(projDir, from: parentRoot);
     final normalizedRelPath = relativePath.replaceAll(r'\', '/');
-    effectiveRemoteRepoName =
-        normalizedRelPath.replaceAll(r'\', '_').replaceAll('/', '_');
+    final rootName = p.basename(parentRoot);
+    final relName = normalizedRelPath.replaceAll('/', '-');
+    effectiveRemoteRepoName = '$rootName-$relName';
+    print(
+        'Debug: rebasePull - Calculated effectiveRemoteRepoName (sub-repo): $effectiveRemoteRepoName (rootName: $rootName, relName: $relName)');
   } else {
     effectiveRemoteRepoName = p.basename(projDir);
+    print('Debug: rebasePull - Calculated effectiveRemoteRepoName (standalone): $effectiveRemoteRepoName');
   }
 
   final remoteName = effectiveRemoteRepoName.toLowerCase();
@@ -4570,13 +4578,17 @@ Future<PullPreviewResult> previewPull(
     // From now on, operate on previewDir
     String effectiveRemoteRepoName;
     final parentRoot = await _findParentFolderProject(projDir);
-    if (parentRoot != null && !p.equals(parentRoot, projDir)) {
+    if (parentRoot != null && !p.equals(p.normalize(parentRoot), p.normalize(projDir))) {
       final relativePath = p.relative(projDir, from: parentRoot);
-      final normalizedRelPath = relativePath.replaceAll(r'\\', '/');
-      effectiveRemoteRepoName =
-          normalizedRelPath.replaceAll(r'\', '_').replaceAll('/', '_');
+      final normalizedRelPath = relativePath.replaceAll(r'\', '/');
+      final rootName = p.basename(parentRoot);
+      final relName = normalizedRelPath.replaceAll('/', '-');
+      effectiveRemoteRepoName = '$rootName-$relName';
+      print(
+          'Debug: previewPull - Calculated effectiveRemoteRepoName (sub-repo): $effectiveRemoteRepoName (rootName: $rootName, relName: $relName)');
     } else {
       effectiveRemoteRepoName = p.basename(projDir);
+      print('Debug: previewPull - Calculated effectiveRemoteRepoName (standalone): $effectiveRemoteRepoName');
     }
     final remoteName = effectiveRemoteRepoName.toLowerCase();
     final owner = await _resolveRepoOwner(effectiveRemoteRepoName, token);
