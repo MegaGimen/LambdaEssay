@@ -2719,27 +2719,6 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       
       // If branches was empty, selectedBranch is null, which is fine (defaults to current in backend)
       
-      if (isFolderProject &&
-          packageRootCtrl.text.isNotEmpty &&
-          pathCtrl.text.isNotEmpty &&
-          data != null) {
-        final normalizedPath = pathCtrl.text.replaceAll(r'\', '/');
-        final normalizedRoot = packageRootCtrl.text.replaceAll(r'\', '/');
-        if (normalizedPath.startsWith(normalizedRoot) &&
-            normalizedPath != normalizedRoot) {
-          final relPath = p.relative(pathCtrl.text, from: packageRootCtrl.text);
-          final normalizedRel = relPath.replaceAll(r'\', '/');
-          final hash = md5.convert(utf8.encode(normalizedRel)).toString();
-          await _executePull(
-              repoName: pathCtrl.text.trim(),
-              repoPath: pathCtrl.text.trim(),
-              targetRepoName: hash,
-              currentPath: pathCtrl.text.trim(),
-              branch: selectedBranch);
-          return;
-        }
-      }
-
       await _executePull(
           repoName: repoPath, 
           repoPath: repoPath, 
@@ -5010,6 +4989,32 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       ),
       child: Column(
         children: [
+          if (error != null)
+            Container(
+              margin: const EdgeInsets.all(8),
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.red.shade50,
+                border: Border.all(color: Colors.red.shade200),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.error_outline, size: 16, color: Colors.red),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      error!,
+                      style: const TextStyle(color: Colors.red, fontSize: 12),
+                    ),
+                  ),
+                  InkWell(
+                    onTap: () => setState(() => error = null),
+                    child: const Icon(Icons.close, size: 14, color: Colors.grey),
+                  ),
+                ],
+              ),
+            ),
           Container(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
             child: Column(

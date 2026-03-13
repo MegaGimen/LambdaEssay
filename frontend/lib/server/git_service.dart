@@ -4038,10 +4038,12 @@ Future<Map<String, dynamic>> pullFromRemote(
     String effectiveRemoteRepoName;
     if (targetRepoName != null && targetRepoName.isNotEmpty) {
       effectiveRemoteRepoName = targetRepoName;
+      print('Debug: pullFromRemote - Using provided targetRepoName: $effectiveRemoteRepoName');
     } else {
       final parentFolder = await _findParentFolderProject(repoPath);
       if (parentFolder == null || p.equals(parentFolder, repoPath)) {
         effectiveRemoteRepoName = p.basename(repoPath);
+        print('Debug: pullFromRemote - Calculated effectiveRemoteRepoName (standalone): $effectiveRemoteRepoName');
       } else {
         final relativePath = p.relative(repoPath, from: parentFolder);
         final normalizedRelPath = relativePath.replaceAll(r'\', '/');
@@ -4050,7 +4052,7 @@ Future<Map<String, dynamic>> pullFromRemote(
         final relName = normalizedRelPath.replaceAll('/', '-');
         effectiveRemoteRepoName = '$rootName-$relName';
         print(
-            'Pulling sub-repo as remote: $effectiveRemoteRepoName (rel: $normalizedRelPath)');
+            'Debug: pullFromRemote - Calculated effectiveRemoteRepoName (sub-repo): $effectiveRemoteRepoName (rel: $normalizedRelPath)');
       }
     }
 
