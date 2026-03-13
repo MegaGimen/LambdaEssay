@@ -65,7 +65,7 @@ class _UpstreamDialogState extends State<UpstreamDialog> {
                               const SizedBox(height: 4),
                               Text(
                                 currentUpstream != null
-                                    ? '当前关联: $currentUpstream'
+                                    ? '当前关联: ${currentUpstream.split('/').last}'
                                     : '未关联远程分支',
                                 style: TextStyle(
                                     fontSize: 12,
@@ -103,7 +103,7 @@ class _UpstreamDialogState extends State<UpstreamDialog> {
                               ...widget.remoteBranches
                                   .map((rb) => DropdownMenuItem<String>(
                                         value: rb.name,
-                                        child: Text(rb.name,
+                                        child: Text(rb.name.split('/').last,
                                             overflow: TextOverflow.ellipsis),
                                       )),
                             ],

@@ -5200,7 +5200,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                         final lColor =
                             palette[branches.indexOf(l) % palette.length];
 
-                        // Determine related remotes (upstream or name match)
+                        // Strictly use upstream for related remotes
                         final relatedRemotes = <Branch>[];
                         if (l.upstream != null && l.upstream!.isNotEmpty) {
                           // Find by exact name
@@ -5213,13 +5213,6 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                             relatedRemotes
                                 .add(Branch(name: l.upstream!, head: ''));
                           }
-                        } else {
-                          // Fallback to name matching
-                          // Try to find remote that ends with /localName
-                          // e.g. origin/master ends with /master
-                          final matchingRemotes = remotes
-                              .where((r) => r.name.endsWith('/${l.name}'));
-                          relatedRemotes.addAll(matchingRemotes);
                         }
 
                         for (var m in relatedRemotes)

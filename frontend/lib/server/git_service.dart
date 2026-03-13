@@ -3830,7 +3830,7 @@ Future<void> pushToRemote(String repoPath, String username, String token,
     final remoteName = effectiveRemoteRepoName.toLowerCase();
     await _ensureUniqueRemote(repoPath, remoteName, remoteUrl);
 
-    final args = ['push'];
+    final args = ['push', '-u'];
     if (force) args.add('--force');
     args.add(remoteName); // Use remote alias instead of URL for push
 
