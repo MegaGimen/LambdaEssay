@@ -516,6 +516,53 @@ Future<Response> handleBranches(Request req) async {
   }
 }
 
+Future<Response> handleRemoteBranches(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoPath = _sanitizePath(data['repoPath'] as String?);
+  final remoteName = data['remoteName'] as String?;
+  if (repoPath.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'repoPath required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  final normalized = p.normalize(repoPath);
+  try {
+    final branches = await getRemoteBranches(normalized, remoteName);
+    return _cors(Response.ok(
+        jsonEncode({'branches': branches.map((b) => b.toJson()).toList()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> handleSetUpstream(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoPath = _sanitizePath(data['repoPath'] as String?);
+  final localBranch = data['localBranch'] as String?;
+  final remoteBranch = data['remoteBranch'] as String?;
+  if (repoPath.isEmpty || localBranch == null || localBranch.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'repoPath and localBranch required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  final normalized = p.normalize(repoPath);
+  try {
+    await setUpstream(normalized, localBranch, remoteBranch);
+    return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
 Future<Response> handleGraph(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;

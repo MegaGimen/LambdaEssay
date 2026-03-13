@@ -21,6 +21,8 @@ final Map<String, Function> routeMap = {
   '/project/list': handleProjectList,
   '/project/copy': handleProjectCopy,
   '/branches': handleBranches,
+  '/remote_branches': handleRemoteBranches,
+  '/set_upstream': handleSetUpstream,
   '/graph': handleGraph,
   '/remote_graph': handleRemoteGraph,
   '/compare': handleCompare,

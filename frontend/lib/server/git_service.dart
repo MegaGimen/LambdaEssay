@@ -531,6 +531,18 @@ Future<List<Branch>> getRemoteBranches(
   return result;
 }
 
+Future<void> setUpstream(
+    String repoPath, String localBranch, String? remoteBranch) async {
+  if (remoteBranch == null || remoteBranch.isEmpty) {
+    // git branch --unset-upstream <local-branch>
+    await _runGit(['branch', '--unset-upstream', localBranch], repoPath);
+  } else {
+    // git branch --set-upstream-to=<remote>/<branch> <local-branch>
+    await _runGit(
+        ['branch', '--set-upstream-to=$remoteBranch', localBranch], repoPath);
+  }
+}
+
 Future<String?> getCurrentBranch(String repoPath) async {
   try {
     final lines = await _runGit(['branch', '--show-current'], repoPath);
@@ -4785,15 +4797,10 @@ Future<void> forkLocal(String repoName, String newBranchName) async {
     // 2. Create and checkout new branch from remote
     // This creates 'newBranchName' pointing to 'remote/currentBranch' and switches to it.
     // The original local branch is left untouched.
+    // Use --no-track to ensure no upstream relationship is established automatically.
     if (currentBranch != null) {
-      // Ensure the remote is added before checking out from it
-      // Note: We don't have username/token here, but we might not need them if remote is already added
-      // However, if we need to add it, we might need to fetch it first.
-      // Wait, forkLocal is usually called after a pull conflict is detected, so the remote should already exist.
-      // But to be safe, we should probably ensure it.
-      
       await _runGit(
-          ['checkout', '-b', newBranchName, '$remoteName/$currentBranch'],
+          ['checkout', '--no-track', '-b', newBranchName, '$remoteName/$currentBranch'],
           repoPath);
       // Force regenerate docx to match the new branch content (which is remote content)
       await _forceRegenerateRepoDocx(repoPath);

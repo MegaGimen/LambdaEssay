@@ -31,6 +31,7 @@ import 'backup.dart';
 import 'pull_preview.dart';
 import 'graph_view.dart';
 import 'backend_manager.dart';
+import 'upstream_dialog.dart';
 import 'login_page.dart';
 
 const String kTrackingExt = '.tracking.zip';
@@ -1381,6 +1382,63 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(builder: (_) => const LoginPage()),
     );
+  }
+
+  Future<void> _onSetUpstream() async {
+    final repoPath = pathCtrl.text.trim();
+    if (repoPath.isEmpty) return;
+
+    setState(() => loading = true);
+    try {
+      // 1. Get local branches and their upstreams
+      final branchesResp = await postJson('/branches', {'repoPath': repoPath});
+      final List<dynamic> branchesData = branchesResp['branches'];
+      final List<Branch> localBranches =
+          branchesData.map((b) => Branch.fromJson(b)).toList();
+
+      // 2. Get all remote branches
+      final remotesResp =
+          await postJson('/remote_branches', {'repoPath': repoPath});
+      final List<dynamic> remotesData = remotesResp['branches'];
+      final List<Branch> remoteBranches =
+          remotesData.map((b) => Branch.fromJson(b)).toList();
+
+      setState(() => loading = false);
+      if (!mounted) return;
+
+      // 3. Show dialog
+      await showDialog(
+        context: context,
+        builder: (ctx) => UpstreamDialog(
+          localBranches: localBranches,
+          remoteBranches: remoteBranches,
+          onSave: (local, remote) async {
+            // Update immediately on server
+            try {
+              await postJson('/set_upstream', {
+                'repoPath': repoPath,
+                'localBranch': local,
+                'remoteBranch': remote,
+              });
+            } catch (e) {
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('设置失败: $e')),
+                );
+              }
+            }
+          },
+        ),
+      );
+      
+      // Refresh after dialog closed
+      await _load();
+    } catch (e) {
+      setState(() {
+        loading = false;
+        error = '获取分支信息失败: $e';
+      });
+    }
   }
 
   Future<void> _showUserDetailsDialog() async {
@@ -4987,8 +5045,9 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         color: Colors.white,
         border: Border(left: BorderSide(color: Colors.grey.shade200)),
       ),
-      child: Column(
-        children: [
+      child: SingleChildScrollView(
+        child: Column(
+          children: [
           if (error != null)
             Container(
               margin: const EdgeInsets.all(8),
@@ -5103,175 +5162,148 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                                   token: _token ?? '',
                                   username: _username ?? '',
                                   initialSubRepo: initialRel,
-                                )));
+                                  )));
                   }),
+                  _buildActionButton(Icons.link, '设置分支关联', _onSetUpstream),
                 ],
               ],
             ),
           ),
           if (data != null)
-            Expanded(
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('分支图例',
-                        style: TextStyle(
-                            fontWeight: FontWeight.bold, color: Colors.grey)),
-                    const SizedBox(height: 8),
-                    Expanded(
-                      child: Align(
-                        alignment: Alignment.topLeft,
-                        child: LayoutBuilder(builder: (context, constraints) {
-                          final branches = data!.branches;
-                          // Use dedicated remoteBranches list
-                          final remotes = data!.remoteBranches;
-                          final palette = GraphPainter.lanePalette;
-                          final locals = <Branch>[];
+            Container(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('分支图例',
+                      style: TextStyle(
+                          fontWeight: FontWeight.bold, color: Colors.grey)),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.topLeft,
+                    child: Builder(builder: (context) {
+                      final branches = data!.branches;
+                      // Use dedicated remoteBranches list
+                      final remotes = data!.remoteBranches;
+                      final palette = GraphPainter.lanePalette;
+                      final locals = <Branch>[];
 
-                          for (var b in branches) {
-                            if (!b.name.contains('/')) {
-                              locals.add(b);
-                            }
+                      for (var b in branches) {
+                        if (!b.name.contains('/')) {
+                          locals.add(b);
+                        }
+                      }
+                      final handledRemotes = <String>{};
+                      final List<Widget> items = [];
+
+                      for (var l in locals) {
+                        final lColor =
+                            palette[branches.indexOf(l) % palette.length];
+
+                        // Determine related remotes (upstream or name match)
+                        final relatedRemotes = <Branch>[];
+                        if (l.upstream != null && l.upstream!.isNotEmpty) {
+                          // Find by exact name
+                          try {
+                            final up = remotes
+                                .firstWhere((b) => b.name == l.upstream);
+                            relatedRemotes.add(up);
+                          } catch (_) {
+                            // If not found in branches list, create dummy for display
+                            relatedRemotes
+                                .add(Branch(name: l.upstream!, head: ''));
                           }
-                          final handledRemotes = <String>{};
-                          final List<Widget> items = [];
+                        } else {
+                          // Fallback to name matching
+                          // Try to find remote that ends with /localName
+                          // e.g. origin/master ends with /master
+                          final matchingRemotes = remotes
+                              .where((r) => r.name.endsWith('/${l.name}'));
+                          relatedRemotes.addAll(matchingRemotes);
+                        }
 
-                          for (var l in locals) {
-                            final lColor =
-                                palette[branches.indexOf(l) % palette.length];
+                        for (var m in relatedRemotes)
+                          handledRemotes.add(m.name);
 
-                            // Determine related remotes (upstream or name match)
-                            final relatedRemotes = <Branch>[];
-                            if (l.upstream != null && l.upstream!.isNotEmpty) {
-                              // Find by exact name
-                              try {
-                                final up = remotes
-                                    .firstWhere((b) => b.name == l.upstream);
-                                relatedRemotes.add(up);
-                              } catch (_) {
-                                // If not found in branches list, create dummy for display
-                                relatedRemotes
-                                    .add(Branch(name: l.upstream!, head: ''));
-                              }
-                            } else {
-                              // Fallback to name matching
-                              // Try to find remote that ends with /localName
-                              // e.g. origin/master ends with /master
-                              final matchingRemotes = remotes
-                                  .where((r) => r.name.endsWith('/${l.name}'));
-                              relatedRemotes.addAll(matchingRemotes);
-                            }
+                        items.add(InkWell(
+                          onDoubleTap: () => _doSwitchBranch(l.name),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                    width: 12,
+                                    height: 12,
+                                    decoration: BoxDecoration(
+                                        color: lColor,
+                                        shape: BoxShape.circle)),
+                                const SizedBox(width: 8),
+                                Text(Branch.decodeName(l.name)),
+                                if (l.name == data!.currentBranch)
+                                  const Padding(
+                                      padding: EdgeInsets.only(left: 4),
+                                      child: Icon(Icons.check_circle,
+                                          size: 14, color: Colors.green)),
+                                if (relatedRemotes.isNotEmpty) ...[
+                                  const SizedBox(width: 8),
+                                  const Icon(Icons.arrow_right_alt,
+                                      size: 16, color: Colors.grey),
+                                  const SizedBox(width: 8),
+                                  ...relatedRemotes.map((r) {
+                                    Color rColor = Colors.grey;
+                                    // For color, we might not have it in palette if it's not in 'branches'
+                                    // Try to find if it is in branches (unlikely now)
+                                    // or just use a default color or hash
+                                    final idx = branches.indexWhere(
+                                        (b) => b.name == r.name);
+                                    if (idx >= 0) {
+                                      rColor =
+                                          palette[idx % palette.length];
+                                    }
 
-                            for (var m in relatedRemotes)
-                              handledRemotes.add(m.name);
-
-                            items.add(InkWell(
-                              onDoubleTap: () => _doSwitchBranch(l.name),
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(vertical: 4),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Container(
-                                        width: 12,
-                                        height: 12,
-                                        decoration: BoxDecoration(
-                                            color: lColor,
-                                            shape: BoxShape.circle)),
-                                    const SizedBox(width: 8),
-                                    Text(Branch.decodeName(l.name)),
-                                    if (l.name == data!.currentBranch)
-                                      const Padding(
-                                          padding: EdgeInsets.only(left: 4),
-                                          child: Icon(Icons.check_circle,
-                                              size: 14, color: Colors.green)),
-                                    if (relatedRemotes.isNotEmpty) ...[
-                                      const SizedBox(width: 8),
-                                      const Icon(Icons.arrow_right_alt,
-                                          size: 16, color: Colors.grey),
-                                      const SizedBox(width: 8),
-                                      ...relatedRemotes.map((r) {
-                                        Color rColor = Colors.grey;
-                                        // For color, we might not have it in palette if it's not in 'branches'
-                                        // Try to find if it is in branches (unlikely now)
-                                        // or just use a default color or hash
-                                        final idx = branches.indexWhere(
-                                            (b) => b.name == r.name);
-                                        if (idx >= 0) {
-                                          rColor =
-                                              palette[idx % palette.length];
-                                        }
-
-                                        final rName = Branch.decodeName(r.name)
-                                            .replaceFirst(
-                                                RegExp(r'^[^/]+(?=/)'),
-                                                'remote');
-                                        return Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              Container(
-                                                  width: 12,
-                                                  height: 12,
-                                                  decoration: BoxDecoration(
-                                                      color: rColor,
-                                                      shape: BoxShape.circle)),
-                                              const SizedBox(width: 4),
-                                              Text(rName,
-                                                  style: const TextStyle(
-                                                      color: Colors.grey)),
-                                              const SizedBox(width: 8),
-                                            ]);
-                                      }),
-                                    ]
-                                  ],
-                                ),
-                              ),
-                            ));
-                          }
-
-                          for (var r in remotes) {
-                            if (handledRemotes.contains(r.name)) continue;
-                            // Only show unhandled remotes if necessary?
-                            // User asked for "master -> remotes/master"
-                            // Maybe we don't need to list all other remotes if they are not relevant?
-                            // But usually we list all branches.
-                            // If remote is not in 'branches', we don't have color assignment from graph.
-                            // So just skip unhandled remotes to keep list clean, or show them?
-                            // User complaint was about missing mapping.
-                            // Let's keep showing them but maybe in grey?
-                            // But if they are not in 'branches', they are not in the graph, so why show legend?
-                            // The legend is for the graph.
-                            // If remote is not in graph, maybe we shouldn't show it here unless it's linked to a local branch.
-                            // So, I'll COMMENT OUT the unlinked remotes display for now,
-                            // or only show them if they are in 'branches' (which means they are in graph).
-                            // BUT 'branches' now only has locals (mostly).
-                            // So remotes are NOT in graph.
-                            // So we should NOT show them as independent items.
-                            continue;
-                          }
-
-                          return SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: SingleChildScrollView(
-                              scrollDirection: Axis.vertical,
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: items,
-                              ),
+                                    final rName = Branch.decodeName(r.name)
+                                        .replaceFirst(
+                                            RegExp(r'^[^/]+(?=/)'),
+                                            'remote');
+                                    return Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Container(
+                                              width: 12,
+                                              height: 12,
+                                              decoration: BoxDecoration(
+                                                  color: rColor,
+                                                  shape: BoxShape.circle)),
+                                          const SizedBox(width: 4),
+                                          Text(rName,
+                                              style: const TextStyle(
+                                                  color: Colors.grey)),
+                                          const SizedBox(width: 8),
+                                        ]);
+                                  }),
+                                ]
+                              ],
                             ),
-                          );
-                        }),
-                      ),
-                    ),
-                  ],
-                ),
+                          ),
+                        ));
+                      }
+
+                      return SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: items,
+                        ),
+                      );
+                    }),
+                  ),
+                ],
               ),
             ),
         ],
       ),
-    );
+    ));
   }
 
   Widget _buildActionButton(
