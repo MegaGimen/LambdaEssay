@@ -342,18 +342,52 @@ class _BackupPageState extends State<BackupPage> {
     await _comparisonSemaphore.acquire();
     try {
       if (loadId != _loadId) return;
+      
+      // ==================================================
+      // Check for cached comparison result
+      final cacheDir = _getComparisonCacheDir();
+      final cacheKey = _getComparisonCacheKey(repo, sha, widget.repoPath);
+      final cacheFile = File(p.join(cacheDir.path, '$cacheKey.json'));
+      
+      Map<String, dynamic>? j;
+      if (cacheFile.existsSync()) {
+        try {
+          final content = await cacheFile.readAsString();
+          j = jsonDecode(content) as Map<String, dynamic>;
+          debugPrint('[BackupPage] ✅ Cache Hit for $sha');
+        } catch (e) {
+          debugPrint('[BackupPage] ❌ Error reading cache for $sha: $e');
+        }
+      }
+
       final sw = Stopwatch()..start();
-      // Call the compare_repos API to get aligned graphs
-      final j = await postJson("/compare_repos", {
-        'repoName': repo,
-        'commitA': sha, // Backup commit
-        'commitB': 'local', // Local state
-        'localPath': widget.repoPath,
-      });
-      print('[BackupPage] Compare $sha API: ${sw.elapsedMilliseconds}ms');
+      
+      if (j == null) {
+        // Call the compare_repos API if not cached
+        j = await postJson("/compare_repos", {
+          'repoName': repo,
+          'commitA': sha, // Backup commit
+          'commitB': 'local', // Local state
+          'localPath': widget.repoPath,
+        });
+        print('[BackupPage] Compare $sha API: ${sw.elapsedMilliseconds}ms');
+        
+        // Save to cache
+        try {
+          if (!cacheDir.existsSync()) {
+            cacheDir.createSync(recursive: true);
+          }
+          await cacheFile.writeAsString(jsonEncode(j));
+          debugPrint('[BackupPage] 💾 Saved comparison for $sha to cache');
+        } catch (e) {
+          debugPrint('[BackupPage] ❌ Failed to save cache for $sha: $e');
+        }
+      } else {
+        print('[BackupPage] Compare $sha (Cached): ${sw.elapsedMilliseconds}ms');
+      }
       sw.reset();
 
-      final gA = GraphData.fromJson(j['graphA']);
+      final gA = GraphData.fromJson(j!['graphA']);
       final gB = GraphData.fromJson(j['graphB']);
       final rawMapping = j['unifiedRowMapping'] as Map<String, dynamic>;
       final mapping = rawMapping.map((k, v) => MapEntry(k, v as int));
@@ -589,6 +623,23 @@ class _BackupPageState extends State<BackupPage> {
         }
       }).toList(),
     );
+  }
+
+  Directory _getComparisonCacheDir() {
+    final appData = Platform.environment['APPDATA'];
+    String path;
+    if (appData != null && appData.isNotEmpty) {
+      path = p.join(appData, 'LambdaEssay_cmpresult_cache');
+    } else {
+      // Fallback for non-Windows or if APPDATA is not set
+      path = p.join(Directory.systemTemp.path, 'LambdaEssay_cmpresult_cache');
+    }
+    return Directory(path);
+  }
+
+  String _getComparisonCacheKey(String repo, String sha, String localPath) {
+    final input = '$repo|$sha|$localPath';
+    return md5.convert(utf8.encode(input)).toString();
   }
 
   @override
