@@ -66,6 +66,7 @@ class BackupItem {
 }
 
 class _BackupPageState extends State<BackupPage> {
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   bool _loading = false;
   String? _error;
   bool _graphHovering = false;
@@ -463,6 +464,8 @@ class _BackupPageState extends State<BackupPage> {
       localPath = p.join(widget.repoPath, _selectedRepo);
     }
 
+    final messenger = ScaffoldMessenger.of(_scaffoldKey.currentContext!);
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -470,6 +473,7 @@ class _BackupPageState extends State<BackupPage> {
         repoName: repoKey,
         commitId: sha,
         localPath: localPath,
+        messenger: messenger,
       ),
     ).then((_) {
       // Reload to reflect new branch heads
@@ -596,6 +600,7 @@ class _BackupPageState extends State<BackupPage> {
         child: Stack(
             children: [
               Scaffold(
+          key: _scaffoldKey,
           appBar: AppBar(
             backgroundColor: const Color(0xFF000A3F),
             foregroundColor: Colors.white,
@@ -974,12 +979,14 @@ class RollbackDialog extends StatefulWidget {
   final String repoName;
   final String commitId;
   final String localPath;
+  final ScaffoldMessengerState messenger;
 
   const RollbackDialog({
     super.key,
     required this.repoName,
     required this.commitId,
     required this.localPath,
+    required this.messenger,
   });
 
   @override
@@ -1027,8 +1034,7 @@ class _RollbackDialogState extends State<RollbackDialog> {
       });
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('获取分支失败: $e')));
+        widget.messenger.showSnackBar(SnackBar(content: Text('获取分支失败: $e')));
         Navigator.pop(context);
       }
     }
@@ -1041,8 +1047,7 @@ class _RollbackDialogState extends State<RollbackDialog> {
         .toList();
 
     if (selectedMappings.isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('请至少选择一个分支进行回滚')));
+      widget.messenger.showSnackBar(const SnackBar(content: Text('请至少选择一个分支进行回滚')));
       return;
     }
 
