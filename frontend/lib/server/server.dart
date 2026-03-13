@@ -1980,6 +1980,7 @@ Future<Response> handleBackupCommits(Request req) async {
   final data = jsonDecode(body) as Map<String, dynamic>;
   final token = (data['token'] as String?)?.trim() ?? '';
   final repoName = (data['repoName'] as String?)?.trim() ?? '';
+  final skipSync = data['skipSync'] == true;
 
   if (repoName.isEmpty) {
     return _cors(Response(400,
@@ -2004,7 +2005,7 @@ Future<Response> handleBackupCommits(Request req) async {
         'line': line,
       };
       onNotification?.call(msg);
-    });
+    }, skipSync: skipSync);
     print("chainViewUrl: ${result['chainViewUrl']}");
     return _cors(Response.ok(jsonEncode(result), headers: {
       'Content-Type': 'application/json; charset=utf-8',

@@ -76,6 +76,7 @@ class _BackupPageState extends State<BackupPage> {
   String? _unzipStatus;
   String? _chainViewUrl;
   String? _workspaceId;
+  Map<String, dynamic>? _workspaceInfo;
   
   // Track load requests to prevent race conditions
   int _loadId = 0;
@@ -124,6 +125,7 @@ class _BackupPageState extends State<BackupPage> {
         if (id != null) {
            setState(() {
               _workspaceId = id;
+              _workspaceInfo = j;
            });
         }
      } catch (e) {
@@ -193,10 +195,10 @@ class _BackupPageState extends State<BackupPage> {
     super.dispose();
   }
 
-  Future<void> _loadBackups() async {
+  Future<void> _loadBackups({bool skipSync = false}) async {
     final myLoadId = ++_loadId;
     final totalSw = Stopwatch()..start();
-    print('[BackupPage] Start loading backups (LoadID: $myLoadId)...');
+    print('[BackupPage] Start loading backups (LoadID: $myLoadId, skipSync: $skipSync)...');
     final stepSw = Stopwatch()..start();
 
     if (_workspaceId == null) {
@@ -257,7 +259,11 @@ class _BackupPageState extends State<BackupPage> {
       }
 
       // 2. Then fetch commits (triggers download on server)
-      final j = await postJson("/backup/commits", {'repoName': repo, "token": widget.token});
+      final j = await postJson("/backup/commits", {
+        'repoName': repo, 
+        "token": widget.token,
+        "skipSync": skipSync,
+      });
       if (myLoadId != _loadId) {
          print('[BackupPage] LoadID $myLoadId cancelled (current: $_loadId)');
          return;
@@ -270,7 +276,7 @@ class _BackupPageState extends State<BackupPage> {
       final bool cacheHit = j['cacheHit'] == true;
       _chainViewUrl = j['chainViewUrl'] as String?;
 
-      if (cacheHit && mounted) {
+      if (cacheHit && mounted && !skipSync) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('当前本地备份已经是最新版 (Cache Hit)')),
         );
@@ -459,9 +465,17 @@ class _BackupPageState extends State<BackupPage> {
 
   void _showRollbackDialog(String sha) {
     final repoKey = _getRemoteRepoName();
-    String localPath = widget.repoPath;
+    
+    // Use workspacePath from _workspaceInfo to ensure correct directory for Git operations
+    final wsPath = _workspaceInfo?['workspacePath'] as String?;
+    if (wsPath == null) {
+       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('错误：无法定位本地工作区路径')));
+       return;
+    }
+
+    String localPath = wsPath;
     if (_selectedRepo != 'Root') {
-      localPath = p.join(widget.repoPath, _selectedRepo);
+      localPath = p.join(wsPath, _selectedRepo);
     }
 
     final messenger = ScaffoldMessenger.of(_scaffoldKey.currentContext!);
@@ -476,8 +490,8 @@ class _BackupPageState extends State<BackupPage> {
         messenger: messenger,
       ),
     ).then((_) {
-      // Reload to reflect new branch heads
-      _loadBackups();
+      // Reload to reflect new branch heads, but skip extraction sync
+      _loadBackups(skipSync: true);
     });
   }
 

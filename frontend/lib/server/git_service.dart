@@ -3110,6 +3110,7 @@ Future<Map<String, dynamic>?> getTrackingInfo(String repoPath) async {
     'packagePath': resolvedPackagePath,
     'trackingRoot': trackingRoot,
     'workspaceId': workspaceId,
+    'workspacePath': root,
   };
 }
 

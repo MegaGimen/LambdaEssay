@@ -61,9 +61,10 @@ String _getBackupDir(String repoName) {
 Future<Map<String, dynamic>> listBackupCommits(
     String repoName, String AuthToken,
     {void Function(double percent, int received, int total)? onProgress,
-    void Function(String line)? onUnzipOutput}) async {
+    void Function(String line)? onUnzipOutput,
+    bool skipSync = false}) async {
   print("==========================================================");
-  print("${DateTime.now()}: [BackupService] listBackupCommits start for $repoName");
+  print("${DateTime.now()}: [BackupService] listBackupCommits start for $repoName (skipSync=$skipSync)");
   
   // Fix: If repoName is a full path, convert to hash key to match server logic
   String targetRepoName = repoName;
@@ -114,156 +115,162 @@ Future<Map<String, dynamic>> listBackupCommits(
   final dirPath = _getBackupDir(targetRepoName);
   final dir = Directory(dirPath);
   print("${DateTime.now()}: Debug: targetRepoName=$targetRepoName, dirPath=$dirPath");
-  String LocalSha1 = "";
-  if (await File('$dirPath.zip').exists()) {
-    LocalSha1 = await sha1hash('$dirPath.zip');
-  }
 
-  final zipUrl =
-      '$_backupBaseUrl/backups/$targetRepoName/download?token=$AuthToken&LocalSha1=$LocalSha1';
-  print("${DateTime.now()}: Debug,url=$zipUrl");
-  
   bool cacheHit = false;
   String? chainViewUrl;
 
-  try {
-    final request = http.Request('GET', Uri.parse(zipUrl));
-    final response = await http.Client().send(request);
-
-    if (response.statusCode != 200) {
-       final body = await response.stream.bytesToString();
-       print("${DateTime.now()}: $body");
-       throw Exception('Failed to download backup: ${response.statusCode}');
+  if (!skipSync) {
+    String LocalSha1 = "";
+    if (await File('$dirPath.zip').exists()) {
+      LocalSha1 = await sha1hash('$dirPath.zip');
     }
 
-    chainViewUrl = response.headers['x-chain-view-url'];
+    final zipUrl =
+        '$_backupBaseUrl/backups/$targetRepoName/download?token=$AuthToken&LocalSha1=$LocalSha1';
+    print("${DateTime.now()}: Debug,url=$zipUrl");
+    
+    try {
+      final request = http.Request('GET', Uri.parse(zipUrl));
+      final response = await http.Client().send(request);
 
-    // Check content type to see if it is JSON (cache hit message) or Zip
-    final ct = response.headers['content-type'] ?? '';
-    if (ct.contains('application/json')) {
-       final body = await response.stream.bytesToString();
-       final jsonData = jsonDecode(body);
-       print("${DateTime.now()}: Debug,jsonData=$jsonData,everything cool bro!");
-       if (jsonData["message"] == "success") {
-         print("${DateTime.now()}: File up to date (Cache Hit)");
-         cacheHit = true;
-         if (jsonData.containsKey('chain_url')) {
-           chainViewUrl = jsonData['chain_url'];
+      if (response.statusCode != 200) {
+         final body = await response.stream.bytesToString();
+         print("${DateTime.now()}: $body");
+         throw Exception('Failed to download backup: ${response.statusCode}');
+      }
+
+      chainViewUrl = response.headers['x-chain-view-url'];
+
+      // Check content type to see if it is JSON (cache hit message) or Zip
+      final ct = response.headers['content-type'] ?? '';
+      if (ct.contains('application/json')) {
+         final body = await response.stream.bytesToString();
+         final jsonData = jsonDecode(body);
+         print("${DateTime.now()}: Debug,jsonData=$jsonData,everything cool bro!");
+         if (jsonData["message"] == "success") {
+           print("${DateTime.now()}: File up to date (Cache Hit)");
+           cacheHit = true;
+           if (jsonData.containsKey('chain_url')) {
+             chainViewUrl = jsonData['chain_url'];
+           }
          }
-       }
-    } else {
-       print("${DateTime.now()}: New file detected (Content-Type: $ct)! Starting download...");
-       cacheHit = false;
-       // New file
-       if (await dir.exists()) await dir.delete(recursive: true);
-       if (await File('$dirPath.zip').exists())
-         await File('$dirPath.zip').delete();
-       print("${DateTime.now()}: Deleted old files");
+      } else {
+         print("${DateTime.now()}: New file detected (Content-Type: $ct)! Starting download...");
+         cacheHit = false;
+         // New file
+         if (await dir.exists()) await dir.delete(recursive: true);
+         if (await File('$dirPath.zip').exists())
+           await File('$dirPath.zip').delete();
+         print("${DateTime.now()}: Deleted old files");
 
-       if (!await dir.exists()) {
-         print('${DateTime.now()}: Downloading backup for $repoName...');
-         final zipFile = File('$dirPath.zip');
-         await zipFile.parent.create(recursive: true);
-         
-         final contentLength = response.contentLength;
-         
-         // Notify start immediately
-         if (onProgress != null) {
-            onProgress(0.0, 0, contentLength ?? 0);
+         if (!await dir.exists()) {
+           print('${DateTime.now()}: Downloading backup for $repoName...');
+           final zipFile = File('$dirPath.zip');
+           await zipFile.parent.create(recursive: true);
+           
+           final contentLength = response.contentLength;
+           
+           // Notify start immediately
+           if (onProgress != null) {
+              onProgress(0.0, 0, contentLength ?? 0);
+           }
+
+           int received = 0;
+           final sink = zipFile.openWrite();
+           
+           await response.stream.listen(
+             (List<int> chunk) {
+               received += chunk.length;
+               sink.add(chunk);
+               if (contentLength != null) {
+                 final percent = (received / contentLength * 100);
+                 if (onProgress != null) {
+                   onProgress(percent, received, contentLength);
+                 }
+               } else {
+                 if (onProgress != null) {
+                   onProgress(0.0, received, 0);
+                 }
+               }
+             },
+             onDone: () {
+               print('${DateTime.now()}: \nDownload complete.');
+             },
+             onError: (e) {
+               print('${DateTime.now()}: \nDownload error: $e');
+               throw e;
+             },
+             cancelOnError: true,
+           ).asFuture();
+           
+           await sink.close();
          }
+      }
 
-         int received = 0;
-         final sink = zipFile.openWrite();
-         
-         await response.stream.listen(
-           (List<int> chunk) {
-             received += chunk.length;
-             sink.add(chunk);
-             if (contentLength != null) {
-               final percent = (received / contentLength * 100);
-               if (onProgress != null) {
-                 onProgress(percent, received, contentLength);
-               }
-             } else {
-               if (onProgress != null) {
-                 onProgress(0.0, received, 0);
-               }
-             }
-           },
-           onDone: () {
-             print('${DateTime.now()}: \nDownload complete.');
-           },
-           onError: (e) {
-             print('${DateTime.now()}: \nDownload error: $e');
-             throw e;
-           },
-           cancelOnError: true,
-         ).asFuture();
-         
-         await sink.close();
-       }
+      // Always re-unzip if zip file exists to prevent version issues
+      final zipFile = File('$dirPath.zip');
+      if (await zipFile.exists()) {
+        print('${DateTime.now()}: Re-unzipping $repoName to ensure fresh state...');
+        
+        // 1. Force delete existing folder
+        if (await dir.exists()) {
+          print('${DateTime.now()}: Deleting existing directory $dirPath...');
+          await dir.delete(recursive: true);
+        }
+        
+        // 2. Ensure directory exists for tar -C
+        await dir.create(recursive: true);
+
+        // Notify that we are starting extraction
+        if (onUnzipOutput != null) {
+          onUnzipOutput('准备解压文件...');
+        }
+
+        // 3. Unzip using tar -xvf
+        print('${DateTime.now()}: Unzipping $repoName with tar...');
+        final process = await Process.start('tar', [
+          '-xf',
+          zipFile.path,
+          '-v',
+          '-C',
+          dirPath
+        ]);
+
+        process.stdout.transform(utf8.decoder).transform(const LineSplitter()).listen((line) {
+          if (onUnzipOutput != null) {
+            onUnzipOutput(line);
+          }
+        });
+
+        process.stderr.transform(utf8.decoder).transform(const LineSplitter()).listen((line) {
+          if (onUnzipOutput != null) {
+            onUnzipOutput(line);
+          }
+        });
+
+        final exitCode = await process.exitCode;
+        if (exitCode != 0) {
+          throw Exception('Failed to unzip: exit code $exitCode');
+        }
+        print('${DateTime.now()}: Unzip complete for $repoName.');
+      } else {
+        print('${DateTime.now()}: Warning: Zip file not found at ${zipFile.path}, skipping unzip.');
+      }
+    } catch (e) {
+      print('${DateTime.now()}: Error during backup sync: $e');
+      // If download or unzip fails, we should not proceed with potentially partial or missing files
+      rethrow;
     }
 
-    // Always re-unzip if zip file exists to prevent version issues
-    final zipFile = File('$dirPath.zip');
-    if (await zipFile.exists()) {
-      print('${DateTime.now()}: Re-unzipping $repoName to ensure fresh state...');
-      
-      // 1. Force delete existing folder
-      if (await dir.exists()) {
-        print('${DateTime.now()}: Deleting existing directory $dirPath...');
-        await dir.delete(recursive: true);
-      }
-      
-      // 2. Ensure directory exists for tar -C
-      await dir.create(recursive: true);
-
-      // Notify that we are starting extraction
-      if (onUnzipOutput != null) {
-        onUnzipOutput('准备解压文件...');
-      }
-
-      // 3. Unzip using tar -xvf
-      print('${DateTime.now()}: Unzipping $repoName with tar...');
-      final process = await Process.start('tar', [
-        '-xf',
-        zipFile.path,
-        '-v',
-        '-C',
-        dirPath
-      ]);
-
-      process.stdout.transform(utf8.decoder).transform(const LineSplitter()).listen((line) {
-        if (onUnzipOutput != null) {
-          onUnzipOutput(line);
-        }
-      });
-
-      process.stderr.transform(utf8.decoder).transform(const LineSplitter()).listen((line) {
-        if (onUnzipOutput != null) {
-          onUnzipOutput(line);
-        }
-      });
-
-      final exitCode = await process.exitCode;
-      if (exitCode != 0) {
-        throw Exception('Failed to unzip: exit code $exitCode');
-      }
-      print('${DateTime.now()}: Unzip complete for $repoName.');
-    } else {
-      print('${DateTime.now()}: Warning: Zip file not found at ${zipFile.path}, skipping unzip.');
-    }
-  } catch (e) {
-    print('${DateTime.now()}: Error during backup sync: $e');
-    // If download or unzip fails, we should not proceed with potentially partial or missing files
-    rethrow;
+    // Pre-cache all snapshots logic
+    print('${DateTime.now()}: Pre-caching snapshots for $targetRepoName...');
+    final effectiveRepoPath = await _findEffectiveRepoPath(targetRepoName);
+    await _precacheSnapshots(targetRepoName, effectiveRepoPath);
+  } else {
+    print('${DateTime.now()}: [BackupService] Skipping backup sync (skipSync=true)');
   }
 
-  // Pre-cache all snapshots logic
-  print('${DateTime.now()}: Pre-caching snapshots for $targetRepoName...');
   final effectiveRepoPath = await _findEffectiveRepoPath(targetRepoName);
-  await _precacheSnapshots(targetRepoName, effectiveRepoPath);
-
   final commits = await _getCommitsFromDir(effectiveRepoPath, targetRepoName);
   print("${DateTime.now()}: listBackupCommits end for $repoName");
   return {
