@@ -1006,9 +1006,17 @@ Future<void> forceUpdateBranchFromSnapshot(
         (await _runGit(['rev-parse', 'FETCH_HEAD'], repoPath)).first.trim();
     onLog('获取成功，最新提交: $fetchHead');
 
-    // 2. Force update local branch
-    onLog('正在强行更新本地分支 $localBranch...');
-    await _runGit(['branch', '-f', localBranch, fetchHead], repoPath);
+    // 2. Check if localBranch is the current branch
+    final currentBranch = await getCurrentBranch(repoPath);
+    final isCurrent = currentBranch == localBranch;
+
+    if (isCurrent) {
+      onLog('正在强行重置当前工作分支 $localBranch 到备份状态 (reset --hard)...');
+      await _runGit(['reset', '--hard', fetchHead], repoPath);
+    } else {
+      onLog('正在强行更新本地分支 $localBranch (branch -f)...');
+      await _runGit(['branch', '-f', localBranch, fetchHead], repoPath);
+    }
     onLog('分支 $localBranch 已成功回滚到备份状态。');
     onLog('==========================================================');
   });

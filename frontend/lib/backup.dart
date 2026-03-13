@@ -1011,7 +1011,7 @@ class _RollbackDialogState extends State<RollbackDialog> {
   bool _loading = true;
   List<Branch> _backupBranches = [];
   List<Branch> _localBranches = [];
-  Map<String, String?> _mapping = {}; // backupBranchName -> localBranchName
+  final Set<String> _selectedBranches = {}; // Selected backup branch names
   List<String> _logs = [];
   bool _rollingBack = false;
 
@@ -1039,10 +1039,11 @@ class _RollbackDialogState extends State<RollbackDialog> {
             .map((e) => Branch.fromJson(e as Map<String, dynamic>))
             .toList();
 
-        // Initial mapping: try to match by name
+        // Auto-select branches that exist in both backup and local
         for (final bb in _backupBranches) {
-          final match = _localBranches.any((lb) => lb.name == bb.name);
-          _mapping[bb.name] = match ? bb.name : null;
+          if (_localBranches.any((lb) => lb.name == bb.name)) {
+            _selectedBranches.add(bb.name);
+          }
         }
         _loading = false;
       });
@@ -1055,19 +1056,19 @@ class _RollbackDialogState extends State<RollbackDialog> {
   }
 
   Future<void> _doRollback() async {
-    final selectedMappings = _mapping.entries
-        .where((e) => e.value != null)
-        .map((e) => {'backupBranch': e.key, 'localBranch': e.value})
-        .toList();
+    final selectedMappings = _selectedBranches.map((name) => {
+      'backupBranch': name,
+      'localBranch': name
+    }).toList();
 
     if (selectedMappings.isEmpty) {
-      widget.messenger.showSnackBar(const SnackBar(content: Text('请至少选择一个分支进行回滚')));
+      widget.messenger.showSnackBar(const SnackBar(content: Text('请至少选择一个分支进行强制替换')));
       return;
     }
 
     setState(() {
       _rollingBack = true;
-      _logs = ['开始回滚操作...'];
+      _logs = ['开始强制替换分支操作...'];
     });
 
     try {
@@ -1078,18 +1079,31 @@ class _RollbackDialogState extends State<RollbackDialog> {
         'mappings': selectedMappings,
       });
 
+      if (resp is! Map) {
+        setState(() {
+          _logs.add('错误：服务器返回了意外的数据类型 (${resp.runtimeType})');
+          _logs.add('返回内容：$resp');
+          _rollingBack = false;
+        });
+        return;
+      }
+
       final results = resp['results'] as List;
       final newLogs = <String>[];
       for (final r in results) {
-        final logs = (r['logs'] as List).cast<String>();
-        newLogs.addAll(logs);
-        if (r['success'] == false) {
-          newLogs.add('错误: ${r['error']}');
+        if (r is Map) {
+          final logs = (r['logs'] as List).cast<String>();
+          newLogs.addAll(logs);
+          if (r['success'] == false) {
+            newLogs.add('错误: ${r['error']}');
+          }
+        } else {
+          newLogs.add('错误：操作结果条目类型错误 (${r.runtimeType})');
         }
       }
       setState(() {
         _logs.addAll(newLogs);
-        _logs.add('回滚操作结束。');
+        _logs.add('操作结束。');
         _rollingBack = false;
       });
     } catch (e) {
@@ -1110,7 +1124,7 @@ class _RollbackDialogState extends State<RollbackDialog> {
     }
 
     return AlertDialog(
-      title: const Text('分支回滚配置'),
+      title: const Text('强制替换分支'),
       content: SizedBox(
         width: 600,
         height: 500,
@@ -1118,7 +1132,7 @@ class _RollbackDialogState extends State<RollbackDialog> {
           children: [
             const Padding(
               padding: EdgeInsets.only(bottom: 8.0),
-              child: Text('请选择需要回滚的备份分支及其对应的本地目标分支：',
+              child: Text('系统将备份仓库的分支强制覆盖到本地同名分支（无论领先或落后）：',
                   style: TextStyle(fontSize: 14)),
             ),
             Expanded(
@@ -1130,30 +1144,25 @@ class _RollbackDialogState extends State<RollbackDialog> {
                 ),
                 child: ListView(
                   children: _backupBranches.map((bb) {
-                    return ListTile(
+                    final hasLocalMatch = _localBranches.any((lb) => lb.name == bb.name);
+                    
+                    return CheckboxListTile(
                       dense: true,
-                      title: Text('备份分支: ${bb.displayName}'),
-                      subtitle: Text('SHA: ${bb.head.substring(0, 7)}'),
-                      trailing: DropdownButton<String>(
-                        value: _mapping[bb.name],
-                        hint: const Text('选择本地分支'),
-                        underline: const SizedBox(),
-                        items: [
-                          const DropdownMenuItem<String>(
-                              value: null, child: Text('不回滚')),
-                          ..._localBranches.map((lb) => DropdownMenuItem(
-                                value: lb.name,
-                                child: Text(lb.displayName),
-                              )),
-                        ],
-                        onChanged: _rollingBack
-                            ? null
-                            : (val) {
-                                setState(() {
-                                  _mapping[bb.name] = val;
-                                });
-                              },
-                      ),
+                      enabled: !_rollingBack && hasLocalMatch,
+                      title: Text('分支: ${bb.displayName}'),
+                      subtitle: Text(hasLocalMatch 
+                        ? 'SHA: ${bb.head.substring(0, 7)} (将覆盖本地同名分支)' 
+                        : '本地不存在同名分支，暂不支持替换'),
+                      value: _selectedBranches.contains(bb.name),
+                      onChanged: (val) {
+                        setState(() {
+                          if (val == true) {
+                            _selectedBranches.add(bb.name);
+                          } else {
+                            _selectedBranches.remove(bb.name);
+                          }
+                        });
+                      },
                     );
                   }).toList(),
                 ),
@@ -1200,7 +1209,7 @@ class _RollbackDialogState extends State<RollbackDialog> {
                   height: 20,
                   child: CircularProgressIndicator(
                       strokeWidth: 2, color: Colors.white))
-              : const Text('确认强行回滚'),
+              : const Text('确认强制替换所选分支'),
         ),
       ],
     );

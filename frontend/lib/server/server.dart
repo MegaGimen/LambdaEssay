@@ -764,15 +764,29 @@ Future<Response> handleBackupBranches(Request req) async {
 }
 
 Future<Response> handleBackupRollback(Request req) async {
-  final body = await req.readAsString();
-  final data = jsonDecode(body) as Map<String, dynamic>;
+  Map<String, dynamic> data;
+  try {
+    final body = await req.readAsString();
+    data = jsonDecode(body) as Map<String, dynamic>;
+  } catch (e) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'Invalid JSON: ${e.toString()}'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+
   final repoName = data['repoName'] as String?;
   final commitId = data['commitId'] as String?;
   final localPath = _sanitizePath(data['localPath'] as String?);
-  final mappings = data['mappings'] as List?; // [{backupBranch: '...', localBranch: '...'}]
+  final mappings =
+      data['mappings'] as List?; // [{backupBranch: '...', localBranch: '...'}]
 
-  if (repoName == null || commitId == null || localPath.isEmpty || mappings == null) {
-    return _cors(Response(400, body: 'Missing required parameters'));
+  if (repoName == null ||
+      commitId == null ||
+      localPath.isEmpty ||
+      mappings == null) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'Missing required parameters'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
   }
 
   try {
@@ -780,21 +794,17 @@ Future<Response> handleBackupRollback(Request req) async {
     final results = <Map<String, dynamic>>[];
 
     for (final m in mappings) {
+      if (m is! Map) continue;
       final backupBranch = m['backupBranch'] as String;
       final localBranch = m['localBranch'] as String;
       final logs = <String>[];
-      
+
       try {
         await forceUpdateBranchFromSnapshot(
-          localPath,
-          localBranch,
-          snapshotGitPath,
-          backupBranch,
-          (log) {
-            print(log);
-            logs.add(log);
-          }
-        );
+            localPath, localBranch, snapshotGitPath, backupBranch, (log) {
+          print(log);
+          logs.add(log);
+        });
         results.add({
           'backupBranch': backupBranch,
           'localBranch': localBranch,
@@ -811,13 +821,16 @@ Future<Response> handleBackupRollback(Request req) async {
         });
       }
     }
-    
+
     // Clear cache after rollback as branch heads have changed
     clearCache();
-    
-    return _cors(Response.ok(jsonEncode({'results': results})));
+
+    return _cors(Response.ok(jsonEncode({'results': results}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
   } catch (e) {
-    return _cors(Response(500, body: e.toString()));
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
   }
 }
 
