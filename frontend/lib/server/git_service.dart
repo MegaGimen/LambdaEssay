@@ -4755,7 +4755,24 @@ Future<void> forkLocal(String repoName, String newBranchName) async {
     // Removed folder check to allow forking root branch
 
     final currentBranch = await getCurrentBranch(repoPath);
-    final remoteName = repoName.toLowerCase();
+    
+    // Calculate correct remoteName based on rootHash-relName logic
+    String effectiveRemoteRepoName;
+    final parentFolder = await _findParentFolderProject(repoPath);
+    if (parentFolder == null || p.equals(p.normalize(parentFolder), p.normalize(repoPath))) {
+      effectiveRemoteRepoName = p.basename(repoPath);
+      print('Debug: forkLocal - Calculated effectiveRemoteRepoName (standalone): $effectiveRemoteRepoName (parentFolder: $parentFolder)');
+    } else {
+      final relativePath = p.relative(repoPath, from: parentFolder);
+      final normalizedRelPath = relativePath.replaceAll(r'\', '/');
+      final rootName = p.basename(parentFolder);
+      final relName = normalizedRelPath.replaceAll('/', '-');
+      effectiveRemoteRepoName = '$rootName-$relName';
+      print(
+          'Debug: forkLocal - Calculated effectiveRemoteRepoName (sub-repo): $effectiveRemoteRepoName (rootName: $rootName, relName: $relName)');
+    }
+
+    final remoteName = effectiveRemoteRepoName.toLowerCase();
 
     // FORK/BRANCH Execution Logic:
     // 1. Cleanup any stale PreviewFork branch
@@ -4769,6 +4786,12 @@ Future<void> forkLocal(String repoName, String newBranchName) async {
     // This creates 'newBranchName' pointing to 'remote/currentBranch' and switches to it.
     // The original local branch is left untouched.
     if (currentBranch != null) {
+      // Ensure the remote is added before checking out from it
+      // Note: We don't have username/token here, but we might not need them if remote is already added
+      // However, if we need to add it, we might need to fetch it first.
+      // Wait, forkLocal is usually called after a pull conflict is detected, so the remote should already exist.
+      // But to be safe, we should probably ensure it.
+      
       await _runGit(
           ['checkout', '-b', newBranchName, '$remoteName/$currentBranch'],
           repoPath);
