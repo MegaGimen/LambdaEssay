@@ -567,7 +567,7 @@ class _BackupPageState extends State<BackupPage> {
                   onTap: () => Navigator.pop(ctx, 'Root'),
                 ),
                 const Divider(),
-                _buildTreeWidget(tree['_children']),
+                _buildTreeWidget(ctx, tree['_children']),
               ],
             ),
           ),
@@ -586,7 +586,7 @@ class _BackupPageState extends State<BackupPage> {
     });
   }
 
-  Widget _buildTreeWidget(Map<String, dynamic> children) {
+  Widget _buildTreeWidget(BuildContext dialogCtx, Map<String, dynamic> children) {
     if (children.isEmpty) return const SizedBox.shrink();
     
     return Column(
@@ -608,9 +608,9 @@ class _BackupPageState extends State<BackupPage> {
                     leading: const Icon(Icons.description, size: 16),
                     title: const Text('查看此文件夹的历史'),
                     selected: _selectedRepo == fullPath,
-                    onTap: () => Navigator.of(context).pop(fullPath),
+                    onTap: () => Navigator.of(dialogCtx).pop(fullPath),
                   ),
-                _buildTreeWidget(node['_children']),
+                _buildTreeWidget(dialogCtx, node['_children']),
              ],
            );
         } else {
@@ -618,7 +618,7 @@ class _BackupPageState extends State<BackupPage> {
              leading: const Icon(Icons.description),
              title: Text(name),
              selected: _selectedRepo == fullPath,
-             onTap: () => Navigator.of(context).pop(fullPath),
+             onTap: () => Navigator.of(dialogCtx).pop(fullPath),
            );
         }
       }).toList(),
