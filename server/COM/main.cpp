@@ -368,15 +368,32 @@ public:
     }
 
     bool CompareDocument(const string& originalPath, const string& revisedPath, const string& outputPath, bool isDocx) {
-        if (!IsConnected()) return false;
+        Log("Comparing (Silent Mode): " + originalPath + " vs " + revisedPath);
 
-        Log("Comparing: " + originalPath + " vs " + revisedPath);
+        // 1. Create a PRIVATE Word instance just for this comparison
+        // This ensures the process is silent and doesn't interfere with the user's active Word session.
+        CLSID clsid;
+        HRESULT hr = CLSIDFromProgID(L"Word.Application", &clsid);
+        if (FAILED(hr)) return false;
 
+        IDispatch* pLocalWord = NULL;
+        hr = CoCreateInstance(clsid, NULL, CLSCTX_LOCAL_SERVER, IID_IDispatch, (void**)&pLocalWord);
+        if (FAILED(hr)) {
+            Log("Failed to create private Word instance");
+            return false;
+        }
+
+        // 2. Set invisible and disable alerts
         VARIANT vFalse, vTrue;
         vFalse.vt = VT_BOOL; vFalse.boolVal = VARIANT_FALSE;
         vTrue.vt = VT_BOOL; vTrue.boolVal = VARIANT_TRUE;
+        
+        AutoWrap(DISPATCH_PROPERTYPUT, NULL, pLocalWord, (LPOLESTR)L"Visible", 1, vFalse);
+        
+        VARIANT vZero; vZero.vt = VT_I4; vZero.lVal = 0; // wdAlertsNone
+        AutoWrap(DISPATCH_PROPERTYPUT, NULL, pLocalWord, (LPOLESTR)L"DisplayAlerts", 1, vZero);
 
-        // 1. Open Original
+        // 3. Open Original Document
         VARIANT vFileName;
         vFileName.vt = VT_BSTR;
         int wlen = MultiByteToWideChar(CP_ACP, 0, originalPath.c_str(), -1, NULL, 0);
@@ -386,9 +403,11 @@ public:
 
         VARIANT vDocs;
         VariantInit(&vDocs);
-        HRESULT hr = AutoWrap(DISPATCH_PROPERTYGET, &vDocs, pWordApp, (LPOLESTR)L"Documents", 0);
+        hr = AutoWrap(DISPATCH_PROPERTYGET, &vDocs, pLocalWord, (LPOLESTR)L"Documents", 0);
         if (FAILED(hr) || vDocs.vt != VT_DISPATCH) {
             SysFreeString(bstrFile);
+            AutoWrap(DISPATCH_METHOD, NULL, pLocalWord, (LPOLESTR)L"Quit", 0);
+            pLocalWord->Release();
             return false;
         }
         IDispatch* pDocs = vDocs.pdispVal;
@@ -396,18 +415,20 @@ public:
         VARIANT vDoc;
         VariantInit(&vDoc);
         // Open(FileName, ConfirmConversions=False, ReadOnly=True)
-        // Args reversed: ReadOnly, ConfirmConversions, FileName
+        // Arguments are passed in reverse order to AutoWrap
         hr = AutoWrap(DISPATCH_METHOD, &vDoc, pDocs, (LPOLESTR)L"Open", 3, vTrue, vFalse, vFileName);
         SysFreeString(bstrFile);
         pDocs->Release();
 
         if (FAILED(hr) || vDoc.vt != VT_DISPATCH) {
              Log("Failed to open original document");
+             AutoWrap(DISPATCH_METHOD, NULL, pLocalWord, (LPOLESTR)L"Quit", 0);
+             pLocalWord->Release();
              return false;
         }
         IDispatch* pDoc = vDoc.pdispVal;
 
-        // 2. Compare
+        // 4. Compare with Revised Document
         VARIANT vRevisedPath;
         vRevisedPath.vt = VT_BSTR;
         wlen = MultiByteToWideChar(CP_ACP, 0, revisedPath.c_str(), -1, NULL, 0);
@@ -424,7 +445,7 @@ public:
         vDest.lVal = 2; // wdCompareDestinationNew
 
         // Compare(Name, AuthorName, CompareTarget, DetectFormatChanges, IgnoreAllComparisonWarnings, AddToRecentFiles, RemovePersonalInformation, RemoveDateAndTime)
-        // Reverse args: RemoveDateAndTime, RemovePersonalInformation, AddToRecentFiles, IgnoreAllComparisonWarnings, DetectFormatChanges, CompareTarget, AuthorName, Name
+        // Reverse arguments for AutoWrap
         hr = AutoWrap(DISPATCH_METHOD, NULL, pDoc, (LPOLESTR)L"Compare", 8, 
             vFalse, // RemoveDateAndTime
             vFalse, // RemovePersonalInformation
@@ -443,26 +464,29 @@ public:
              Log("Compare failed");
              AutoWrap(DISPATCH_METHOD, NULL, pDoc, (LPOLESTR)L"Close", 1, vFalse);
              pDoc->Release();
+             AutoWrap(DISPATCH_METHOD, NULL, pLocalWord, (LPOLESTR)L"Quit", 0);
+             pLocalWord->Release();
              return false;
         }
 
-        // 3. Get Diff Document (ActiveDocument)
+        // 5. Get Comparison Result Document (ActiveDocument of the private instance)
         VARIANT vActiveDoc;
         VariantInit(&vActiveDoc);
-        hr = AutoWrap(DISPATCH_PROPERTYGET, &vActiveDoc, pWordApp, (LPOLESTR)L"ActiveDocument", 0);
+        hr = AutoWrap(DISPATCH_PROPERTYGET, &vActiveDoc, pLocalWord, (LPOLESTR)L"ActiveDocument", 0);
         if (FAILED(hr) || vActiveDoc.vt != VT_DISPATCH) {
              Log("Failed to get active document after compare");
              AutoWrap(DISPATCH_METHOD, NULL, pDoc, (LPOLESTR)L"Close", 1, vFalse);
              pDoc->Release();
+             AutoWrap(DISPATCH_METHOD, NULL, pLocalWord, (LPOLESTR)L"Quit", 0);
+             pLocalWord->Release();
              return false;
         }
         IDispatch* pDiffDoc = vActiveDoc.pdispVal;
 
-        // 4. Save
+        // 6. Save the comparison result
         VARIANT vFormat;
         vFormat.vt = VT_I4;
-        vFormat.lVal = isDocx ? 12 : 17; // wdFormatXMLDocument = 12 (docx), wdFormatPDF = 17
-        // Note: wdFormatDocumentDefault = 16 (might depend on version, 12 is safer for DOCX)
+        vFormat.lVal = isDocx ? 12 : 17; // 12=docx, 17=pdf
 
         VARIANT vOutputPath;
         vOutputPath.vt = VT_BSTR;
@@ -471,11 +495,10 @@ public:
         MultiByteToWideChar(CP_ACP, 0, outputPath.c_str(), -1, bstrOutput, wlen);
         vOutputPath.bstrVal = bstrOutput;
 
-        // SaveAs2(FileName, FileFormat) -> Reverse: FileFormat, FileName
         hr = AutoWrap(DISPATCH_METHOD, NULL, pDiffDoc, (LPOLESTR)L"SaveAs2", 2, vFormat, vOutputPath);
         SysFreeString(bstrOutput);
         
-        // 5. Close
+        // 7. Close documents
         VARIANT vNoSave;
         vNoSave.vt = VT_I4;
         vNoSave.lVal = 0; // wdDoNotSaveChanges
@@ -485,6 +508,10 @@ public:
 
         AutoWrap(DISPATCH_METHOD, NULL, pDoc, (LPOLESTR)L"Close", 1, vNoSave);
         pDoc->Release();
+
+        // 8. Quit the private Word instance
+        AutoWrap(DISPATCH_METHOD, NULL, pLocalWord, (LPOLESTR)L"Quit", 1, vNoSave);
+        pLocalWord->Release();
 
         if (SUCCEEDED(hr)) {
             Log("Compare saved to: " + outputPath);
