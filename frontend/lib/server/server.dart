@@ -14,6 +14,7 @@ import 'diff/repocmp.dart';
 import 'sumdiff.dart';
 import 'ai_diff_service.dart';
 import 'package:http/http.dart' as http;
+import 'subscription_service.dart';
 
 import 'package:uuid/uuid.dart';
 import 'dart:async';
@@ -25,6 +26,10 @@ Function(Map<String, dynamic> data)? onNotification;
 List<WebSocketChannel> _activePluginSockets = [];
 final _pendingRequests = <String, Completer<dynamic>>{};
 final _uuid = Uuid();
+
+void _log(String message) {
+  print('[${DateTime.now()}] $message');
+}
 
 Response _cors(Response r) {
   return r.change(headers: {
@@ -534,7 +539,7 @@ Future<Response> handleGraph(Request req) async {
         body: jsonEncode({'error': 'not a git repo'}),
         headers: {'Content-Type': 'application/json; charset=utf-8'}));
   }
-  print('Debug: /graph - Fetching graph for $normalized (limit: $limit)');
+  _log('Debug: /graph - Fetching graph for $normalized (limit: $limit)');
   try {
     final resp = await getGraph(normalized, limit: limit);
     return _cors(Response.ok(jsonEncode(resp.toJson()),
@@ -577,6 +582,10 @@ Future<Response> handleCompare(Request req) async {
   final c1 = data['commit1'] as String?;
   final c2 = data['commit2'] as String?;
 
+  final userId = data['userid'] as String?;
+  final subInfo = userId != null ? await SubscriptionService.checkSubscription(userId) : null;
+
+
   if (repoPath.isEmpty || c1 == null || c2 == null) {
     return _cors(Response(400,
         body: jsonEncode({'error': 'repoPath, commit1, commit2 required'}),
@@ -600,6 +609,10 @@ Future<Response> handleSummarizeDiff(Request req) async {
     final data = jsonDecode(body) as Map<String, dynamic>;
     final beforePath = _sanitizePath(data['beforePath'] as String?);
     final afterPath = _sanitizePath(data['afterPath'] as String?);
+
+    final userId = data['userid'] as String?;
+    final subInfo = userId != null ? await SubscriptionService.checkSubscription(userId) : null;
+
 
     if (beforePath.isEmpty || afterPath.isEmpty) {
       return _cors(Response(400,
@@ -720,6 +733,7 @@ Future<Response> handleBackupGraph(Request req) async {
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoName = data['repoName'] as String?;
   final commitId = data['commitId'] as String?;
+
   if (repoName == null || commitId == null) {
     return _cors(Response(400, body: 'Repo name and commitId required'));
   }
@@ -728,6 +742,95 @@ Future<Response> handleBackupGraph(Request req) async {
     return _cors(Response.ok(jsonEncode(graph)));
   } catch (e) {
     return _cors(Response(500, body: e.toString()));
+  }
+}
+
+Future<Response> handleBackupBranches(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final repoName = data['repoName'] as String?;
+  final commitId = data['commitId'] as String?;
+
+  if (repoName == null || commitId == null) {
+    return _cors(Response(400, body: 'Repo name and commitId required'));
+  }
+  try {
+    final branches = await getBackupBranches(repoName, commitId);
+    return _cors(Response.ok(
+        jsonEncode({'branches': branches.map((b) => b.toJson()).toList()})));
+  } catch (e) {
+    return _cors(Response(500, body: e.toString()));
+  }
+}
+
+Future<Response> handleBackupRollback(Request req) async {
+  Map<String, dynamic> data;
+  try {
+    final body = await req.readAsString();
+    data = jsonDecode(body) as Map<String, dynamic>;
+  } catch (e) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'Invalid JSON: ${e.toString()}'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+
+  final repoName = data['repoName'] as String?;
+  final commitId = data['commitId'] as String?;
+  final localPath = _sanitizePath(data['localPath'] as String?);
+  final mappings =
+      data['mappings'] as List?; // [{backupBranch: '...', localBranch: '...'}]
+
+  if (repoName == null ||
+      commitId == null ||
+      localPath.isEmpty ||
+      mappings == null) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'Missing required parameters'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+
+  try {
+    final snapshotGitPath = await resolveSnapshotGitPath(repoName, commitId);
+    final results = <Map<String, dynamic>>[];
+
+    for (final m in mappings) {
+      if (m is! Map) continue;
+      final backupBranch = m['backupBranch'] as String;
+      final localBranch = m['localBranch'] as String;
+      final logs = <String>[];
+
+      try {
+        await forceUpdateBranchFromSnapshot(
+            localPath, localBranch, snapshotGitPath, backupBranch, (log) {
+          print(log);
+          logs.add(log);
+        });
+        results.add({
+          'backupBranch': backupBranch,
+          'localBranch': localBranch,
+          'success': true,
+          'logs': logs
+        });
+      } catch (e) {
+        results.add({
+          'backupBranch': backupBranch,
+          'localBranch': localBranch,
+          'success': false,
+          'error': e.toString(),
+          'logs': logs
+        });
+      }
+    }
+
+    // Clear cache after rollback as branch heads have changed
+    clearCache();
+
+    return _cors(Response.ok(jsonEncode({'results': results}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
   }
 }
 
@@ -765,6 +868,7 @@ Future<Response> handleBackupPreview(Request req) async {
   final data = jsonDecode(body) as Map<String, dynamic>;
   final repoName = data['repoName'] as String?;
   final commitId = data['commitId'] as String?;
+
   if (repoName == null || commitId == null) {
     return _cors(Response(400, body: 'Repo name and commitId required'));
   }
@@ -917,10 +1021,19 @@ Future<Response> handleCompareAi(Request req) async {
   final body = await req.readAsString();
   final data = jsonDecode(body) as Map<String, dynamic>;
 
+  final userId = data['userid'] as String?;
+  if (userId == null) {
+    return _cors(Response(403,
+        body: jsonEncode({'error': 'No userid'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  final subInfo = await SubscriptionService.checkSubscription(userId);
+
   final repoPath = _sanitizePath(data['repoPath'] as String?);
   final commit1 = (data['commit1'] as String? ?? '').trim();
   final commit2 = (data['commit2'] as String? ?? '').trim();
   final docType = (data['docType'] as String? ?? 'word').trim();
+  final token = data['token'] as String?;
 
   if (repoPath.isEmpty || commit1.isEmpty || commit2.isEmpty) {
     return _cors(Response.badRequest(
@@ -944,6 +1057,7 @@ Future<Response> handleCompareAi(Request req) async {
         commit1,
         commit2,
         docType: docType,
+        token: token,
       );
     }
 
@@ -1333,6 +1447,7 @@ Future<Response> handlePush(Request req) async {
   final token = (data['token'] as String?)?.trim() ?? '';
   final force = data['force'] == true;
   final branch = (data['branch'] as String?)?.trim();
+  final skipBackup = data['skipBackup'] == true;
 
   if (repoPath.isEmpty || username.isEmpty || token.isEmpty) {
     return _cors(Response(400,
@@ -1340,7 +1455,7 @@ Future<Response> handlePush(Request req) async {
         headers: {'Content-Type': 'application/json; charset=utf-8'}));
   }
   try {
-    await pushToRemote(repoPath, username, token, force: force, branch: branch);
+    await pushToRemote(repoPath, username, token, force: force, branch: branch, skipBackup: skipBackup);
     return _cors(Response.ok(jsonEncode({'status': 'ok'}), headers: {
       'Content-Type': 'application/json; charset=utf-8',
     }));
@@ -1878,6 +1993,7 @@ Future<Response> handleBackupCommits(Request req) async {
   final data = jsonDecode(body) as Map<String, dynamic>;
   final token = (data['token'] as String?)?.trim() ?? '';
   final repoName = (data['repoName'] as String?)?.trim() ?? '';
+  final skipSync = data['skipSync'] == true;
 
   if (repoName.isEmpty) {
     return _cors(Response(400,
@@ -1895,9 +2011,69 @@ Future<Response> handleBackupCommits(Request req) async {
         'total': total
       };
       onNotification?.call(msg);
-    });
+    }, onUnzipOutput: (line) {
+      final msg = {
+        'type': 'unzip_progress',
+        'repo': repoName,
+        'line': line,
+      };
+      onNotification?.call(msg);
+    }, skipSync: skipSync);
     print("chainViewUrl: ${result['chainViewUrl']}");
     return _cors(Response.ok(jsonEncode(result), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> handleBackupFailures(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final username = data['username'] as String?;
+  final repoName = data['repoName'] as String?;
+
+  if (username == null || username.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'username required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+  
+  if (repoName == null || repoName.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'repoName required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+
+  try {
+    final failures = await listBackupFailures(username, repoName);
+    return _cors(Response.ok(jsonEncode(failures), headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    }));
+  } catch (e) {
+    return _cors(Response(500,
+        body: jsonEncode({'error': e.toString()}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+}
+
+Future<Response> handleRetryBackupFailure(Request req) async {
+  final body = await req.readAsString();
+  final data = jsonDecode(body) as Map<String, dynamic>;
+  final failureId = data['failureId'] as String?;
+
+  if (failureId == null || failureId.isEmpty) {
+    return _cors(Response(400,
+        body: jsonEncode({'error': 'failureId required'}),
+        headers: {'Content-Type': 'application/json; charset=utf-8'}));
+  }
+
+  try {
+    final success = await retryBackupFailure(failureId);
+    return _cors(Response.ok(jsonEncode({'success': success}), headers: {
       'Content-Type': 'application/json; charset=utf-8',
     }));
   } catch (e) {

@@ -1,4 +1,5 @@
 import 'server.dart';
+import 'subscription_service.dart';
 
 final Map<String, Function> routeMap = {
   '/health': handleHealth,
@@ -7,6 +8,9 @@ final Map<String, Function> routeMap = {
   '/api/health': handleApiHealth,
   '/api/save': handleApiSave,
   '/api/document': handleApiDocument,
+  '/api/subscription/plans': SubscriptionService.handleSubscriptionPlans,
+  '/api/subscription/purchase': SubscriptionService.handleSubscriptionPurchase,
+  '/api/subscription/query': SubscriptionService.handleSubscriptionQuery,
   '/reset': handleReset,
   '/<ignored|.*>': optionsHandler,
   '/fetch': handleFetch,
@@ -23,6 +27,8 @@ final Map<String, Function> routeMap = {
   '/summarizeDiff': handleSummarizeDiff,
   '/summarize_commit': handleSummarizeCommit,
   '/backup/graph': handleBackupGraph,
+  '/backup/branches': handleBackupBranches,
+  '/backup/rollback': handleBackupRollback,
   '/compare_repos': handleCompareRepos,
   '/backup/preview': handleBackupPreview,
   '/commit': handleCommit,
@@ -66,4 +72,6 @@ final Map<String, Function> routeMap = {
   '/complete_merge': handleCompleteMerge,
   '/edge/add': handleEdgeAdd,
   '/backup/commits': handleBackupCommits,
+  '/backup/failures': handleBackupFailures,
+  '/backup/retry_failure': handleRetryBackupFailure,
 };

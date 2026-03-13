@@ -19,26 +19,70 @@ class BackupPage extends StatefulWidget {
   final String projectName;
   final String repoPath;
   final String token;
+  final String username;
+  final String? initialSubRepo;
+
   const BackupPage({
     super.key,
     required this.projectName,
     required this.repoPath,
     required this.token,
+    this.username = '',
+    this.initialSubRepo,
   });
   @override
   State<BackupPage> createState() => _BackupPageState();
 }
 
+class BackupItem {
+  final CommitNode? commit;
+  final Map<String, dynamic>? failure;
+  BackupItem({this.commit, this.failure});
+  
+  DateTime get date {
+    try {
+      if (commit != null) {
+        // The date might have already been parsed in backup_service.dart
+        // or it might be the original git commit date.
+        // We use a robust regex to extract the timestamp from the subject, 
+        // by skipping anything until the first digit after the prefix.
+        final match = RegExp(r'snapshot time.*?(\d[\d.]+)').firstMatch(commit!.subject);
+        if (match != null) {
+          final ts = double.parse(match.group(1)!);
+          return DateTime.fromMillisecondsSinceEpoch((ts * 1000).toInt());
+        }
+        return DateTime.parse(commit!.date);
+      }
+      if (failure != null) {
+        final ts = failure!['timestamp'];
+        if (ts is num) {
+          return DateTime.fromMillisecondsSinceEpoch((ts * 1000).toInt());
+        }
+        return DateTime.parse(ts.toString());
+      }
+    } catch (_) {}
+    return DateTime.fromMillisecondsSinceEpoch(0);
+  }
+}
+
 class _BackupPageState extends State<BackupPage> {
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   bool _loading = false;
   String? _error;
   bool _graphHovering = false;
   // StreamSubscription? _notificationSubscription;
   double _downloadProgress = 0.0;
+  bool _hasDownloadStarted = false;
+  String? _unzipStatus;
   String? _chainViewUrl;
   String? _workspaceId;
+  Map<String, dynamic>? _workspaceInfo;
+  
+  // Track load requests to prevent race conditions
+  int _loadId = 0;
+  final Semaphore _comparisonSemaphore = Semaphore(2);
 
-  List<CommitNode> _commits = [];
+  List<BackupItem> _items = [];
   // Store comparison results for each backup commit vs local
   final Map<String, ComparisonData> _comparisons = {};
   final Set<String> _failedComparisons = {};
@@ -46,12 +90,13 @@ class _BackupPageState extends State<BackupPage> {
   double _uiScale = 1.0;
 
   List<String> _subRepos = [];
-  String _selectedRepo = 'Root';
+  late String _selectedRepo;
 
 
   @override
   void initState() {
     super.initState();
+    _selectedRepo = widget.initialSubRepo ?? 'Root';
     _initNotifications();
     _fetchSubRepos();
     // _sharedTc.addListener(_onScaleChanged);
@@ -80,6 +125,7 @@ class _BackupPageState extends State<BackupPage> {
         if (id != null) {
            setState(() {
               _workspaceId = id;
+              _workspaceInfo = j;
            });
         }
      } catch (e) {
@@ -117,9 +163,16 @@ class _BackupPageState extends State<BackupPage> {
 
       if (!mounted) return;
       try {
-        if (data['type'] == 'backup_progress' && data['repo'] == widget.projectName) {
+        final expectedRepo = _getRemoteRepoName();
+        if (data['type'] == 'backup_progress' && data['repo'] == expectedRepo) {
           setState(() {
             _downloadProgress = (data['percent'] as num).toDouble();
+            _hasDownloadStarted = true;
+          });
+        } else if (data['type'] == 'unzip_progress' && data['repo'] == expectedRepo) {
+          setState(() {
+             _unzipStatus = data['line'] as String?;
+             _hasDownloadStarted = true;
           });
         }
       } catch (e) {
@@ -142,11 +195,22 @@ class _BackupPageState extends State<BackupPage> {
     super.dispose();
   }
 
-  Future<void> _loadBackups() async {
+  Future<void> _loadBackups({bool skipSync = false}) async {
+    final myLoadId = ++_loadId;
+    final totalSw = Stopwatch()..start();
+    print('[BackupPage] Start loading backups (LoadID: $myLoadId, skipSync: $skipSync)...');
+    final stepSw = Stopwatch()..start();
+
     if (_workspaceId == null) {
        await _fetchWorkspaceId();
+       if (myLoadId != _loadId) return; // Cancelled
+       print('[BackupPage] _fetchWorkspaceId: ${stepSw.elapsedMilliseconds}ms');
+       stepSw.reset();
     }
     final repo = _getRemoteRepoName();
+    print('[BackupPage] _getRemoteRepoName: ${stepSw.elapsedMilliseconds}ms');
+    stepSw.reset();
+
     if (widget.projectName.isEmpty) {
       setState(() => _error = '项目名称为空');
       return;
@@ -154,80 +218,203 @@ class _BackupPageState extends State<BackupPage> {
     setState(() {
       _loading = true;
       _error = null;
-      _commits = [];
+      _items = [];
       _comparisons.clear();
       _failedComparisons.clear();
       _downloadProgress = 0.0;
+      _hasDownloadStarted = false;
+      _unzipStatus = null;
     });
+    print('[BackupPage] Initial setState: ${stepSw.elapsedMilliseconds}ms');
+    stepSw.reset();
+
     try {
         print("The token here is ${widget.token}");
-      final j = await postJson("/backup/commits", {'repoName': repo, "token": widget.token});
+      
+      // 1. Fetch failures first
+      List<Map<String, dynamic>> failures = [];
+      print('[BackupPage] Checking failures for user: "${widget.username}"');
+      if (widget.username.isNotEmpty) {
+        try {
+          print('[BackupPage] Calling fetch failures API...');
+          final fResp = await postJson("/backup/failures", {'username': widget.username, 'repoName': repo});
+          print('[BackupPage] Fetch failures API finished: ${stepSw.elapsedMilliseconds}ms');
+          stepSw.reset();
+
+          if (fResp is List) {
+             failures = fResp.cast<Map<String, dynamic>>();
+             // Show failures immediately while waiting for commits
+             if (mounted && myLoadId == _loadId) {
+               setState(() {
+                 _items = failures.map((f) => BackupItem(failure: f)).toList();
+               });
+             }
+          }
+        } catch (e) {
+          print('[BackupPage] Failed to fetch failures: $e');
+        }
+      } else {
+          print('[BackupPage] Skip fetch failures (no username): ${stepSw.elapsedMilliseconds}ms');
+          stepSw.reset();
+      }
+
+      // 2. Then fetch commits (triggers download on server)
+      final j = await postJson("/backup/commits", {
+        'repoName': repo, 
+        "token": widget.token,
+        "skipSync": skipSync,
+      });
+      if (myLoadId != _loadId) {
+         print('[BackupPage] LoadID $myLoadId cancelled (current: $_loadId)');
+         return;
+      }
+
+      print('[BackupPage] Fetch commits API finished: ${stepSw.elapsedMilliseconds}ms');
+      stepSw.reset();
+
       final list = (j['commits'] as List?) ?? const [];
       final bool cacheHit = j['cacheHit'] == true;
       _chainViewUrl = j['chainViewUrl'] as String?;
-      
-      if (cacheHit && mounted) {
+
+      if (cacheHit && mounted && !skipSync) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('当前本地备份已经是最新版 (Cache Hit)')),
         );
       }
 
+      print('[BackupPage] Start parsing commits...');
       final commits = list
           .map((e) => CommitNode.fromJson(e as Map<String, dynamic>))
           .toList();
-      commits.sort((a, b) => b.date.compareTo(a.date));
+      print('[BackupPage] Parse commits finished: ${stepSw.elapsedMilliseconds}ms');
+      stepSw.reset();
+          
+      final items = <BackupItem>[];
+      for (final c in commits) items.add(BackupItem(commit: c));
+      for (final f in failures) items.add(BackupItem(failure: f));
+      
+      print('[BackupPage] Sorting items...');
+      items.sort((a, b) => b.date.compareTo(a.date));
+      print('[BackupPage] Merge and Sort items finished: ${stepSw.elapsedMilliseconds}ms');
+      stepSw.reset();
+      
+      if (myLoadId != _loadId) return;
       setState(() {
-        _commits = commits;
+        _items = items;
         _loading = false;
       });
-      for (final c in commits) {
-        _ensureComparison(repo, c.id).catchError((e) {
-          debugPrint('Failed to load comparison for ${c.id}: $e');
-          if (mounted) {
-            setState(() {
-              _failedComparisons.add(c.id);
-            });
-          }
-        });
+      print('[BackupPage] Update UI setState: ${stepSw.elapsedMilliseconds}ms');
+      stepSw.reset();
+
+      int count = 0;
+      for (final item in items) {
+        if (item.commit != null) {
+          count++;
+          _ensureComparison(repo, item.commit!.id, myLoadId).catchError((e) {
+            debugPrint('Failed to load comparison for ${item.commit!.id}: $e');
+            if (mounted && myLoadId == _loadId) {
+              setState(() {
+                _failedComparisons.add(item.commit!.id);
+              });
+            }
+          });
+        }
       }
+      print('[BackupPage] Triggered $count comparison loads: ${stepSw.elapsedMilliseconds}ms');
+      stepSw.reset();
+
     } catch (e) {
+      if (myLoadId != _loadId) return;
       setState(() {
         _error = e.toString();
         _loading = false;
       });
+    } finally {
+        totalSw.stop();
+        print('[BackupPage] Total load time (until comparison trigger): ${totalSw.elapsedMilliseconds}ms');
     }
   }
 
-  Future<void> _ensureComparison(String repo, String sha) async {
+  Future<void> _ensureComparison(String repo, String sha, int loadId) async {
+    if (loadId != _loadId) return;
     if (_comparisons.containsKey(sha)) return;
-    // Call the compare_repos API to get aligned graphs
-    final j = await postJson("/compare_repos", {
-      'repoName': repo,
-      'commitA': sha, // Backup commit
-      'commitB': 'local', // Local state
-      'localPath': widget.repoPath,
-    });
-    final gA = GraphData.fromJson(j['graphA']);
-    final gB = GraphData.fromJson(j['graphB']);
-    final rawMapping = j['unifiedRowMapping'] as Map<String, dynamic>;
-    final mapping = rawMapping.map((k, v) => MapEntry(k, v as int));
-    final summary = j['summary'] as String? ?? '';
-    final details = j['details'] as Map<String, dynamic>? ?? {};
 
-    final colors = _computeNodeColors(details);
+    await _comparisonSemaphore.acquire();
+    try {
+      if (loadId != _loadId) return;
+      
+      // ==================================================
+      // Check for cached comparison result
+      final cacheDir = _getComparisonCacheDir();
+      final cacheKey = _getComparisonCacheKey(repo, sha, widget.repoPath);
+      final cacheFile = File(p.join(cacheDir.path, '$cacheKey.json'));
+      
+      Map<String, dynamic>? j;
+      if (cacheFile.existsSync()) {
+        try {
+          final content = await cacheFile.readAsString();
+          j = jsonDecode(content) as Map<String, dynamic>;
+          debugPrint('[BackupPage] ✅ Cache Hit for $sha');
+        } catch (e) {
+          debugPrint('[BackupPage] ❌ Error reading cache for $sha: $e');
+        }
+      }
 
-    // Compute ghosts
-    final commitsA = gA.commits.map((c) => c.id).toSet();
-    final commitsB = gB.commits.map((c) => c.id).toSet();
+      final sw = Stopwatch()..start();
+      
+      if (j == null) {
+        // Call the compare_repos API if not cached
+        j = await postJson("/compare_repos", {
+          'repoName': repo,
+          'commitA': sha, // Backup commit
+          'commitB': 'local', // Local state
+          'localPath': widget.repoPath,
+        });
+        print('[BackupPage] Compare $sha API: ${sw.elapsedMilliseconds}ms');
+        
+        // Save to cache
+        try {
+          if (!cacheDir.existsSync()) {
+            cacheDir.createSync(recursive: true);
+          }
+          await cacheFile.writeAsString(jsonEncode(j));
+          debugPrint('[BackupPage] 💾 Saved comparison for $sha to cache');
+        } catch (e) {
+          debugPrint('[BackupPage] ❌ Failed to save cache for $sha: $e');
+        }
+      } else {
+        print('[BackupPage] Compare $sha (Cached): ${sw.elapsedMilliseconds}ms');
+      }
+      sw.reset();
 
-    final ghostsA = gB.commits.where((c) => !commitsA.contains(c.id)).toList();
-    final ghostsB = gA.commits.where((c) => !commitsB.contains(c.id)).toList();
+      final gA = GraphData.fromJson(j!['graphA']);
+      final gB = GraphData.fromJson(j['graphB']);
+      final rawMapping = j['unifiedRowMapping'] as Map<String, dynamic>;
+      final mapping = rawMapping.map((k, v) => MapEntry(k, v as int));
+      final summary = j['summary'] as String? ?? '';
+      final details = j['details'] as Map<String, dynamic>? ?? {};
 
-    if (!mounted) return;
-    setState(() {
-      _comparisons[sha] =
-          ComparisonData(gA, gB, mapping, summary, colors, ghostsA, ghostsB);
-    });
+      final colors = _computeNodeColors(details);
+
+      // Compute ghosts
+      final commitsA = gA.commits.map((c) => c.id).toSet();
+      final commitsB = gB.commits.map((c) => c.id).toSet();
+
+      final ghostsA = gB.commits.where((c) => !commitsA.contains(c.id)).toList();
+      final ghostsB = gA.commits.where((c) => !commitsB.contains(c.id)).toList();
+      
+      print('[BackupPage] Process comparison data $sha: ${sw.elapsedMilliseconds}ms');
+      sw.reset();
+
+      if (!mounted || loadId != _loadId) return;
+      setState(() {
+        _comparisons[sha] =
+            ComparisonData(gA, gB, mapping, summary, colors, ghostsA, ghostsB);
+      });
+      print('[BackupPage] Update UI comparison $sha: ${sw.elapsedMilliseconds}ms');
+    } finally {
+      _comparisonSemaphore.release();
+    }
   }
 
   Map<String, Color> _computeNodeColors(Map<String, dynamic> details) {
@@ -284,9 +471,180 @@ class _BackupPageState extends State<BackupPage> {
     }
   }
 
+  Future<void> _onRetryFailure(String failureId) async {
+    setState(() => _loading = true);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('正在重试，请稍后进入页面后查看')),
+      );
+    }
+    try {
+      final resp = await postJson('/backup/retry_failure', {'failureId': failureId});
+      if (resp['success'] == true) {
+        // Retry succeeded, but do not reload list
+        //await _loadBackups();
+      } else {
+        if (mounted) {
+           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('重试失败')));
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  void _showRollbackDialog(String sha) {
+    final repoKey = _getRemoteRepoName();
+    
+    // Use workspacePath from _workspaceInfo to ensure correct directory for Git operations
+    final wsPath = _workspaceInfo?['workspacePath'] as String?;
+    if (wsPath == null) {
+       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('错误：无法定位本地工作区路径')));
+       return;
+    }
+
+    String localPath = wsPath;
+    if (_selectedRepo != 'Root') {
+      localPath = p.join(wsPath, _selectedRepo);
+    }
+
+    final messenger = ScaffoldMessenger.of(_scaffoldKey.currentContext!);
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => RollbackDialog(
+        repoName: repoKey,
+        commitId: sha,
+        localPath: localPath,
+        messenger: messenger,
+      ),
+    ).then((_) {
+      // Reload to reflect new branch heads, but skip extraction sync
+      _loadBackups(skipSync: true);
+    });
+  }
+
+  void _showRepoSelectionDialog() {
+    final Map<String, dynamic> tree = {'_children': <String, dynamic>{}};
+    
+    void insert(String pathStr) {
+      final parts = pathStr.replaceAll('\\', '/').split('/');
+      Map<String, dynamic> current = tree;
+      for (int i = 0; i < parts.length; i++) {
+        final part = parts[i];
+        if (!current['_children'].containsKey(part)) {
+          current['_children'][part] = {'_name': part, '_children': <String, dynamic>{}};
+        }
+        current = current['_children'][part];
+      }
+      current['_path'] = pathStr;
+    }
+
+    for (final r in _subRepos) {
+        insert(r);
+    }
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('选择备份查看对象'),
+        content: SizedBox(
+          width: 500,
+          height: 600,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.home),
+                  title: const Text('Root (容器仓库)'),
+                  selected: _selectedRepo == 'Root',
+                  onTap: () => Navigator.pop(ctx, 'Root'),
+                ),
+                const Divider(),
+                _buildTreeWidget(tree['_children']),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+        ],
+      ),
+    ).then((val) {
+      if (val != null && val is String) {
+        setState(() {
+          _selectedRepo = val;
+        });
+        _loadBackups();
+      }
+    });
+  }
+
+  Widget _buildTreeWidget(Map<String, dynamic> children) {
+    if (children.isEmpty) return const SizedBox.shrink();
+    
+    return Column(
+      children: children.entries.map((e) {
+        final node = e.value as Map<String, dynamic>;
+        final name = node['_name'] as String;
+        final hasChildren = (node['_children'] as Map).isNotEmpty;
+        final fullPath = node['_path'] as String?;
+        
+        if (hasChildren) {
+           return ExpansionTile(
+             leading: const Icon(Icons.folder),
+             title: Text(name),
+             childrenPadding: const EdgeInsets.only(left: 16),
+             initiallyExpanded: true,
+             children: [
+                if (fullPath != null) 
+                  ListTile(
+                    leading: const Icon(Icons.description, size: 16),
+                    title: const Text('查看此文件夹的历史'),
+                    selected: _selectedRepo == fullPath,
+                    onTap: () => Navigator.of(context).pop(fullPath),
+                  ),
+                _buildTreeWidget(node['_children']),
+             ],
+           );
+        } else {
+           return ListTile(
+             leading: const Icon(Icons.description),
+             title: Text(name),
+             selected: _selectedRepo == fullPath,
+             onTap: () => Navigator.of(context).pop(fullPath),
+           );
+        }
+      }).toList(),
+    );
+  }
+
+  Directory _getComparisonCacheDir() {
+    final appData = Platform.environment['APPDATA'];
+    String path;
+    if (appData != null && appData.isNotEmpty) {
+      path = p.join(appData, 'LambdaEssay_cmpresult_cache');
+    } else {
+      // Fallback for non-Windows or if APPDATA is not set
+      path = p.join(Directory.systemTemp.path, 'LambdaEssay_cmpresult_cache');
+    }
+    return Directory(path);
+  }
+
+  String _getComparisonCacheKey(String repo, String sha, String localPath) {
+    final input = '$repo|$sha|$localPath';
+    return md5.convert(utf8.encode(input)).toString();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final commits = _commits;
+    final items = _items;
     return Listener(
       onPointerSignal: (event) {
         if (event is PointerScrollEvent) {
@@ -305,37 +663,34 @@ class _BackupPageState extends State<BackupPage> {
       child: MediaQuery(
         data: MediaQuery.of(context).copyWith(textScaleFactor: _uiScale),
         child: Stack(
-          children: [
-            Scaffold(
+            children: [
+              Scaffold(
+          key: _scaffoldKey,
           appBar: AppBar(
             backgroundColor: const Color(0xFF000A3F),
             foregroundColor: Colors.white,
-            title: Row(
-              children: [
-                const Text('历史备份预览: '),
-                if (_subRepos.isNotEmpty)
-                  DropdownButton<String>(
-                    dropdownColor: const Color(0xFF000A3F),
-                    style: const TextStyle(color: Colors.white),
-                    value: _selectedRepo,
-                    items: [
-                      const DropdownMenuItem(value: 'Root', child: Text('Root')),
-                      ..._subRepos.map((r) => DropdownMenuItem(value: r, child: Text(r))),
-                    ],
-                    onChanged: (v) {
-                      if (v != null) {
-                        setState(() {
-                          _selectedRepo = v;
-                        });
-                        _loadBackups();
-                      }
-                    },
-                  )
-                else
-                  Expanded(child: Text(p.basename(widget.projectName))),
-              ],
+            title: InkWell(
+              onTap: _showRepoSelectionDialog,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('历史备份预览: '),
+                  Flexible(
+                    child: Text(
+                      _selectedRepo == 'Root' ? 'Root' : p.basename(_selectedRepo),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const Icon(Icons.arrow_drop_down),
+                ],
+              ),
             ),
             actions: [
+              IconButton(
+                onPressed: _loading ? null : _loadBackups,
+                tooltip: '刷新',
+                icon: const Icon(Icons.refresh),
+              ),
               SizedBox(
                 width: 150,
                 child: Slider(
@@ -366,7 +721,7 @@ class _BackupPageState extends State<BackupPage> {
               child: Text(_error!, style: const TextStyle(color: Colors.red)),
             ),
           Expanded(
-            child: commits.isEmpty
+            child: items.isEmpty
                 ? Center(
                     child: _loading
                         ? const CircularProgressIndicator()
@@ -375,16 +730,96 @@ class _BackupPageState extends State<BackupPage> {
                     physics: _graphHovering
                         ? const NeverScrollableScrollPhysics()
                         : const ClampingScrollPhysics(),
-                    itemCount: commits.length,
+                    itemCount: items.length,
                     itemBuilder: (ctx, i) {
-                      final c = commits[i];
+                      final item = items[i];
+                      
+                      if (item.failure != null) {
+                        final f = item.failure!;
+                        final type = f['type'] ?? 'failure';
+                        final dateStr = item.date.toLocal().toString();
+                        
+                        if (type == 'skip') {
+                          return Card(
+                            margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            child: ExpansionTile(
+                              title: Text('用户跳过这次备份 ($dateStr)',
+                                  style: const TextStyle(fontWeight: FontWeight.bold)),
+                              subtitle: Container(
+                                margin: const EdgeInsets.only(top: 8),
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(4),
+                                  border: Border.all(
+                                      color: Colors.grey.withOpacity(0.3)),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(Icons.info_outline,
+                                        size: 20, color: Colors.grey),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: SelectableText('ID: ${f['failureId']}',
+                                          style: const TextStyle(
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.bold,
+                                              fontFamily: 'monospace',
+                                              color: Colors.grey)),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              children: [
+                                const ListTile(
+                                  title: Text('此版本由用户手动跳过备份'),
+                                ),
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                  child: Align(
+                                    alignment: Alignment.centerRight,
+                                    child: ElevatedButton.icon(
+                                      onPressed: () => _onRetryFailure(f['failureId']),
+                                      icon: const Icon(Icons.refresh),
+                                      label: const Text('重试备份'),
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: Colors.blue.shade50,
+                                        foregroundColor: Colors.blue.shade800,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        }
+
+                        return Card(
+                          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          color: Colors.red.shade50,
+                          child: ListTile(
+                            leading: const Icon(Icons.error_outline, color: Colors.red),
+                            title: Text('配额问题未备份 ($dateStr)'),
+                            subtitle: Text('ID: ${f['failureId']} | Type: $type'),
+                            trailing: ElevatedButton(
+                              onPressed: () => _onRetryFailure(f['failureId']),
+                              child: const Text('重试'),
+                            ),
+                          ),
+                        );
+                      }
+                      
+                      final c = item.commit!;
                       final sha = c.id;
                       final comparison = _comparisons[sha];
+                      final dateStr = item.date.toLocal().toString();
+
                       return Card(
                         margin: const EdgeInsets.symmetric(
                             horizontal: 12, vertical: 8),
                         child: ExpansionTile(
-                          title: Text('时间: ${c.date}',
+                          title: Text('时间: $dateStr',
                               style: const TextStyle(fontWeight: FontWeight.bold)),
                           subtitle: Container(
                             margin: const EdgeInsets.only(top: 8),
@@ -427,6 +862,18 @@ class _BackupPageState extends State<BackupPage> {
                                     ),
                                   ),
                                 ],
+                                const SizedBox(width: 16),
+                                ElevatedButton.icon(
+                                  onPressed: () => _showRollbackDialog(sha),
+                                  icon: const Icon(Icons.history, size: 16),
+                                  label: const Text('分支回滚', style: TextStyle(fontSize: 12)),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.red.shade50,
+                                    foregroundColor: Colors.red.shade800,
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 8),
+                                  ),
+                                ),
                               ],
                             ),
                           ),
@@ -555,17 +1002,20 @@ class _BackupPageState extends State<BackupPage> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 const CircularProgressIndicator(),
-                if (_downloadProgress > 0) ...[
+                if (_hasDownloadStarted) ...[
                   const SizedBox(height: 16),
                   Text(
-                    '正在下载: ${_downloadProgress.toStringAsFixed(1)}%',
+                    _unzipStatus != null 
+                        ? '正在解压: $_unzipStatus'
+                        : '正在下载: ${_downloadProgress.toStringAsFixed(1)}%',
                     style: const TextStyle(color: Colors.white, fontSize: 16),
+                    textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 8),
                   SizedBox(
                     width: 200,
                     child: LinearProgressIndicator(
-                      value: (_downloadProgress / 100).clamp(0.0, 1.0),
+                      value: _unzipStatus != null ? null : (_downloadProgress / 100).clamp(0.0, 1.0),
                       backgroundColor: Colors.white24,
                     ),
                   ),
@@ -588,4 +1038,231 @@ class ComparisonData {
   final List<CommitNode> ghostsB;
   ComparisonData(this.graphA, this.graphB, this.mapping, this.summary,
       this.colors, this.ghostsA, this.ghostsB);
+}
+
+class RollbackDialog extends StatefulWidget {
+  final String repoName;
+  final String commitId;
+  final String localPath;
+  final ScaffoldMessengerState messenger;
+
+  const RollbackDialog({
+    super.key,
+    required this.repoName,
+    required this.commitId,
+    required this.localPath,
+    required this.messenger,
+  });
+
+  @override
+  State<RollbackDialog> createState() => _RollbackDialogState();
+}
+
+class _RollbackDialogState extends State<RollbackDialog> {
+  bool _loading = true;
+  List<Branch> _backupBranches = [];
+  List<Branch> _localBranches = [];
+  final Set<String> _selectedBranches = {}; // Selected backup branch names
+  List<String> _logs = [];
+  bool _rollingBack = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchData();
+  }
+
+  Future<void> _fetchData() async {
+    try {
+      final bResp = await postJson('/backup/branches', {
+        'repoName': widget.repoName,
+        'commitId': widget.commitId,
+      });
+      final lResp = await postJson('/branches', {
+        'repoPath': widget.localPath,
+      });
+
+      setState(() {
+        _backupBranches = (bResp['branches'] as List)
+            .map((e) => Branch.fromJson(e as Map<String, dynamic>))
+            .toList();
+        _localBranches = (lResp['branches'] as List)
+            .map((e) => Branch.fromJson(e as Map<String, dynamic>))
+            .toList();
+
+        // Auto-select branches that exist in both backup and local
+        for (final bb in _backupBranches) {
+          if (_localBranches.any((lb) => lb.name == bb.name)) {
+            _selectedBranches.add(bb.name);
+          }
+        }
+        _loading = false;
+      });
+    } catch (e) {
+      if (mounted) {
+        widget.messenger.showSnackBar(SnackBar(content: Text('获取分支失败: $e')));
+        Navigator.pop(context);
+      }
+    }
+  }
+
+  Future<void> _doRollback() async {
+    final selectedMappings = _selectedBranches.map((name) => {
+      'backupBranch': name,
+      'localBranch': name
+    }).toList();
+
+    if (selectedMappings.isEmpty) {
+      widget.messenger.showSnackBar(const SnackBar(content: Text('请至少选择一个分支进行强制替换')));
+      return;
+    }
+
+    setState(() {
+      _rollingBack = true;
+      _logs = ['开始强制替换分支操作...'];
+    });
+
+    try {
+      final resp = await postJson('/backup/rollback', {
+        'repoName': widget.repoName,
+        'commitId': widget.commitId,
+        'localPath': widget.localPath,
+        'mappings': selectedMappings,
+      });
+
+      if (resp is! Map) {
+        setState(() {
+          _logs.add('错误：服务器返回了意外的数据类型 (${resp.runtimeType})');
+          _logs.add('返回内容：$resp');
+          _rollingBack = false;
+        });
+        return;
+      }
+
+      final results = resp['results'] as List;
+      final newLogs = <String>[];
+      for (final r in results) {
+        if (r is Map) {
+          final logs = (r['logs'] as List).cast<String>();
+          newLogs.addAll(logs);
+          if (r['success'] == false) {
+            newLogs.add('错误: ${r['error']}');
+          }
+        } else {
+          newLogs.add('错误：操作结果条目类型错误 (${r.runtimeType})');
+        }
+      }
+      setState(() {
+        _logs.addAll(newLogs);
+        _logs.add('操作结束。');
+        _rollingBack = false;
+      });
+    } catch (e) {
+      setState(() {
+        _logs.add('发生意外错误: $e');
+        _rollingBack = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const AlertDialog(
+        content: SizedBox(
+            height: 100, child: Center(child: CircularProgressIndicator())),
+      );
+    }
+
+    return AlertDialog(
+      title: const Text('强制替换分支'),
+      content: SizedBox(
+        width: 600,
+        height: 500,
+        child: Column(
+          children: [
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8.0),
+              child: Text('系统将备份仓库的分支强制覆盖到本地同名分支（无论领先或落后）：',
+                  style: TextStyle(fontSize: 14)),
+            ),
+            Expanded(
+              flex: 2,
+              child: Container(
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.grey.shade300),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: ListView(
+                  children: _backupBranches.map((bb) {
+                    final hasLocalMatch = _localBranches.any((lb) => lb.name == bb.name);
+                    
+                    return CheckboxListTile(
+                      dense: true,
+                      enabled: !_rollingBack && hasLocalMatch,
+                      title: Text('分支: ${bb.displayName}'),
+                      subtitle: Text(hasLocalMatch 
+                        ? 'SHA: ${bb.head.substring(0, 7)} (将覆盖本地同名分支)' 
+                        : '本地不存在同名分支，暂不支持替换'),
+                      value: _selectedBranches.contains(bb.name),
+                      onChanged: (val) {
+                        setState(() {
+                          if (val == true) {
+                            _selectedBranches.add(bb.name);
+                          } else {
+                            _selectedBranches.remove(bb.name);
+                          }
+                        });
+                      },
+                    );
+                  }).toList(),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text('执行日志', style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 4),
+            Expanded(
+              flex: 1,
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.black,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: ListView.builder(
+                  itemCount: _logs.length,
+                  itemBuilder: (ctx, i) => Text(_logs[i],
+                      style: const TextStyle(
+                          color: Colors.greenAccent,
+                          fontFamily: 'monospace',
+                          fontSize: 12)),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _rollingBack ? null : () => Navigator.pop(context),
+          child: const Text('关闭'),
+        ),
+        ElevatedButton(
+          onPressed: _rollingBack ? null : _doRollback,
+          style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red.shade800,
+              foregroundColor: Colors.white),
+          child: _rollingBack
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.white))
+              : const Text('确认强制替换所选分支'),
+        ),
+      ],
+    );
+  }
 }

@@ -61,6 +61,7 @@ class AIDiffService {
       final response = await http.get(url).timeout(_timeout);
       return response.statusCode == 200;
     } catch (e) {
+      print('[AIDiff] Health check failed for $_pythonApiUrl: $e');
       return false;
     }
   }
@@ -108,6 +109,7 @@ class AIDiffService {
     bool useMcp = true,
     String? commitA,
     String? commitB,
+    String? authKey,
   }) async {
     // 1. 尝试读取本地缓存
     String? cacheKey;
@@ -151,6 +153,7 @@ class AIDiffService {
         'use_mcp': useMcp,
         if (commitA != null) 'commit_a': commitA,
         if (commitB != null) 'commit_b': commitB,
+        if (authKey != null) 'authKey': authKey,
       };
 
       final response = await http.post(

@@ -1,3 +1,32 @@
+import 'dart:io';
+import 'dart:async';
+
+class Semaphore {
+  final int max;
+  int _current = 0;
+  final List<Completer<void>> _waiters = [];
+
+  Semaphore(this.max);
+
+  Future<void> acquire() async {
+    if (_current < max) {
+      _current++;
+      return;
+    }
+    final completer = Completer<void>();
+    _waiters.add(completer);
+    await completer.future;
+  }
+
+  void release() {
+    if (_waiters.isNotEmpty) {
+      _waiters.removeAt(0).complete();
+    } else {
+      _current--;
+    }
+  }
+}
+
 class CommitNode {
   final String id;
   final List<String> parents;
@@ -30,6 +59,12 @@ class Branch {
   Branch({required this.name, required this.head, this.upstream});
   factory Branch.fromJson(Map<String, dynamic> j) =>
       Branch(name: j['name'], head: j['head'], upstream: j['upstream']);
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'head': head,
+        'upstream': upstream,
+      };
 
   static String encodeName(String text) {
     StringBuffer sb = StringBuffer();
@@ -119,4 +154,61 @@ class WorkingState {
   final bool changed;
   final String? baseId;
   WorkingState({required this.changed, this.baseId});
+}
+
+class SubscriptionPlan {
+  final String id;
+  final String name;
+  final String price;
+  final String currency;
+  final int durationDays;
+  final int subscriptionLevel;
+  final String description;
+
+  SubscriptionPlan({
+    required this.id,
+    required this.name,
+    required this.price,
+    required this.currency,
+    required this.durationDays,
+    required this.subscriptionLevel,
+    required this.description,
+  });
+
+  factory SubscriptionPlan.fromJson(Map<String, dynamic> json) {
+    return SubscriptionPlan(
+      id: json['id'],
+      name: json['name'],
+      price: json['price'],
+      currency: json['currency'],
+      durationDays: json['duration_days'],
+      subscriptionLevel: json['subscription_level'],
+      description: json['description'],
+    );
+  }
+}
+
+class SubscriptionStatus {
+  final int subscription;
+  final DateTime? expireAt;
+
+  SubscriptionStatus({
+    required this.subscription,
+    this.expireAt,
+  });
+
+  factory SubscriptionStatus.fromJson(Map<String, dynamic> json) {
+    DateTime? expire;
+    if (json['expire_at'] != null) {
+      try {
+        expire = HttpDate.parse(json['expire_at']);
+      } catch (_) {
+        expire = DateTime.tryParse(json['expire_at']);
+      }
+    }
+    return SubscriptionStatus(
+      subscription: json['subscription'],
+      expireAt: expire,
+    );
+  }
 }

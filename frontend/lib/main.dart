@@ -16,8 +16,12 @@ import 'widgets/custom_file_tree.dart';
 import 'server/server.dart';
 import 'server/git_service.dart';
 import 'server/route_map.dart';
+import 'server/subscription_service.dart';
+
 // import 'server/notification_service.dart';
 import 'package:shelf/shelf.dart' as shelf;
+import 'package:shelf/shelf_io.dart' as shelf_io;
+import 'package:shelf_router/shelf_router.dart' as shelf_router;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:crypto/crypto.dart';
@@ -35,6 +39,12 @@ Future<dynamic> postJson(
   String urlpath,
   Map<String, dynamic> body,
 ) async {
+  final prefs = await SharedPreferences.getInstance();
+  final username = prefs.getString('git_username');
+  if (username != null && !body.containsKey('userid')) {
+    body['userid'] = username;
+  }
+
   final prefix="http://localhost:8080";
   final path = urlpath;
   final uri=Uri.parse(prefix).resolve(path);
@@ -316,6 +326,30 @@ class _BootstrapAppState extends State<BootstrapApp> {
     _startServer();
   }
 
+  Future<void> _startWebServer() async {
+    final app = shelf_router.Router();
+    routeMap.forEach((key, handler) {
+      app.all(key, (shelf.Request request) async {
+        final result = (handler as Function)(request);
+        if (result is Future) {
+          return await result;
+        }
+        return result;
+      });
+    });
+
+    final handler = shelf.Pipeline()
+        .addMiddleware(shelf.logRequests())
+        .addHandler(app.call);
+
+    try {
+      final server = await shelf_io.serve(handler, InternetAddress.anyIPv4, 8080);
+      print('Web Server listening on port ${server.port}');
+    } catch (e) {
+      print('Failed to start Web Server: $e');
+    }
+  }
+
   Future<void> _startServer() async {
     try {
       setState(() {
@@ -356,8 +390,12 @@ class _BootstrapAppState extends State<BootstrapApp> {
       await Process.start(
           wardenPath, ['--monitor_port', '9527', '--terminal_port', '8080'],
           mode: ProcessStartMode.detached);
+      await Process.start(
+          comPath, [],
+          mode: ProcessStartMode.detached);
       
-      await BackendManager().startProcess('COM', comPath, []);
+      await _startWebServer();
+    
       await initTrackingService();
       // 轮询健康检查接口
       bool ready = false;
@@ -488,12 +526,41 @@ class GitGraphApp extends StatelessWidget {
 }
 
 class GraphPage extends StatefulWidget {
-  const GraphPage({super.key});
+  final FullSubscriptionInfo? initialSubscription;
+  final Map<int, Map<String, dynamic>>? initialPlanTotals;
+
+  const GraphPage({
+    super.key, 
+    this.initialSubscription,
+    this.initialPlanTotals,
+  });
   @override
   State<GraphPage> createState() => _GraphPageState();
 }
 
 class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
+  int _subscriptionLevel = 0;
+  DateTime? _expireAt;
+  
+  // Quotas
+  int? _aiQuota;
+  int? _ethQuota;
+  double? _storageQuota;
+
+  // Plan Quotas
+  int? _planAiQuota;
+  int? _planEthQuota;
+  double? _planStorageQuota;
+
+  // Free Quotas
+  int? _freeAiQuota;
+  int? _freeEthQuota;
+  double? _freeStorageQuota;
+  
+  // Plan Totals (level -> quotas)
+  Map<int, Map<String, dynamic>> _planTotals = {};
+  bool _plansFetched = false;
+
   final DirectoryTreeStateNotifier _treeNotifier = DirectoryTreeStateNotifier();
   double _sidebarWidth = 250.0;
   final TextEditingController pathCtrl = TextEditingController();
@@ -556,6 +623,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   final GlobalKey<_GraphViewState> _localGraphKey = GlobalKey();
 
   String? _username;
+  String? _userid;
   String? _token;
 
   double _uiScale = 1.0;
@@ -579,9 +647,39 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       vsync: this,
       duration: const Duration(seconds: 1),
     )..repeat(reverse: true);
+    
+    // Initialize with passed data if available
+    if (widget.initialSubscription != null) {
+      _applySubscriptionInfo(widget.initialSubscription!);
+    }
+    if (widget.initialPlanTotals != null) {
+      _planTotals = widget.initialPlanTotals!;
+      _plansFetched = true;
+    }
+
     _checkLogin();
     _initNotifications();
     _startDirtyCheck();
+  }
+
+  void _applySubscriptionInfo(FullSubscriptionInfo info) {
+    setState(() {
+      _subscriptionLevel = info.subscriptionLevel;
+      _expireAt = info.expireAt;
+      
+      final q = info.quotas;
+      _aiQuota = q.ai;
+      _ethQuota = q.eth;
+      _storageQuota = q.storage;
+      
+      _planAiQuota = q.planAi;
+      _planEthQuota = q.planEth;
+      _planStorageQuota = q.planStorage;
+      
+      _freeAiQuota = q.freeAi;
+      _freeEthQuota = q.freeEth;
+      _freeStorageQuota = q.freeStorage;
+    });
   }
 
   void _startDirtyCheck() {
@@ -974,13 +1072,16 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                   final currentIndex = commits.indexWhere((c) => c.id == node.id);
                   if (currentIndex >= 0 && currentIndex < commits.length - 1) {
                     final parentNode = commits[currentIndex + 1];
-                    final response = await postJson('/compare_ai', {'repoPath': pathCtrl.text.trim(), 'commit1': parentNode.id, 'commit2': node.id, 'docType': 'word'});
+                    final response = await postJson('/compare_ai', {'repoPath': pathCtrl.text.trim(), 'commit1': parentNode.id, 'commit2': node.id, 'docType': 'word', 'token': _token});
                     if (response['success'] == true && response['result'] != null) {
                       if (ctx.mounted) setState(() { aiResult = response['result'] as Map<String, dynamic>; aiLoading = false; aiError = null; });
                     } else { throw Exception('后端返回失败'); }
 
                   } else { if (ctx.mounted) setState(() { aiLoading = false; aiError = '这是初始提交，无父节点对比'; }); }
-                } catch (e) { if (ctx.mounted) setState(() { aiLoading = false; aiError = 'AI服务不可用'; }); }
+                } catch (e, s) { 
+                  print('Frontend AI Error: $e\n$s');
+                  if (ctx.mounted) setState(() { aiLoading = false; aiError = 'AI服务错误: $e'; }); 
+                }
               });
             }
             return AlertDialog(
@@ -1117,16 +1218,480 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
   // void _onScaleChanged() { ... } // Removed
 
+  Future<void> _fetchPlans() async {
+    if (_plansFetched) return;
+    try {
+      final totals = await SubscriptionService.fetchPlans();
+      if (mounted) {
+        setState(() {
+          _planTotals = totals;
+          _plansFetched = true;
+        });
+      }
+    } catch (e) {
+      print('Fetch plans failed: $e');
+    }
+  }
+
+  Future<void> _checkSubscriptionStatus() async {
+    if (_userid == null) return;
+    
+    // Ensure we have plan totals for progress bars
+    if (!_plansFetched) {
+       _fetchPlans();
+    }
+
+    try {
+       final info = await SubscriptionService.checkSubscription(_userid!);
+       if (info != null && mounted) {
+         _applySubscriptionInfo(info);
+       }
+    } catch (e) {
+      print('Check subscription failed: $e');
+    }
+  }
+
+  Future<void> _purchase(String planId) async {
+    if (_userid == null) return;
+    try {
+      final response = await http.post(
+        Uri.parse('https://llinker.com/register/api/subscription/purchase'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'userid': _userid,
+          'plan_id': planId,
+        }),
+      );
+      if (response.statusCode != 200) {
+        throw Exception(response.body);
+      }
+      final resp = jsonDecode(response.body);
+
+      final payUrl = resp['pay_url'];
+      if (payUrl != null && mounted) {
+         if (Platform.isWindows) {
+            Process.run('cmd', ['/c', 'start', payUrl.toString().replaceAll('&', '^&')]); 
+         }
+         
+         await showDialog(
+           context: context,
+           builder: (ctx) => AlertDialog(
+             title: const Text('支付中'),
+             content: const Text('请在浏览器中完成支付。支付完成后请点击刷新状态。'),
+             actions: [
+               TextButton(onPressed: () async {
+                 Navigator.pop(ctx);
+                 await _checkSubscriptionStatus();
+               }, child: const Text('刷新状态')),
+             ],
+           ),
+         );
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('创建订单失败: $e')));
+    }
+  }
+
+  Future<void> _showSubscriptionDialog() async {
+    if (_username == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('请先登录')));
+      return;
+    }
+    
+    // Add loading and logs
+    print('Debug: [Show Subscription Dialog] Fetching plans...');
+    setState(() => loading = true);
+
+    List<SubscriptionPlan> plans = [];
+    try {
+      final url = 'https://llinker.com/register/api/subscription/plans';
+      print('Debug: [Show Subscription Dialog] Requesting: $url');
+      
+      final response = await http.get(Uri.parse(url));
+      print('Debug: [Show Subscription Dialog] Response status: ${response.statusCode}');
+
+      if (response.statusCode != 200) {
+        throw Exception(response.body);
+      }
+      final resp = jsonDecode(response.body);
+      plans = (resp['plans'] as List).map((e) => SubscriptionPlan.fromJson(e)).toList();
+    } catch (e) {
+      print('Debug: [Show Subscription Dialog] Error: $e');
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('获取订阅计划失败: $e')));
+      return;
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+
+    if (!mounted) return;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('会员订阅'),
+        content: SizedBox(
+          width: 600,
+          height: 400,
+          child: Column(
+            children: [
+              Text('当前订阅级别: $_subscriptionLevel'),
+              if (_expireAt != null) Text('过期时间: $_expireAt'),
+              const SizedBox(height: 16),
+              const Text('选择订阅计划:', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: plans.length,
+                  itemBuilder: (context, index) {
+                    final plan = plans[index];
+                    return Card(
+                      child: ListTile(
+                        title: Text(plan.name),
+                        subtitle: Text('${plan.description}\n价格: ${plan.price} ${plan.currency} / ${plan.durationDays}天'),
+                        trailing: ElevatedButton(
+                          onPressed: () async {
+                            Navigator.pop(ctx);
+                            await _purchase(plan.id);
+                          },
+                          child: const Text('购买'),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('关闭')),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _doLogout() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('git_username');
+    await prefs.remove('git_password');
+    await prefs.remove('git_userid');
+    // await prefs.remove('git_token'); // If used
+
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => const LoginPage()),
+    );
+  }
+
+  Future<void> _showUserDetailsDialog() async {
+    // 点击用户详情时，不再自动刷新订阅状态
+    if (!mounted) return;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) {
+        bool loading = false;
+
+        Widget buildQuotaRow(String label, num value, num? total, String unit) {
+            // value: 剩余配额 (from subscription/query)
+            // total: 套餐标准 (from subscription/plans)
+            
+            double progress = 0.0;
+            String text = '';
+            Color progressColor = Colors.green;
+            
+            // 如果 total 未定义或为0 (且 value > 0)，我们假设它是无限的或不需要显示进度
+            // 但对于 Free 计划，我们有硬编码的 Total (20, 0, 50)
+            
+            if (total != null && total > 0) {
+              if (value > total) {
+                progress = 1.0;
+                progressColor = Colors.purpleAccent; // 溢出/额外配额
+              } else {
+                progress = (value / total).clamp(0.0, 1.0);
+                if (progress < 0.2) progressColor = Colors.red; // 剩余不足 20%
+                else progressColor = Colors.green;
+              }
+              
+              String valueStr = (unit == 'MB') ? value.toStringAsFixed(1) : '$value';
+              String totalStr = (unit == 'MB') ? total.toStringAsFixed(1) : '$total';
+              
+              text = '剩余: $valueStr / 标准: $totalStr $unit';
+            } else {
+              // Total is 0 or null.
+              // If total is 0 (e.g. Free ETH), and value is 0, progress is 0.
+              // If value > 0 (extra), progress is 1.
+              if (total == 0) {
+                 if (value > 0) {
+                   progress = 1.0;
+                   progressColor = Colors.purpleAccent;
+                   text = '剩余: $value / 标准: 0 $unit';
+                 } else {
+                   progress = 0.0;
+                   text = '剩余: 0 / 标准: 0 $unit';
+                 }
+              } else {
+                 String valueStr = (unit == 'MB') ? value.toStringAsFixed(1) : '$value';
+                 text = '剩余: $valueStr $unit';
+              }
+            }
+
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(label, style: TextStyle(color: Colors.grey.shade700, fontSize: 13)),
+                      Text(text, style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 12)),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(2),
+                    child: LinearProgressIndicator(
+                      value: progress,
+                      backgroundColor: Colors.grey.shade200,
+                      valueColor: AlwaysStoppedAnimation<Color>(progressColor),
+                      minHeight: 6,
+                    ),
+                  ),
+                ],
+              ),
+            );
+        }
+
+        return StatefulBuilder(
+          builder: (context, setState) {
+            // Get totals for current level
+            final totals = _planTotals[_subscriptionLevel] ?? {};
+            
+            // If free (level 0), maybe we have a level 0 plan?
+            // If not found, try to use hardcoded defaults or just null (no progress bar)
+            final freeTotals = _planTotals[0] ?? {
+               'ai': 20, 'eth': 0, 'storage': 50.0
+            }; // Fallback for free tier if not in API
+
+            // Determine which set to show
+             final bool showMember = _subscriptionLevel > 0;
+             
+             // Prepare data for display
+             final Map<String, dynamic> displayTotals;
+             final int? displayAi;
+             final int? displayEth;
+             final double? displayStorage;
+
+             if (showMember) {
+                displayTotals = totals; // Plan totals from API
+                displayAi = _planAiQuota ?? 0;
+                displayEth = _planEthQuota ?? 0;
+                displayStorage = _planStorageQuota ?? 0.0;
+             } else {
+                displayTotals = {
+                   'ai': 20,
+                   'eth': 0,
+                   'storage': 50.0
+                };
+                displayAi = _freeAiQuota ?? 0;
+                displayEth = _freeEthQuota ?? 0;
+                displayStorage = _freeStorageQuota ?? 0.0;
+             }
+
+             return Stack(
+              children: [
+                AlertDialog(
+                  title: const Text('用户详情'),
+                  content: SizedBox(
+                    width: 500,
+                    child: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const CircleAvatar(child: Icon(Icons.person)),
+                              const SizedBox(width: 16),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(_username ?? '未登录',
+                                      style: const TextStyle(
+                                          fontSize: 18, fontWeight: FontWeight.bold)),
+                                  if (_subscriptionLevel > 0)
+                                    Container(
+                                      margin: const EdgeInsets.only(top: 4),
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: Colors.amber.shade100,
+                                        borderRadius: BorderRadius.circular(12),
+                                        border: Border.all(color: Colors.amber),
+                                      ),
+                                      child: Text(
+                                        'Lv.$_subscriptionLevel 会员',
+                                        style: TextStyle(
+                                          color: Colors.amber.shade900,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.bold
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 24),
+                          
+                          // Removed separate "Subscription Status" section
+                          // Merged into Quota section header or sub-header
+
+                          // Quotas
+                          const Text('配额详情', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                          const Divider(),
+                          
+                          // Member Quotas (Only if Level > 0)
+                          if (showMember) ...[
+                             const SizedBox(height: 8),
+                             Container(
+                               padding: const EdgeInsets.all(16),
+                               decoration: BoxDecoration(
+                                 color: Colors.amber.shade50,
+                                 borderRadius: BorderRadius.circular(12),
+                                 border: Border.all(color: Colors.amber.shade200),
+                               ),
+                               child: Column(
+                                 crossAxisAlignment: CrossAxisAlignment.start,
+                                 children: [
+                                   Row(
+                                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                     children: [
+                                       Row(
+                                         children: [
+                                           Icon(Icons.star, size: 18, color: Colors.amber.shade800),
+                                           const SizedBox(width: 8),
+                                           Text('会员配额 (Lv.$_subscriptionLevel)', 
+                                             style: TextStyle(fontWeight: FontWeight.bold, color: Colors.amber.shade900, fontSize: 15)),
+                                         ],
+                                       ),
+                                     ],
+                                   ),
+                                   if (_expireAt != null) ...[
+                                      const SizedBox(height: 4),
+                                      Text('过期时间: ${_expireAt?.toString().split('.').first}', 
+                                         style: TextStyle(fontSize: 12, color: Colors.amber.shade900.withOpacity(0.7))),
+                                   ],
+                                   const SizedBox(height: 16),
+                                   buildQuotaRow('AI 请求', displayAi ?? 0, displayTotals['ai'], '次'),
+                                   buildQuotaRow('ETH 交易', displayEth ?? 0, displayTotals['eth'], '次'),
+                                   buildQuotaRow('存储空间', displayStorage ?? 0.0, displayTotals['storage'], 'MB'),
+                                 ],
+                               ),
+                             ),
+                          ] else ...[
+                             // Basic Quotas (Only if Level == 0)
+                             const SizedBox(height: 12),
+                             Container(
+                                padding: const EdgeInsets.all(16),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.shade50,
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(color: Colors.grey.shade300),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Icon(Icons.person_outline, size: 18, color: Colors.grey.shade700),
+                                        const SizedBox(width: 8),
+                                        Text('基础配额', 
+                                          style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey.shade800, fontSize: 15)),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 16),
+                                    buildQuotaRow('AI 请求', displayAi ?? 0, displayTotals['ai'], '次'),
+                                    buildQuotaRow('ETH 交易', displayEth ?? 0, displayTotals['eth'], '次'),
+                                    buildQuotaRow('存储空间', displayStorage ?? 0.0, displayTotals['storage'], 'MB'),
+                                  ],
+                                ),
+                             ),
+                          ],
+
+                          const SizedBox(height: 16),
+                          Row(
+                            children: [
+                              ElevatedButton.icon(
+                                onPressed: () async {
+                                  setState(() => loading = true);
+                                  await _checkSubscriptionStatus();
+                                  // Refresh totals too if needed
+                                  if (!_plansFetched) await _fetchPlans();
+                                  
+                                  if (context.mounted) {
+                                     setState(() => loading = false);
+                                  }
+                                },
+                                icon: const Icon(Icons.refresh, size: 16),
+                                label: const Text('刷新状态'),
+                              ),
+                              const SizedBox(width: 8),
+                              OutlinedButton(
+                                onPressed: () {
+                                  Navigator.pop(ctx);
+                                  _showSubscriptionDialog();
+                                },
+                                child: const Text('会员订阅/续费'),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text('关闭'),
+                    ),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        _doLogout();
+                      },
+                      child: const Text('退出登录'),
+                    ),
+                  ],
+                ),
+                if (loading)
+                  Container(
+                    color: Colors.black26,
+                    child: const Center(
+                      child: CircularProgressIndicator(),
+                    ),
+                  ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   Future<void> _checkLogin() async {
     final prefs = await SharedPreferences.getInstance();
     final username = prefs.getString('git_username');
     final password = prefs.getString('git_password');
+    final userid = prefs.getString('git_userid');
 
     // 不再从 SharedPreferences 读取 token
     // final token = prefs.getString('git_token');
 
     setState(() {
       _username = username;
+      _userid = userid;
       // _token = token;
     });
 
@@ -1137,6 +1702,17 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
           'username': username,
           'password': password,
         });
+
+        if (resp['userid'] != null) {
+          final uid = resp['userid'].toString();
+          setState(() {
+            _userid = uid;
+          });
+          await prefs.setString('git_userid', uid);
+        }
+
+        print('Debug: [Auto Login] Checking subscription status...');
+        await _checkSubscriptionStatus();
 
         final tokens = resp['tokens'] as List?;
         if (tokens != null && tokens.isNotEmpty) {
@@ -1373,6 +1949,47 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     final rootPath = packageRootCtrl.text.trim();
     if (rootPath.isEmpty) return;
 
+    bool skipBackup = false;
+    final proceed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setState) {
+          return AlertDialog(
+            title: const Text('推送根仓库'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('您确定要推送当前根仓库吗？'),
+                const SizedBox(height: 16),
+                CheckboxListTile(
+                  title: const Text('跳过备份'),
+                  subtitle: const Text('本次推送将不会创建服务器备份'),
+                  value: skipBackup,
+                  onChanged: (val) {
+                    setState(() {
+                      skipBackup = val == true;
+                    });
+                  },
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('取消'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('确定推送'),
+              ),
+            ],
+          );
+        }
+      ),
+    );
+
+    if (proceed != true) return;
+
     setState(() {
       loading = true;
       error = null;
@@ -1384,6 +2001,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         'repoPath': rootPath,
         'username': _username,
         'token': _token,
+        'skipBackup': skipBackup,
       });
 
       if (!mounted) return;
@@ -1413,6 +2031,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     }
 
     String? selectedBranch = branch;
+    bool skipBackup = false;
+
     if (!force && selectedBranch == null) {
       // Fetch branches for selection
       List<String> branches = [];
@@ -1428,7 +2048,9 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
       if (branches.isNotEmpty) {
         String tempSelected = currentBranch ?? branches.first;
-        selectedBranch = await showDialog<String>(
+        bool tempSkipBackup = false;
+
+        final result = await showDialog<Map<String, dynamic>>(
           context: context,
           builder: (ctx) => StatefulBuilder(
             builder: (context, setState) {
@@ -1461,6 +2083,16 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                           },
                         ),
                       ),
+                      const Divider(),
+                      CheckboxListTile(
+                        title: const Text('不备份这次推送'),
+                        value: tempSkipBackup,
+                        onChanged: (val) {
+                          setState(() {
+                            tempSkipBackup = val == true;
+                          });
+                        },
+                      ),
                     ],
                   ),
                 ),
@@ -1470,7 +2102,10 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                     child: const Text('取消'),
                   ),
                    ElevatedButton(
-                    onPressed: () => Navigator.pop(ctx, tempSelected),
+                    onPressed: () => Navigator.pop(ctx, {
+                      'branch': tempSelected,
+                      'skipBackup': tempSkipBackup
+                    }),
                     child: const Text('推送'),
                   ),
                 ],
@@ -1478,14 +2113,20 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             }
           ),
         );
-        if (selectedBranch == null) return; // Cancelled
+        if (result == null) return; // Cancelled
+        
+        selectedBranch = result['branch'] as String?;
+        skipBackup = result['skipBackup'] == true;
+        
+        if (selectedBranch == null) return;
 
         // 二次确认
         final confirm = await showDialog<bool>(
           context: context,
           builder: (ctx) => AlertDialog(
             title: const Text('确认推送'),
-            content: Text('您确定要推送分支 "$selectedBranch" 到远程吗？'),
+            content: Text('您确定要推送分支 "$selectedBranch" 到远程吗？\n'
+                '${skipBackup ? "(本次推送将跳过备份)" : ""}'),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(ctx, false),
@@ -1514,6 +2155,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
         'username': _username,
         'token': _token,
         'force': force,
+        'skipBackup': skipBackup,
       };
       if (selectedBranch != null) body['branch'] = selectedBranch;
 
@@ -4204,6 +4846,87 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     );
   }
 
+  Future<String?> _showBackupTargetDialog(BuildContext context) {
+    final rootPath = packageRootCtrl.text.trim();
+    if (rootPath.isEmpty) return Future.value(null);
+    String? selected = _selectedFilePath;
+    if (selected == null || (!p.equals(rootPath, selected) && !p.isWithin(rootPath, selected))) {
+      selected = rootPath;
+    }
+    
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setState) {
+          return AlertDialog(
+            title: const Text('选择备份查看对象'),
+            content: SizedBox(
+              width: 500,
+              height: 400,
+              child: Column(
+                children: [
+                  Text('当前项目：${p.basename(rootPath)}'),
+                  const SizedBox(height: 10),
+                  Expanded(
+                    child: Container(
+                      decoration: BoxDecoration(border: Border.all(color: Colors.grey.shade300)),
+                      child: DirectoryTreeStateProvider(
+                        notifier: DirectoryTreeStateNotifier(),
+                        child: FoldableDirectoryTree(
+                          rootPath: rootPath,
+                          selectedPath: selected,
+                          filter: (entity) {
+                            final name = p.basename(entity.path);
+                            if (name == '.git') return false;
+                            // Hide internal workspace folders
+                            if (entity is Directory &&
+                                RegExp(r'^[a-fA-F0-9]{32}$').hasMatch(name)) {
+                              return false;
+                            }
+                            return true;
+                          },
+                          fileIconBuilder: (extension) => const Icon(
+                              Icons.description,
+                              size: 16,
+                              color: Colors.blueGrey),
+                          onFileTap: (file, _) {
+                            setState(() {
+                              selected = file.path;
+                            });
+                          },
+                          onDirTap: (dir, _) {
+                            setState(() {
+                              selected = dir.path;
+                            });
+                          },
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text('已选: ${selected != null ? p.basename(selected!) : "未选择"}', 
+                      style: const TextStyle(fontWeight: FontWeight.bold)),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, null),
+                child: const Text('取消'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(ctx, selected);
+                },
+                child: const Text('确认'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
   Widget _buildTopBar() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -4343,7 +5066,6 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                 _buildActionButton(Icons.add, '新建分支', _onCreateBranch),
                 _buildActionButton(Icons.swap_horiz, '切换分支', _onSwitchBranch),
                 _buildActionButton(Icons.call_merge, '合并分支', _onMergeButton),
-                _buildActionButton(Icons.search, '查找相同版本', _findIdentical),
                 if (data != null) ...[
                   const Divider(height: 32),
                   const Text('视图设置',
@@ -4351,17 +5073,31 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                           fontWeight: FontWeight.bold, color: Colors.grey)),
                   const SizedBox(height: 8),
                   _buildActionButton(Icons.home, '返回主视角', _resetView),
-                  _buildActionButton(Icons.history, '历史备份', () {
+                  _buildActionButton(Icons.history, '历史备份', () async {
                     if (currentProjectName == null || pathCtrl.text.isEmpty) {
                       return;
                     }
+                    
+                    // Allow user to select target for backup view
+                    final selected = await _showBackupTargetDialog(context);
+                    if (selected == null) return; // Cancelled
+
+                    String? initialRel;
+                    final root = packageRootCtrl.text.trim();
+                    if (selected != root && p.isWithin(root, selected)) {
+                       initialRel = p.relative(selected, from: root).replaceAll('\\', '/');
+                    }
+
+                    if (!mounted) return;
                     Navigator.push(
                         context,
                         MaterialPageRoute(
                             builder: (_) => BackupPage(
                                   projectName: currentProjectName!,
-                                  repoPath: pathCtrl.text,
+                                  repoPath: selected, // Use selected path
                                   token: _token ?? '',
+                                  username: _username ?? '',
+                                  initialSubRepo: initialRel,
                                 )));
                   }),
                 ],
@@ -4668,6 +5404,37 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                   elevation: 1,
                   shadowColor: Colors.black.withOpacity(0.1),
                   actions: [
+                    TextButton.icon(
+                      onPressed: _showUserDetailsDialog,
+                      icon: const Icon(Icons.person, color: Colors.grey),
+                      label: Row(
+                        children: [
+                          Text(
+                            _username ?? '未登录',
+                            style: const TextStyle(color: Colors.black87),
+                          ),
+                          if (_username != null) ...[
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.amber.shade300,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                'Lv.$_subscriptionLevel',
+                                style: const TextStyle(
+                                  color: Colors.black87,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
                     IconButton(
                       icon: const Icon(Icons.save),
                       tooltip: '保存追踪包 (Ctrl+S)',
@@ -5264,6 +6031,7 @@ class _GraphViewState extends State<_GraphView>
         'commit1': oldC,
         'commit2': newC,
         'docType': docType,
+        'token': widget.token,
       });
       if (!mounted) return;
 
@@ -5888,9 +6656,12 @@ class _GraphViewState extends State<_GraphView>
       builder: (context, constraints) {
         final parentSize = constraints.biggest;
         _ensureOverlayBounds(parentSize);
-        return Stack(
-          children: [
-            MouseRegion(
+        return Semantics(
+          container: true,
+          excludeSemantics: true,
+          child: Stack(
+            children: [
+              MouseRegion(
               onHover: (d) {
                 final scene = _toScene(d.localPosition);
                 final hit = _hitTest(scene, widget.data);
@@ -6020,8 +6791,9 @@ class _GraphViewState extends State<_GraphView>
                         child: AnimatedBuilder(
                           animation: _graphFlashCtrl,
                           builder: (context, child) {
-                            return CustomPaint(
-                              painter: GraphPainter(
+                            return RepaintBoundary(
+                              child: CustomPaint(
+                                painter: GraphPainter(
                                 widget.data,
                                 _branchColors!,
                                 _hoverEdgeKey(),
@@ -6036,6 +6808,7 @@ class _GraphViewState extends State<_GraphView>
                                 flashValue: _graphFlashCtrl.value,
                               ),
                               size: _canvasSize!,
+                            ),
                             );
                           },
                         ),
@@ -6222,6 +6995,7 @@ class _GraphViewState extends State<_GraphView>
                 ),
               ),
           ],
+        ),
         );
       },
     );

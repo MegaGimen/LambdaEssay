@@ -1,0 +1,6 @@
+[submodule "server/remote/pay"]
+	path = server/remote/pay
+	url = https://gitcode.com/LambdaLinker/pay
+[submodule "server/remote/gitbackup"]
+	path = server/remote/gitbackup
+	url = https://gitcode.com/LambdaLinker/LambdaEssay_backup

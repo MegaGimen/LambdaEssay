@@ -13,6 +13,11 @@ import 'package:crypto/crypto.dart';
 
 bool _debugMode = false;
 void setDebugMode(bool value) => _debugMode = value;
+
+void _log(String message) {
+  print('[${DateTime.now()}] $message');
+}
+
 final scriptDir = p.dirname(Platform.script.toFilePath());
 Set<String> workingIds = {};
 String get _psScriptPath {
@@ -447,7 +452,7 @@ Future<List<String>> _runGit(List<String> args, String repoPath,
     );
     if (res.exitCode != 0) {
       if (printError) {
-        print("git error (exitCode=${res.exitCode}) args=$args");
+        _log("git error (exitCode=${res.exitCode}) args=$args");
         print(res.stderr);
         print(res.stdout);
       }
@@ -638,7 +643,7 @@ Future<GraphResponse> _getGraphUnlocked(String repoPath,
   //   return cached;
   // }
   // Disable cache for preview accuracy
-  print('Graph fetching for $key...');
+  _log('Graph fetching for $key...');
 
   final branches = <Branch>[];
   if (includeLocal) {
@@ -979,6 +984,42 @@ Future<void> _updateParentSubmodule(
     // We do not throw here to avoid failing the child commit if parent update fails
     // But maybe we should warn?
   }
+}
+
+Future<void> forceUpdateBranchFromSnapshot(
+    String repoPath,
+    String localBranch,
+    String snapshotGitPath,
+    String snapshotBranch,
+    void Function(String) onLog) async {
+  return _withRepoLock(repoPath, () async {
+    onLog('==========================================================');
+    onLog('正在从备份仓库获取分支 $snapshotBranch...');
+    // Use absolute path for snapshotGitPath to be safe
+    final absSnapshotPath = p.absolute(snapshotGitPath);
+
+    // 1. Fetch from snapshot
+    // Note: We fetch the specific branch into FETCH_HEAD
+    await _runGit(['fetch', absSnapshotPath, snapshotBranch], repoPath);
+
+    final fetchHead =
+        (await _runGit(['rev-parse', 'FETCH_HEAD'], repoPath)).first.trim();
+    onLog('获取成功，最新提交: $fetchHead');
+
+    // 2. Check if localBranch is the current branch
+    final currentBranch = await getCurrentBranch(repoPath);
+    final isCurrent = currentBranch == localBranch;
+
+    if (isCurrent) {
+      onLog('正在强行重置当前工作分支 $localBranch 到备份状态 (reset --hard)...');
+      await _runGit(['reset', '--hard', fetchHead], repoPath);
+    } else {
+      onLog('正在强行更新本地分支 $localBranch (branch -f)...');
+      await _runGit(['branch', '-f', localBranch, fetchHead], repoPath);
+    }
+    onLog('分支 $localBranch 已成功回滚到备份状态。');
+    onLog('==========================================================');
+  });
 }
 
 Future<void> commitChanges(
@@ -1913,6 +1954,32 @@ String _doccmpPs1Path() {
 
 Future<void> _doccmpToPdf(
     String oldDocx, String newDocx, String pdfPath) async {
+  
+  // Try COM first
+  if (comSender != null) {
+    print('Using COM for doccmp: $oldDocx vs $newDocx -> $pdfPath');
+    try {
+      final success = await comSender!({
+        'action': 'compare',
+        'payload': {
+          'original': oldDocx,
+          'revised': newDocx,
+          'output': pdfPath,
+          'isDocx': pdfPath.toLowerCase().endsWith('.docx')
+        }
+      });
+      
+      if (success == true && File(pdfPath).existsSync()) {
+        return;
+      }
+      print('COM doccmp failed or returned false. Falling back to PS1.');
+    } catch (e) {
+      print('COM doccmp error: $e. Falling back to PS1.');
+    }
+  } else {
+     print('COM not connected. Using PS1 for doccmp.');
+  }
+
   final psScript = _doccmpPs1Path();
   if (!File(psScript).existsSync()) {
     throw Exception('doccmp.ps1 not found at $psScript');
@@ -2362,6 +2429,7 @@ Future<Map<String, dynamic>> compareCommitsWithAI(
   String commit1,
   String commit2, {
   String docType = 'word',
+  String? token,
 }) async {
   // 检查 AI 服务是否可用
   final available = await AIDiffService.isAvailable();
@@ -2411,6 +2479,7 @@ Future<Map<String, dynamic>> compareCommitsWithAI(
         useMcp: true, // ✓ 启用MCP服务
         commitA: commit1,
         commitB: commit2,
+        authKey: token,
       );
 
       print('[AI对比] 分析完成');
@@ -2586,6 +2655,11 @@ Future<void> _addDocxSubmodule(
   await _runGit(['init'], fullSubmodulePath);
 
   await _updateContentDocx(fullSubmodulePath, docxPath);
+  await _flushDocxToContent(fullSubmodulePath);
+
+  // Create .gitignore to ignore content.docx in the submodule
+  await File(p.join(fullSubmodulePath, '.gitignore'))
+      .writeAsString('content.docx\n');
 
   // Create tracking.json in submodule
   final tracking = {'docxPath': docxPath};
@@ -2642,6 +2716,8 @@ Future<void> _initTrackingRepo(
   await _updateContentDocx(repoPath, docxPath);
   await _flushDocxToContent(repoPath);
 
+  await File(p.join(repoPath, '.gitignore')).writeAsString('content.docx\n');
+
   final tracking = {'docxPath': docxPath, 'packagePath': packagePath};
   await File(p.join(repoPath, 'tracking.json'))
       .writeAsString(jsonEncode(tracking));
@@ -2665,6 +2741,8 @@ Future<void> _initSingleRepo(String repoPath, String? sourceDocxPath) async {
     await _updateContentDocx(repoPath, sourceDocxPath);
     await _flushDocxToContent(repoPath);
   }
+
+  await File(p.join(repoPath, '.gitignore')).writeAsString('content.docx\n');
 
   final tracking = {'docxPath': sourceDocxPath ?? ''};
   await File(p.join(repoPath, 'tracking.json'))
@@ -3040,6 +3118,7 @@ Future<Map<String, dynamic>?> getTrackingInfo(String repoPath) async {
     'packagePath': resolvedPackagePath,
     'trackingRoot': trackingRoot,
     'workspaceId': workspaceId,
+    'workspacePath': root,
   };
 }
 
@@ -3705,7 +3784,7 @@ Future<void> _ensureUniqueRemote(
 }
 
 Future<void> pushToRemote(String repoPath, String username, String token,
-    {bool force = false, String? branch}) async {
+    {bool force = false, String? branch, bool skipBackup = false}) async {
   return _withRepoLock(repoPath, () async {
     final repoName = p.basename(repoPath);
     String effectiveRemoteRepoName;
@@ -3743,22 +3822,67 @@ Future<void> pushToRemote(String repoPath, String username, String token,
     if (force) args.add('--force');
     args.add(remoteName); // Use remote alias instead of URL for push
 
+    String branchToPush;
     if (branch != null) {
-      args.add(branch);
+      branchToPush = branch;
     } else {
       final current = await getCurrentBranch(repoPath);
       if (current != null) {
-        args.add(current);
+        branchToPush = current;
       } else {
         throw Exception('Cannot push: Detached HEAD and no branch specified.');
       }
     }
+    args.add(branchToPush);
 
-    print('Executing git push with args: $args');
+    if (skipBackup) {
+      _log('Skip backup requested. Registering skip...');
+      try {
+        // 1. Get Local Commit (After)
+        final afterRes = await _runGit(['rev-parse', branchToPush], repoPath);
+        final after = afterRes.first.trim();
+
+        // 2. Get Remote Commit (Before)
+        String before = '0000000000000000000000000000000000000000';
+        try {
+          // Use remoteUrl directly to avoid alias issues if not yet fetched?
+          // But we just ensured unique remote.
+          // ls-remote works with URL or remote name.
+          final lsRemote = await _runGit(['ls-remote', remoteUrl, branchToPush], repoPath);
+          // Output format: <hash>\trefs/heads/<branch>
+          if (lsRemote.isNotEmpty) {
+            final parts = lsRemote.first.split(RegExp(r'\s+'));
+            if (parts.isNotEmpty) {
+              before = parts.first.trim();
+            }
+          }
+        } catch (e) {
+          print('Warning: Failed to get remote hash for skip backup: $e');
+          // Assume new branch or remote empty, keep before as all zeros
+        }
+
+        _log('Registering skip backup: before=$before, after=$after');
+        final resp = await http.post(
+          Uri.parse('https://llinker.com/gitbackup/register_skip'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'before': before, 'after': after}),
+        );
+
+        if (resp.statusCode == 200) {
+          _log('Skip backup registered successfully.');
+        } else {
+          throw Exception('Failed to register skip backup: ${resp.statusCode} ${resp.body}');
+        }
+      } catch (e) {
+        throw Exception('Skip backup registration failed: $e');
+      }
+    }
+
+    _log('Executing git push with args: $args');
     List<String> output = [];
     try {
       output = await _runGit(args, repoPath);
-      print('Git push output: ${output.join('\n')}');
+      _log('Git push output: ${output.join('\n')}');
     } catch (e) {
       if (!force) {
         await _checkIfBehind(repoPath, remoteUrl);
@@ -3773,39 +3897,58 @@ Future<void> pushToRemote(String repoPath, String username, String token,
     }
 
     // Automatically setup webhook
-    print('Configuring webhook for: $effectiveRemoteRepoName');
+    _log('Configuring webhook for: $effectiveRemoteRepoName');
     await _ensureWebhook(effectiveRemoteRepoName, owner, token);
 
     // Update parent submodule URL if applicable
     if (parentFolder != null && !p.equals(parentFolder, repoPath)) {
       final relativePath = p.relative(repoPath, from: parentFolder);
       final submodulePath = relativePath.replaceAll(r'\', '/');
-      print(
-          'Updating parent submodule URL for $submodulePath in $parentFolder');
+      
+      // Check if submodule URL is already set in .gitmodules
+      // If it is, we skip updating the parent repo to avoid unnecessary commits/pushes
+      bool skipParentUpdate = false;
       try {
-        await _runGit(
-            ['submodule', 'set-url', submodulePath, remoteUrl], parentFolder);
-        await _runGit(['add', '.gitmodules'], parentFolder);
-        await _runGit([
-          'commit',
-          '-m',
-          'Update submodule remote url for $submodulePath [folder project213897]'
-        ], parentFolder, throwOnError: false);
+        final existingUrl = await _runGit(
+            ['config', '--file', '.gitmodules', '--get', 'submodule.$submodulePath.url'],
+            parentFolder,
+            throwOnError: false);
+        if (existingUrl.isNotEmpty && existingUrl.first.trim().isNotEmpty) {
+          skipParentUpdate = true;
+          _log('Submodule URL already set for $submodulePath. Skipping parent repo update.');
+        }
       } catch (e) {
-        print('Warning: Failed to update parent submodule URL: $e');
+        // If error, assume not set or something wrong, proceed with update
+        print('Error checking existing submodule URL: $e');
       }
 
-      // Auto-push parent repository if needed
-      // Logic: If the parent repo hasn't been pushed or can be fast-forwarded, push it.
-      // pushToRemote handles checking remote existence and fast-forward check (via standard git push).
-      print('Checking if parent repository needs to be pushed: $parentFolder');
-      try {
-        await pushToRemote(parentFolder, username, token);
-        print('Successfully auto-pushed parent repository.');
-      } catch (e) {
-        // If push fails (e.g. non-fast-forward), we just log it and continue.
-        // This prevents blocking the child push if the parent push isn't trivial.
-        print('Auto-push of parent repository skipped/failed: $e');
+      if (!skipParentUpdate) {
+        _log('Updating parent submodule URL for $submodulePath in $parentFolder');
+        try {
+          await _runGit(
+              ['submodule', 'set-url', submodulePath, remoteUrl], parentFolder);
+          await _runGit(['add', '.gitmodules'], parentFolder);
+          await _runGit([
+            'commit',
+            '-m',
+            'Update submodule remote url for $submodulePath [folder project213897]'
+          ], parentFolder, throwOnError: false);
+        } catch (e) {
+          print('Warning: Failed to update parent submodule URL: $e');
+        }
+
+        // Auto-push parent repository if needed
+        // Logic: If the parent repo hasn't been pushed or can be fast-forwarded, push it.
+        // pushToRemote handles checking remote existence and fast-forward check (via standard git push).
+        _log('Checking if parent repository needs to be pushed: $parentFolder');
+        try {
+          await pushToRemote(parentFolder, username, token, skipBackup: skipBackup);
+          _log('Successfully auto-pushed parent repository.');
+        } catch (e) {
+          // If push fails (e.g. non-fast-forward), we just log it and continue.
+          // This prevents blocking the child push if the parent push isn't trivial.
+          print('Auto-push of parent repository skipped/failed: $e');
+        }
       }
     }
   });
@@ -4843,7 +4986,7 @@ Future<void> _ensureWebhook(String repoName, String owner, String token) async {
       for (final hook in hooks) {
         final config = hook['config'];
         if (config != null && config['url'] == targetUrl) {
-          print('Webhook already exists for $repoName');
+          _log('Webhook already exists for $repoName');
           return;
         }
       }
