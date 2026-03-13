@@ -524,6 +524,12 @@ Future<List<Branch>> getRemoteBranches(
     if (parts.length >= 2) {
       final name = parts[0];
       if (name.endsWith('/HEAD')) continue;
+      // Filter out entries that are just the remote name itself (no branch suffix)
+      // A valid remote branch must look like "remote/branch"
+      if (!name.contains('/')) {
+        print('Debug: Skipping invalid remote branch name (no slash): $name');
+        continue;
+      }
       if (remoteName != null && name == remoteName) continue;
       result.add(Branch(name: name, head: parts[1].toLowerCase()));
     }
