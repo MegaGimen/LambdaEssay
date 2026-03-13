@@ -63,10 +63,7 @@ Flutter assets will be downloaded from https://storage.flutter-io.cn. Make sure 
 
 修改代码时，严禁在注释中加入推理过程，注释应简洁明了
 
-如果修改的只有cpp文件，不需要执行flutter analyze | Select-String "error"  ，只需用g++编译（生成同名exe文件）：
-C:\Users\m1369>g++ --version
-g++ (Rev8, Built by MSYS2 project) 15.2.0
-Copyright (C) 2025 Free Software Foundation, Inc.
+如果修改的只有cpp文件，不需要执行flutter analyze | Select-String "error"。同时，不用自己编译，修改好后我自己会进行编译。
 
 严禁擅自执行git diff、git add等命令
 
