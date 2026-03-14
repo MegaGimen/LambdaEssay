@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'package:http/http.dart' as http;
 import 'package:archive/archive_io.dart';
 import 'models.dart';
+import '../logger_service.dart';
 
 import 'package:crypto/crypto.dart';
 
@@ -63,14 +64,14 @@ Future<Map<String, dynamic>> listBackupCommits(
     {void Function(double percent, int received, int total)? onProgress,
     void Function(String line)? onUnzipOutput,
     bool skipSync = false}) async {
-  print("==========================================================");
-  print("${DateTime.now()}: [BackupService] listBackupCommits start for $repoName (skipSync=$skipSync)");
+  LogService.log("==========================================================");
+  LogService.log("${DateTime.now()}: [BackupService] listBackupCommits start for $repoName (skipSync=$skipSync)");
   
   // Fix: If repoName is a full path, convert to hash key to match server logic
   String targetRepoName = repoName;
 
   if (p.isAbsolute(repoName) || repoName.contains(p.separator)) {
-     print("${DateTime.now()}: Debug: resolving repoName: $repoName");
+     LogService.log("${DateTime.now()}: Debug: resolving repoName: $repoName");
      
      // Method: Try to get remote URL directly from git config
      // This is the most reliable way as it reflects the actual remote repo name
@@ -82,7 +83,7 @@ Future<Map<String, dynamic>> listBackupCommits(
                 'GIT_TERMINAL_PROMPT': '0',
                 'GCM_INTERACTIVE': 'never'
               });
-           print("${DateTime.now()}: Debug: git remote get-url origin result: exitCode=${res.exitCode}, stdout=${res.stdout}");
+           LogService.log("${DateTime.now()}: Debug: git remote get-url origin result: exitCode=${res.exitCode}, stdout=${res.stdout}");
            
            if (res.exitCode == 0) {
               final url = (res.stdout as String).trim();
@@ -96,7 +97,7 @@ Future<Map<String, dynamic>> listBackupCommits(
                  } else {
                     targetRepoName = lastSegment;
                  }
-                 print("${DateTime.now()}: Debug: Found targetRepoName via git remote: $targetRepoName");
+                 LogService.log("${DateTime.now()}: Debug: Found targetRepoName via git remote: $targetRepoName");
                  foundViaGit = true;
               }
            }

@@ -26,6 +26,7 @@ import 'package:shelf_router/shelf_router.dart' as shelf_router;
 import 'package:file_picker/file_picker.dart';
 import 'package:crypto/crypto.dart';
 import 'models.dart';
+import 'logger_service.dart';
 import 'visualize.dart';
 import 'backup.dart';
 import 'pull_preview.dart';
@@ -590,6 +591,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   // For double-click detection
   DateTime? _lastTapTime;
   String? _lastTappedPath;
+  bool _showTerminal = false;
+  final ScrollController _terminalScrollController = ScrollController();
 
   bool _isDirty = false;
   Timer? _dirtyCheckTimer;
@@ -4307,21 +4310,44 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       );
       
       if (result.exitCode != 0) {
+        LogService.log('Git submodule update failed: ${result.stderr}');
         throw Exception(result.stderr);
       }
       
+      LogService.log('Submodule pull successful for: $relPath');
       if (mounted) {
          ScaffoldMessenger.of(context).showSnackBar(
              const SnackBar(content: Text('子模块拉取成功'))
          );
       }
     } catch (e) {
+      LogService.log('Error pulling submodule: $e');
       if (mounted) {
         showDialog(
             context: context, 
             builder: (ctx) => AlertDialog(
               title: const Text('无法打开'),
-              content: const Text('本文件尚未被推送到云端或您没有权限打开'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('本文件尚未被推送到云端或您没有权限打开'),
+                  const SizedBox(height: 10),
+                  const Text('详细错误信息:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                  const SizedBox(height: 4),
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[200],
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      e.toString(),
+                      style: const TextStyle(fontFamily: 'monospace', fontSize: 10),
+                    ),
+                  ),
+                ],
+              ),
               actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('确定'))]
             )
         );
@@ -4349,7 +4375,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       return;
     }
 
-    print("DEBUG: Double clicked file: $filePath");
+    LogService.log("DEBUG: Double clicked file: $filePath");
 
     final lowerPath = filePath.toLowerCase();
     
@@ -4522,7 +4548,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
   Future<void> _fetchRepoBackground(String repoPath) async {
     try {
-      print('[BgFetch] Checking repo: $repoPath');
+      LogService.log('[BgFetch] Checking repo: $repoPath');
       // 1. Silent fetch to update remote refs
       final fetchRes = await Process.run(
           'git',
@@ -4544,7 +4570,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             'GCM_INTERACTIVE': 'never'
           });
       if (fetchRes.exitCode != 0) {
-        print('[BgFetch] Fetch failed for $repoPath: ${fetchRes.stderr}');
+        LogService.log('[BgFetch] Fetch failed for $repoPath: ${fetchRes.stderr}');
         return;
       }
 
@@ -5525,6 +5551,13 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                     ),
                     const SizedBox(width: 8),
                     IconButton(
+                      icon: Icon(_showTerminal ? Icons.terminal : Icons.terminal_outlined),
+                      tooltip: '显示终端日志',
+                      onPressed: () => setState(() => _showTerminal = !_showTerminal),
+                      color: _showTerminal ? const Color(0xFF6200EE) : Colors.grey,
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
                       icon: const Icon(Icons.save),
                       tooltip: '保存追踪包 (Ctrl+S)',
                       onPressed: _isDirty ? _saveProject : null, 
@@ -5704,6 +5737,79 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                   ],
                 ),
               ),
+
+              if (_showTerminal)
+                Positioned(
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  height: 250,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.9),
+                      border: Border(top: BorderSide(color: Colors.grey.shade800, width: 2)),
+                    ),
+                    child: Column(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                          color: Colors.grey.shade900,
+                          child: Row(
+                            children: [
+                              const Icon(Icons.terminal, color: Colors.green, size: 16),
+                              const SizedBox(width: 8),
+                              const Text('终端日志', style: TextStyle(color: Colors.white, fontSize: 12)),
+                              const Spacer(),
+                              IconButton(
+                                icon: const Icon(Icons.delete_sweep, color: Colors.white70, size: 18),
+                                tooltip: '清空日志',
+                                onPressed: () => LogService.clear(),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.close, color: Colors.white70, size: 18),
+                                tooltip: '关闭终端',
+                                onPressed: () => setState(() => _showTerminal = false),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Expanded(
+                          child: StreamBuilder<List<String>>(
+                            stream: LogService.logsStream,
+                            initialData: LogService.currentLogs,
+                            builder: (context, snapshot) {
+                              final logs = snapshot.data ?? [];
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                if (_terminalScrollController.hasClients) {
+                                  _terminalScrollController.jumpTo(_terminalScrollController.position.maxScrollExtent);
+                                }
+                              });
+                              return ListView.builder(
+                                controller: _terminalScrollController,
+                                padding: const EdgeInsets.all(8),
+                                itemCount: logs.length,
+                                itemBuilder: (context, index) {
+                                  return Padding(
+                                    padding: const EdgeInsets.symmetric(vertical: 2),
+                                    child: SelectableText(
+                                      logs[index],
+                                      style: const TextStyle(
+                                        color: Colors.lightGreenAccent,
+                                        fontFamily: 'monospace',
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  );
+                                },
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
               if (loading)
                 const Opacity(
                   opacity: 0.3,

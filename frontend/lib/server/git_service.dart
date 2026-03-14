@@ -7,6 +7,7 @@ import 'package:archive/archive_io.dart';
 import 'package:path/path.dart' as p;
 import 'package:uuid/uuid.dart';
 import 'models.dart';
+import '../logger_service.dart';
 import 'ai_diff_service.dart'; // 🔥 新增：AI 对比服务
 
 import 'package:crypto/crypto.dart';
@@ -467,9 +468,9 @@ Future<List<String>> _runGit(List<String> args, String repoPath,
     );
     if (res.exitCode != 0) {
       if (printError) {
-        _log("git error (exitCode=${res.exitCode}) args=$args");
-        print(res.stderr);
-        print(res.stdout);
+        final err = "Git error (exitCode=${res.exitCode}) args=$args\nStderr: ${res.stderr}\nStdout: ${res.stdout}";
+        _log(err);
+        LogService.log(err);
       }
       if (throwOnError) {
         throw Exception(res.stderr is String ? res.stderr : 'git error');
@@ -477,6 +478,12 @@ Future<List<String>> _runGit(List<String> args, String repoPath,
     }
     final out =
         res.stdout is String ? res.stdout as String : utf8.decode(res.stdout);
+    
+    // Log normal output for important commands (optional, but good for debug)
+    if (args.contains('push') || args.contains('pull') || args.contains('fetch') || args.contains('clone')) {
+       LogService.log('Git ${args[0]} output: $out');
+    }
+
     return LineSplitter.split(out).toList();
   } on FormatException {
     print("Git format error!!!");
