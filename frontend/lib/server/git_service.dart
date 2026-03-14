@@ -3915,28 +3915,82 @@ Future<String> _resolveRepoOwner(String repoName, String token) async {
 }
 
 Future<String> _calculateEffectiveRemoteRepoName(String repoPath, {String? targetRepoName}) async {
-  String baseName;
+  // If targetRepoName is provided (e.g., during a fresh pull), use it directly.
   if (targetRepoName != null && targetRepoName.isNotEmpty) {
-    baseName = targetRepoName;
-  } else {
-    final parentFolder = await _findParentFolderProject(repoPath);
-    if (parentFolder == null || p.equals(p.normalize(parentFolder), p.normalize(repoPath))) {
-      baseName = p.basename(repoPath);
-    } else {
-      final relativePath = p.relative(repoPath, from: parentFolder);
-      final normalizedRelPath = relativePath.replaceAll(r'\', '/');
-      final rootName = p.basename(parentFolder);
-      final relName = normalizedRelPath.replaceAll('/', '-');
-      baseName = '$rootName-$relName';
-    }
+    return Branch.encodeName(targetRepoName.endsWith('.git') 
+        ? targetRepoName.substring(0, targetRepoName.length - 4) 
+        : targetRepoName);
   }
 
-  // Remove .git if present (the user wants to remove the extension from repo name)
+  // 1. Try to detect from existing remotes (Self-healing)
+  // If the repository already has a remote, we MUST use its name to stay consistent.
+  try {
+    if (isGitRepo(repoPath)) {
+       final remotes = await _runGit(['remote'], repoPath);
+       for (final r in remotes) {
+          final trimmed = r.trim();
+          if (trimmed.isEmpty) continue;
+          final urlRes = await _runGit(['remote', 'get-url', trimmed], repoPath);
+          if (urlRes.isNotEmpty) {
+             final url = urlRes.first.trim();
+             // URL format: http://host:port/owner/repo_name
+             final uri = Uri.parse(Branch.decodeName(url));
+             if (uri.pathSegments.isNotEmpty) {
+                String repoName = uri.pathSegments.last;
+                if (repoName.endsWith('.git')) {
+                   repoName = repoName.substring(0, repoName.length - 4);
+                }
+                if (repoName.isNotEmpty) {
+                   print('[EffectiveRepoName] Detected existing remote name: $repoName');
+                   return Branch.encodeName(repoName);
+                }
+             }
+          }
+       }
+    }
+  } catch (e) {
+    print('[EffectiveRepoName] Failed to detect from existing remotes: $e');
+  }
+
+  String baseName;
+  final parentFolder = await _findParentFolderProject(repoPath);
+  if (parentFolder == null || p.equals(p.normalize(parentFolder), p.normalize(repoPath))) {
+    baseName = p.basename(repoPath);
+  } else {
+    final relativePath = p.relative(repoPath, from: parentFolder);
+    final normalizedRelPath = relativePath.replaceAll(r'\', '/');
+    
+    // Try to get stable root name from metadata
+    String rootName = p.basename(parentFolder);
+    try {
+      final metaFile = File(p.join(parentFolder, kWorkspaceMetaFile));
+      if (metaFile.existsSync()) {
+        final meta = jsonDecode(await metaFile.readAsString());
+        if (meta['workspaceId'] != null && meta['workspaceId'].toString().isNotEmpty) {
+           rootName = meta['workspaceId'].toString();
+           print('[EffectiveRepoName] Using stable workspaceId as rootName: $rootName');
+        } else if (meta['name'] != null && meta['name'].toString().isNotEmpty) {
+           // Fallback to name if ID missing but name exists
+           rootName = p.basenameWithoutExtension(meta['name'].toString());
+           if (rootName.endsWith('.tracking')) {
+              rootName = rootName.substring(0, rootName.length - 9);
+           }
+           print('[EffectiveRepoName] Using package name as rootName: $rootName');
+        }
+      }
+    } catch (e) {
+      print('[EffectiveRepoName] Error reading workspace meta: $e');
+    }
+
+    final relName = normalizedRelPath.replaceAll('/', '-');
+    baseName = '$rootName-$relName';
+  }
+
+  // Remove .git if present
   if (baseName.toLowerCase().endsWith('.git')) {
     baseName = baseName.substring(0, baseName.length - 4);
   }
   
-  // Apply Branch.encodeName to ensure only valid characters (AlphaDashDot) for Gitea
   final result = Branch.encodeName(baseName);
   LogService.log('[EffectiveRepoName] Input: $baseName -> Output: $result');
   return result;
@@ -4201,7 +4255,23 @@ Future<Map<String, dynamic>> pullFromRemote(
     if (File(localTrackingZipPath).existsSync()) {
       repoPath = await _resolveWorkspaceDir(localTrackingZipPath);
     } else {
-      newWorkspaceId = Uuid().v4().replaceAll('-', '');
+      // For new clones, derive a stable workspaceId from the targetRepoName if available.
+      // We expect targetRepoName to be in the format "{workspaceId}-{projectName}".
+      if (targetRepoName != null && targetRepoName.isNotEmpty) {
+         final dashIndex = targetRepoName.indexOf('-');
+         if (dashIndex > 0) {
+            // If it has a dash, the part before it is likely the workspaceId (usually a hash or UUID)
+            newWorkspaceId = targetRepoName.substring(0, dashIndex);
+            print('[pullFromRemote] Extracted workspaceId from targetRepoName: $newWorkspaceId');
+         } else {
+            // Fallback: Use MD5 if no dash found
+            newWorkspaceId = md5.convert(utf8.encode(targetRepoName)).toString();
+            print('[pullFromRemote] No dash in targetRepoName, using MD5: $newWorkspaceId');
+         }
+      } else {
+         newWorkspaceId = Uuid().v4().replaceAll('-', '');
+         print('[pullFromRemote] Using random workspaceId: $newWorkspaceId');
+      }
       repoPath = _workspaceDirForId(newWorkspaceId);
     }
   } else {
@@ -4279,14 +4349,24 @@ Future<Map<String, dynamic>> pullFromRemote(
 
           final current = await getCurrentBranch(projDir);
           if (current != null) {
-            // Try merge first? Or reset hard?
-            // Since user says "folder_meta is deprecated", we assume we trust git structure.
-            // Let's do a pull (fetch + merge)
-            await _runGit(['pull', remoteName, current], projDir);
+            if (branch != null && branch != current) {
+               // If pulling a specific branch while on another, merge it
+               await _runGit(['merge', '$remoteName/$branch'], projDir);
+            } else {
+               // Standard pull (fetch already done)
+               await _runGit(['pull', remoteName, current], projDir);
+            }
           } else {
             // Detached head?
-            await _runGit(['fetch', remoteName, 'master'], projDir);
-            await _runGit(['reset', '--hard', '$remoteName/master'], projDir);
+            final branchToUse = branch ?? 'master';
+            try {
+               // Try to checkout and update
+               await _runGit(['checkout', branchToUse], projDir);
+               await _runGit(['reset', '--hard', '$remoteName/$branchToUse'], projDir);
+            } catch (e) {
+               // If not local, create it tracking remote
+               await _runGit(['checkout', '-b', branchToUse, '--track', '$remoteName/$branchToUse'], projDir);
+            }
           }
 
           // Update submodules
@@ -4370,7 +4450,17 @@ Future<Map<String, dynamic>> pullFromRemote(
               } else {
                  // Detached?
                  if (branch != null) {
-                   await _runGit(['reset', '--hard', '$remoteName/$branch'], projDir);
+                    // If user specified a branch, try to checkout it to fix detached head
+                    try {
+                      await _runGit(['checkout', branch], projDir);
+                      await _runGit(['reset', '--hard', '$remoteName/$branch'], projDir);
+                    } catch (e) {
+                      // If branch doesn't exist locally, create it
+                      await _runGit(['checkout', '-b', branch, '--track', '$remoteName/$branch'], projDir);
+                    }
+                 } else {
+                    // Just update detached HEAD
+                    await _runGit(['reset', '--hard', 'FETCH_HEAD'], projDir);
                  }
               }
             } else {
@@ -4420,7 +4510,6 @@ Future<Map<String, dynamic>> pullFromRemote(
       print('localTrackingZipPath: $localTrackingZipPath');
 
       try {
-        // final parentDir = Directory(projDir).parent;
         final globalMetaFile =
             File(p.join(projDir, '.tracking_workspace.json'));
         Map<String, dynamic> meta = {};
@@ -4429,9 +4518,13 @@ Future<Map<String, dynamic>> pullFromRemote(
         }
         meta['externalPath'] = localTrackingZipPath;
         meta['packagePath'] = localTrackingZipPath;
+        
+        // Use the extracted or derived workspaceId
         if (newWorkspaceId != null) {
           meta['workspaceId'] = newWorkspaceId;
+          print('[pullFromRemote] Persistent workspaceId set to: $newWorkspaceId');
         }
+        
         await globalMetaFile.writeAsString(jsonEncode(meta));
         print(
             'Updated global metadata with externalPath: $localTrackingZipPath');

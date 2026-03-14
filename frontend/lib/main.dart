@@ -2710,17 +2710,27 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       List<String> branches = [];
       String? currentBranch;
       try {
-        // We can use the graph data if available, or fetch fresh
-        // If we want fresh remote branches, we should probably fetch first?
-        // But fetch requires network.
-        // Let's use the branches we know from graph (which includes local and some remote refs)
-        // Or we can list remote branches via API?
-        // Actually, let's just use the branches present in the graph for now.
-        // Wait, graph only has what we loaded.
-        
         // Let's rely on data from graph if available
         if (data != null) {
-           branches = data!.branches.map((b) => b.name).toList();
+           final names = <String>{};
+           
+           // Local branches
+           for (final b in data!.branches) {
+              names.add(b.name);
+           }
+           
+           // Remote branches - strip prefix like 'origin/'
+           for (final b in data!.remoteBranches) {
+              var n = b.name;
+              if (n.contains('/')) {
+                 n = n.split('/').last;
+              }
+              names.add(n);
+           }
+           
+           final allNames = names.toList();
+           allNames.sort();
+           branches = allNames;
            currentBranch = data!.currentBranch;
         }
       } catch (e) {
@@ -5722,7 +5732,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                     ),
                     const SizedBox(width: 12),
                     Text(
-                      'v14H2V', // 版本随机验证码
+                      'v14H5T', // 版本随机验证码
                       style: TextStyle(
                         color: Colors.grey.withOpacity(0.5),
                         fontSize: 10,
