@@ -14,6 +14,13 @@ import 'package:crypto/crypto.dart';
 bool _debugMode = false;
 void setDebugMode(bool value) => _debugMode = value;
 
+String? _gitUsername;
+String? _gitToken;
+void setGitCredentials(String? username, String? token) {
+  _gitUsername = username;
+  _gitToken = token;
+}
+
 void _log(String message) {
   print('[${DateTime.now()}] $message');
 }
@@ -434,14 +441,16 @@ Future<void> fetchAll(String repoPath) async {
 Future<List<String>> _runGit(List<String> args, String repoPath,
     {bool throwOnError = true, bool printError = true}) async {
   final fullArgs = [
-    '-c',
-    'i18n.logOutputEncoding=UTF-8',
-    '-c',
-    'core.quotepath=false',
-    '-c',
-    'credential.helper=manager', // Force a common helper to avoid selector popup
-    '-C',
-    repoPath,
+    '-c', 'i18n.logOutputEncoding=UTF-8',
+    '-c', 'core.quotepath=false',
+    if (_gitUsername != null && _gitToken != null) ...[
+      '-c', 'credential.helper=', // Clear existing helpers
+      '-c', 'credential.helper=!f() { echo username=$_gitUsername; echo password=$_gitToken; }; f',
+    ] else ...[
+      '-c', 'credential.helper=manager', // Fallback to manager if no internal token
+    ],
+    '-c', 'credential.interactive=never', // Disable credential interactive mode
+    '-C', repoPath,
     ...args,
   ];
   try {
@@ -450,7 +459,11 @@ Future<List<String>> _runGit(List<String> args, String repoPath,
       fullArgs,
       stdoutEncoding: utf8,
       stderrEncoding: utf8,
-      environment: {'GIT_TERMINAL_PROMPT': '0'}, // Prevent interactive prompts
+      environment: {
+        'GIT_TERMINAL_PROMPT': '0',
+        'GCM_INTERACTIVE': 'never', // Disable GCM GUI
+        'GIT_SSL_NO_VERIFY': 'true', // Optional: avoid SSL popups if any
+      }, // Prevent interactive prompts
     );
     if (res.exitCode != 0) {
       if (printError) {
@@ -472,7 +485,10 @@ Future<List<String>> _runGit(List<String> args, String repoPath,
       fullArgs,
       stdoutEncoding: systemEncoding,
       stderrEncoding: systemEncoding,
-      environment: {'GIT_TERMINAL_PROMPT': '0'},
+      environment: {
+        'GIT_TERMINAL_PROMPT': '0',
+        'GCM_INTERACTIVE': 'never',
+      },
     );
     if (res.exitCode != 0) {
       if (printError) print("git error fallback");
@@ -937,7 +953,24 @@ Future<String> cloneAndPackageProject(String remoteUrl, String savePath) async {
   try {
     print('[Clone] Cloning $remoteUrl to ${tmpDir.path}');
     // Remove --recursive to avoid pulling submodules
-    final res = await Process.run('git', ['-c', 'credential.helper=manager', 'clone', remoteUrl, tmpDir.path], environment: {'GIT_TERMINAL_PROMPT': '0'});
+    final res = await Process.run(
+        'git',
+        [
+          '-c', 'i18n.logOutputEncoding=UTF-8',
+          '-c', 'core.quotepath=false',
+          if (_gitUsername != null && _gitToken != null) ...[
+            '-c', 'credential.helper=',
+            '-c', 'credential.helper=!f() { echo username=$_gitUsername; echo password=$_gitToken; }; f',
+          ] else ...[
+            '-c', 'credential.helper=manager',
+          ],
+          '-c', 'credential.interactive=never',
+          'clone', remoteUrl, tmpDir.path
+        ],
+        environment: {
+          'GIT_TERMINAL_PROMPT': '0',
+          'GCM_INTERACTIVE': 'never'
+        });
     if (res.exitCode != 0) {
       throw Exception('Clone failed: ${res.stderr}');
     }

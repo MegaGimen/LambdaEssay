@@ -33,7 +33,21 @@ Future<Map<String, dynamic>> compareGitRepos({
     await Process.run('git', ['remote', 'add', 'repoA', repoAPath], environment: {'GIT_TERMINAL_PROMPT': '0'});
     await Process.run('git', ['remote', 'add', 'repoB', repoBPath], environment: {'GIT_TERMINAL_PROMPT': '0'});
     
-    await Process.run('git', ['-c', 'credential.helper=manager', 'fetch', '--all'], environment: {'GIT_TERMINAL_PROMPT': '0'});
+    // We don't have access to global _gitUsername/_gitToken here easily without importing git_service.dart
+    // But since these are local paths (repoAPath, repoBPath), they shouldn't need credentials.
+    // However, we should still disable interactivity.
+    await Process.run(
+      'git', 
+      [
+        '-c', 'credential.helper=manager', 
+        '-c', 'credential.interactive=never',
+        'fetch', '--all'
+      ], 
+      environment: {
+        'GIT_TERMINAL_PROMPT': '0',
+        'GCM_INTERACTIVE': 'never'
+      }
+    );
     
     // 获取所有分支
     final branchesA = await _getAllBranches('repoA/');

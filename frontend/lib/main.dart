@@ -1785,6 +1785,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             setState(() {
               _token = newToken;
             });
+            // Update global credentials for git_service
+            setGitCredentials(_username, _token);
             // print("AuthKey refreshed automatically: $_token");
           }
         }
@@ -1818,6 +1820,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
               _token = firstToken['sha1'];
               _username = username; // Ensure username is set
             });
+            setGitCredentials(_username, _token);
             return true;
           }
         }
@@ -4285,11 +4288,22 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       final result = await Process.run(
           'git', 
           [
-            '-c', 'credential.helper=manager', // Force a common helper to avoid the selector popup
+            '-c', 'i18n.logOutputEncoding=UTF-8',
+            '-c', 'core.quotepath=false',
+            if (_username != null && _token != null) ...[
+              '-c', 'credential.helper=', // Clear existing helpers
+              '-c', 'credential.helper=!f() { echo username=$_username; echo password=$_token; }; f',
+            ] else ...[
+              '-c', 'credential.helper=manager',
+            ],
+            '-c', 'credential.interactive=never',
             'submodule', 'update', '--init', '--recursive', relPath
           ],
           workingDirectory: root.path,
-          environment: {'GIT_TERMINAL_PROMPT': '0'} // Prevent terminal/GUI prompts
+          environment: {
+            'GIT_TERMINAL_PROMPT': '0',
+            'GCM_INTERACTIVE': 'never'
+          } // Prevent terminal/GUI prompts
       );
       
       if (result.exitCode != 0) {
@@ -4510,8 +4524,25 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     try {
       print('[BgFetch] Checking repo: $repoPath');
       // 1. Silent fetch to update remote refs
-      final fetchRes =
-          await Process.run('git', ['-c', 'credential.helper=manager', 'fetch'], workingDirectory: repoPath, environment: {'GIT_TERMINAL_PROMPT': '0'});
+      final fetchRes = await Process.run(
+          'git',
+          [
+            '-c', 'i18n.logOutputEncoding=UTF-8',
+            '-c', 'core.quotepath=false',
+            if (_username != null && _token != null) ...[
+              '-c', 'credential.helper=',
+              '-c', 'credential.helper=!f() { echo username=$_username; echo password=$_token; }; f',
+            ] else ...[
+              '-c', 'credential.helper=manager',
+            ],
+            '-c', 'credential.interactive=never',
+            'fetch'
+          ],
+          workingDirectory: repoPath,
+          environment: {
+            'GIT_TERMINAL_PROMPT': '0',
+            'GCM_INTERACTIVE': 'never'
+          });
       if (fetchRes.exitCode != 0) {
         print('[BgFetch] Fetch failed for $repoPath: ${fetchRes.stderr}');
         return;
@@ -4522,12 +4553,16 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       final localRes = await Process.run(
           'git',
           [
+            '-c', 'credential.interactive=never',
             'for-each-ref',
             '--format=%(refname:short)|%(upstream:short)|%(objectname)',
             'refs/heads'
           ],
           workingDirectory: repoPath,
-          environment: {'GIT_TERMINAL_PROMPT': '0'});
+          environment: {
+            'GIT_TERMINAL_PROMPT': '0',
+            'GCM_INTERACTIVE': 'never'
+          });
 
       if (localRes.exitCode != 0) return;
       final localOutput = localRes.stdout.toString().trim();
@@ -4537,12 +4572,16 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       final remoteRes = await Process.run(
           'git',
           [
+            '-c', 'credential.interactive=never',
             'for-each-ref',
             '--format=%(refname:short)|%(objectname)',
             'refs/remotes'
           ],
           workingDirectory: repoPath,
-          environment: {'GIT_TERMINAL_PROMPT': '0'});
+          environment: {
+            'GIT_TERMINAL_PROMPT': '0',
+            'GCM_INTERACTIVE': 'never'
+          });
       
       final remoteMap = <String, String>{};
       final Set<String> knownRemotes = {};
@@ -4606,12 +4645,26 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             bool remoteIsBehind = false;
             
             try {
-               final res = await Process.run('git', ['merge-base', '--is-ancestor', localSha, remoteSha], workingDirectory: repoPath, environment: {'GIT_TERMINAL_PROMPT': '0'});
+               final res = await Process.run(
+                   'git',
+                   ['-c', 'credential.interactive=never', 'merge-base', '--is-ancestor', localSha, remoteSha],
+                   workingDirectory: repoPath,
+                   environment: {
+                     'GIT_TERMINAL_PROMPT': '0',
+                     'GCM_INTERACTIVE': 'never'
+                   });
                if (res.exitCode == 0) localIsBehind = true;
             } catch (_) {}
              
             try {
-               final res = await Process.run('git', ['merge-base', '--is-ancestor', remoteSha, localSha], workingDirectory: repoPath, environment: {'GIT_TERMINAL_PROMPT': '0'});
+               final res = await Process.run(
+                   'git',
+                   ['-c', 'credential.interactive=never', 'merge-base', '--is-ancestor', remoteSha, localSha],
+                   workingDirectory: repoPath,
+                   environment: {
+                     'GIT_TERMINAL_PROMPT': '0',
+                     'GCM_INTERACTIVE': 'never'
+                   });
                if (res.exitCode == 0) remoteIsBehind = true;
             } catch (_) {}
 
