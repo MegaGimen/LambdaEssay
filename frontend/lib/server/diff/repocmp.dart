@@ -27,13 +27,13 @@ Future<Map<String, dynamic>> compareGitRepos({
   final tempDir = await Directory.systemTemp.createTemp('git_compare_');
   try {
     Directory.current = tempDir.path;
-    await Process.run('git', ['init']);
+    await Process.run('git', ['init'], environment: {'GIT_TERMINAL_PROMPT': '0'});
     
     // 添加远程仓库
-    await Process.run('git', ['remote', 'add', 'repoA', repoAPath]);
-    await Process.run('git', ['remote', 'add', 'repoB', repoBPath]);
+    await Process.run('git', ['remote', 'add', 'repoA', repoAPath], environment: {'GIT_TERMINAL_PROMPT': '0'});
+    await Process.run('git', ['remote', 'add', 'repoB', repoBPath], environment: {'GIT_TERMINAL_PROMPT': '0'});
     
-    await Process.run('git', ['fetch', '--all']);
+    await Process.run('git', ['-c', 'credential.helper=manager', 'fetch', '--all'], environment: {'GIT_TERMINAL_PROMPT': '0'});
     
     // 获取所有分支
     final branchesA = await _getAllBranches('repoA/');
@@ -89,6 +89,7 @@ Future<Map<String, dynamic>> _compareBranchHistory({
   final mergeBaseResult = await Process.run(
     'git',
     ['merge-base', 'repoA/$branchName', 'repoB/$branchName'],
+    environment: {'GIT_TERMINAL_PROMPT': '0'},
   );
   
   String? mergeBase;
@@ -103,12 +104,14 @@ Future<Map<String, dynamic>> _compareBranchHistory({
     final diffOurs = await Process.run(
       'git',
       ['diff', '--stat', mergeBase, 'repoA/$branchName'],
+      environment: {'GIT_TERMINAL_PROMPT': '0'},
     );
     
     // 3. 比较从共同祖先到B分支的差异（THEIRS）
     final diffTheirs = await Process.run(
       'git',
       ['diff', '--stat', mergeBase, 'repoB/$branchName'],
+      environment: {'GIT_TERMINAL_PROMPT': '0'},
     );
     
     // 4. 获取两个分支的历史差异
@@ -116,12 +119,14 @@ Future<Map<String, dynamic>> _compareBranchHistory({
       'git',
       ['log', '--graph', '--oneline', '--left-right', '--boundary', 
        'repoA/$branchName...repoB/$branchName'],
+      environment: {'GIT_TERMINAL_PROMPT': '0'},
     );
     
     // 5. 获取冲突的文件列表（即两个分支都修改的文件）
     final conflictFiles = await Process.run(
       'git',
       ['diff', '--name-only', 'repoA/$branchName', 'repoB/$branchName'],
+      environment: {'GIT_TERMINAL_PROMPT': '0'},
     );
     
     // 6. 获取提交数量和列表
@@ -217,6 +222,7 @@ Future<String> _getFullBranchStat(String branch) async {
   final result = await Process.run(
     'git',
     ['log', '--oneline', '--stat', '--no-merges', branch],
+    environment: {'GIT_TERMINAL_PROMPT': '0'},
   );
   
   if (result.exitCode == 0) {
@@ -229,8 +235,8 @@ Future<String> _getFullBranchStat(String branch) async {
 
 /// 获取两个独立分支的日志
 Future<String> _getSeparateLogs(String branchA, String branchB) async {
-  final logA = await Process.run('git', ['log', '--oneline', '-5', branchA]);
-  final logB = await Process.run('git', ['log', '--oneline', '-5', branchB]);
+  final logA = await Process.run('git', ['log', '--oneline', '-5', branchA], environment: {'GIT_TERMINAL_PROMPT': '0'});
+  final logB = await Process.run('git', ['log', '--oneline', '-5', branchB], environment: {'GIT_TERMINAL_PROMPT': '0'});
   
   return '仓库A的 $branchA:\n${logA.stdout.toString().trim()}\n\n仓库B的 $branchB:\n${logB.stdout.toString().trim()}';
 }
@@ -244,6 +250,7 @@ Future<Map<String, Map<String, String>>> _getAllBranches(String remotePrefix) as
       'git',
       ['for-each-ref', '--format=%(refname:short) %(objectname) %(contents:subject)', 
        'refs/remotes/$remotePrefix'],
+      environment: {'GIT_TERMINAL_PROMPT': '0'},
     );
     
     for (final line in output.stdout.toString().split('\n')) {
@@ -265,13 +272,13 @@ Future<Map<String, Map<String, String>>> _getAllBranches(String remotePrefix) as
     }
   } catch (e) {
     // 回退到branch -r
-    final output = await Process.run('git', ['branch', '-r']);
+    final output = await Process.run('git', ['branch', '-r'], environment: {'GIT_TERMINAL_PROMPT': '0'});
     for (final line in output.stdout.toString().split('\n')) {
       final trimmed = line.trim();
       if (trimmed.isEmpty || trimmed.contains('->') || !trimmed.startsWith(remotePrefix)) continue;
       
       final branchName = trimmed.substring(remotePrefix.length);
-      final commitResult = await Process.run('git', ['rev-parse', trimmed]);
+      final commitResult = await Process.run('git', ['rev-parse', trimmed], environment: {'GIT_TERMINAL_PROMPT': '0'});
       if (commitResult.exitCode == 0) {
         branches[branchName] = {
           'commit': commitResult.stdout.toString().trim(),

@@ -438,6 +438,8 @@ Future<List<String>> _runGit(List<String> args, String repoPath,
     'i18n.logOutputEncoding=UTF-8',
     '-c',
     'core.quotepath=false',
+    '-c',
+    'credential.helper=manager', // Force a common helper to avoid selector popup
     '-C',
     repoPath,
     ...args,
@@ -935,7 +937,7 @@ Future<String> cloneAndPackageProject(String remoteUrl, String savePath) async {
   try {
     print('[Clone] Cloning $remoteUrl to ${tmpDir.path}');
     // Remove --recursive to avoid pulling submodules
-    final res = await Process.run('git', ['clone', remoteUrl, tmpDir.path]);
+    final res = await Process.run('git', ['-c', 'credential.helper=manager', 'clone', remoteUrl, tmpDir.path], environment: {'GIT_TERMINAL_PROMPT': '0'});
     if (res.exitCode != 0) {
       throw Exception('Clone failed: ${res.stderr}');
     }
@@ -1487,7 +1489,7 @@ Future<String?> _readWorkspaceIdFromDir(String dirPath) async {
   if (Directory(gitDir).existsSync()) {
     try {
       final res = await Process.run('git', ['remote', 'get-url', 'origin'],
-          workingDirectory: dirPath);
+          workingDirectory: dirPath, environment: {'GIT_TERMINAL_PROMPT': '0'});
       if (res.exitCode == 0) {
         final url = (res.stdout as String).trim();
         if (url.isNotEmpty) {

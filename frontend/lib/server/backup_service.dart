@@ -78,7 +78,7 @@ Future<Map<String, dynamic>> listBackupCommits(
      if (await Directory(repoName).exists() || await File(repoName).exists()) { // File check for bare repo/submodule file
         try {
            final res = await Process.run('git', ['remote', 'get-url', 'origin'], 
-              workingDirectory: repoName);
+              workingDirectory: repoName, environment: {'GIT_TERMINAL_PROMPT': '0'});
            print("${DateTime.now()}: Debug: git remote get-url origin result: exitCode=${res.exitCode}, stdout=${res.stdout}");
            
            if (res.exitCode == 0) {
@@ -320,14 +320,14 @@ Future<void> _precacheSnapshots(String repoName, String repoPath) async {
   // Enable longpaths to support deep nested paths in backup repos
   try {
     await Process.run('git', ['config', 'core.longpaths', 'true'],
-        workingDirectory: repoPath);
+        workingDirectory: repoPath, environment: {'GIT_TERMINAL_PROMPT': '0'});
   } catch (e) {
     print('${DateTime.now()}: Failed to enable longpaths: $e');
   }
 
   // Get all commit hashes
   final res = await Process.run('git', ['log', '--format=%H'],
-      workingDirectory: repoPath);
+      workingDirectory: repoPath, environment: {'GIT_TERMINAL_PROMPT': '0'});
   if (res.exitCode != 0) {
     throw Exception('Failed to get commits for precache: ${res.stderr}');
   }
@@ -386,6 +386,7 @@ Future<void> _precacheSnapshots(String repoName, String repoPath) async {
           'git',
           ['archive', '--format=tar', '--output=${tempTar.path}', commitId],
           workingDirectory: repoPath,
+          environment: {'GIT_TERMINAL_PROMPT': '0'},
         );
 
         if (archiveRes.exitCode != 0) {
@@ -435,11 +436,12 @@ Future<void> _precacheSnapshots(String repoName, String repoPath) async {
         // If the snapshot itself doesn't contain a .git folder (which it likely doesn't if it's just a file backup),
         // we create a dummy one.
         if (!hasBareRepo && !await Directory(p.join(targetDir.path, '.git')).exists()) {
-            await Process.run('git', ['init'], workingDirectory: targetDir.path);
-            await Process.run('git', ['config', 'user.email', 'backup@local'], workingDirectory: targetDir.path);
-            await Process.run('git', ['config', 'user.name', 'BackupBot'], workingDirectory: targetDir.path);
-            await Process.run('git', ['add', '.'], workingDirectory: targetDir.path);
-            await Process.run('git', ['commit', '-m', 'Snapshot state'], workingDirectory: targetDir.path);
+            print("${DateTime.now()}: Repairing cache: Creating temporary git repo to extract inner repo");
+            await Process.run('git', ['init'], workingDirectory: targetDir.path, environment: {'GIT_TERMINAL_PROMPT': '0'});
+            await Process.run('git', ['config', 'user.email', 'backup@local'], workingDirectory: targetDir.path, environment: {'GIT_TERMINAL_PROMPT': '0'});
+            await Process.run('git', ['config', 'user.name', 'BackupBot'], workingDirectory: targetDir.path, environment: {'GIT_TERMINAL_PROMPT': '0'});
+            await Process.run('git', ['add', '.'], workingDirectory: targetDir.path, environment: {'GIT_TERMINAL_PROMPT': '0'});
+            await Process.run('git', ['commit', '-m', 'Snapshot state'], workingDirectory: targetDir.path, environment: {'GIT_TERMINAL_PROMPT': '0'});
         }
       } catch (e, s) {
         print('${DateTime.now()}: Error processing snapshot $commitId: $e\n$s');
@@ -677,8 +679,9 @@ Future<GraphResponse> _getGraphFromGitDir(String gitDir, {int? limit}) async {
     logArgs.add('--max-count=$limit');
   }
 
-  final res =
-      await Process.run('git', logArgs, stdoutEncoding: utf8);
+  print("${DateTime.now()}: Running git log: git ${logArgs.join(' ')}");
+  final res = await Process.run('git', logArgs, stdoutEncoding: utf8, environment: {'GIT_TERMINAL_PROMPT': '0'});
+  print("${DateTime.now()}: git log finished with exitCode ${res.exitCode}");
   if (res.exitCode != 0) throw Exception('Git log failed: ${res.stderr}');
 
   final lines = LineSplitter.split(res.stdout as String).toList();
@@ -721,7 +724,7 @@ Future<List<Branch>> _getBranchesFromGitDir(String gitDir) async {
     'for-each-ref',
     '--format=%(refname:short)|%(objectname)',
     'refs/heads',
-  ]);
+  ], environment: {'GIT_TERMINAL_PROMPT': '0'});
   final lines = LineSplitter.split(res.stdout as String).toList();
   final result = <Branch>[];
   for (final l in lines) {
@@ -756,7 +759,7 @@ Future<Map<String, List<String>>> _getBranchChainsFromGitDir(
     if (limit != null && limit > 0) {
       args.add('--max-count=$limit');
     }
-    final res = await Process.run('git', args);
+    final res = await Process.run('git', args, environment: {'GIT_TERMINAL_PROMPT': '0'});
     final lines = LineSplitter.split(res.stdout as String).toList();
     final ids = <String>[];
     for (final l in lines) {
@@ -773,7 +776,7 @@ Future<String?> _getCurrentBranchFromGitDir(String gitDir) async {
   // For bare repo, HEAD might point to a branch
   try {
     final res = await Process.run('git',
-        ['--git-dir=$gitDir', 'symbolic-ref', '--short', 'HEAD']);
+        ['--git-dir=$gitDir', 'symbolic-ref', '--short', 'HEAD'], environment: {'GIT_TERMINAL_PROMPT': '0'});
     if (res.exitCode == 0) return (res.stdout as String).trim();
   } catch (_) {}
   return null;

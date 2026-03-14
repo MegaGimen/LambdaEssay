@@ -4284,8 +4284,12 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     try {
       final result = await Process.run(
           'git', 
-          ['submodule', 'update', '--init', '--recursive', relPath],
-          workingDirectory: root.path
+          [
+            '-c', 'credential.helper=manager', // Force a common helper to avoid the selector popup
+            'submodule', 'update', '--init', '--recursive', relPath
+          ],
+          workingDirectory: root.path,
+          environment: {'GIT_TERMINAL_PROMPT': '0'} // Prevent terminal/GUI prompts
       );
       
       if (result.exitCode != 0) {
@@ -4507,7 +4511,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       print('[BgFetch] Checking repo: $repoPath');
       // 1. Silent fetch to update remote refs
       final fetchRes =
-          await Process.run('git', ['fetch'], workingDirectory: repoPath);
+          await Process.run('git', ['-c', 'credential.helper=manager', 'fetch'], workingDirectory: repoPath, environment: {'GIT_TERMINAL_PROMPT': '0'});
       if (fetchRes.exitCode != 0) {
         print('[BgFetch] Fetch failed for $repoPath: ${fetchRes.stderr}');
         return;
@@ -4522,7 +4526,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             '--format=%(refname:short)|%(upstream:short)|%(objectname)',
             'refs/heads'
           ],
-          workingDirectory: repoPath);
+          workingDirectory: repoPath,
+          environment: {'GIT_TERMINAL_PROMPT': '0'});
 
       if (localRes.exitCode != 0) return;
       final localOutput = localRes.stdout.toString().trim();
@@ -4536,7 +4541,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             '--format=%(refname:short)|%(objectname)',
             'refs/remotes'
           ],
-          workingDirectory: repoPath);
+          workingDirectory: repoPath,
+          environment: {'GIT_TERMINAL_PROMPT': '0'});
       
       final remoteMap = <String, String>{};
       final Set<String> knownRemotes = {};
@@ -4600,12 +4606,12 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             bool remoteIsBehind = false;
             
             try {
-               final res = await Process.run('git', ['merge-base', '--is-ancestor', localSha, remoteSha], workingDirectory: repoPath);
+               final res = await Process.run('git', ['merge-base', '--is-ancestor', localSha, remoteSha], workingDirectory: repoPath, environment: {'GIT_TERMINAL_PROMPT': '0'});
                if (res.exitCode == 0) localIsBehind = true;
             } catch (_) {}
              
             try {
-               final res = await Process.run('git', ['merge-base', '--is-ancestor', remoteSha, localSha], workingDirectory: repoPath);
+               final res = await Process.run('git', ['merge-base', '--is-ancestor', remoteSha, localSha], workingDirectory: repoPath, environment: {'GIT_TERMINAL_PROMPT': '0'});
                if (res.exitCode == 0) remoteIsBehind = true;
             } catch (_) {}
 
