@@ -58,6 +58,34 @@ class Branch {
   Branch({required this.name, required this.head, this.upstream});
   Map<String, dynamic> toJson() =>
       {'name': name, 'head': head, 'upstream': upstream};
+
+  static String encodeName(String text) {
+    StringBuffer sb = StringBuffer();
+    for (int i = 0; i < text.runes.length; i++) {
+      int charCode = text.runes.elementAt(i);
+      if (charCode > 127) {
+        sb.write('_u${charCode.toRadixString(16).padLeft(4, '0')}');
+      } else if (charCode == 32) {
+        // Replace space with dash for Gitea/Git compatibility
+        sb.write('-');
+      } else {
+        sb.write(String.fromCharCode(charCode));
+      }
+    }
+    return sb.toString();
+  }
+
+  static String decodeName(String text) {
+    try {
+      return text.replaceAllMapped(RegExp(r'_u([0-9a-fA-F]{4})'), (match) {
+        return String.fromCharCode(int.parse(match.group(1)!, radix: 16));
+      });
+    } catch (e) {
+      return text;
+    }
+  }
+
+  String get displayName => decodeName(name);
 }
 
 class GraphResponse {

@@ -72,6 +72,9 @@ class Branch {
       int charCode = text.runes.elementAt(i);
       if (charCode > 127) {
         sb.write('_u${charCode.toRadixString(16).padLeft(4, '0')}');
+      } else if (charCode == 32) {
+        // Replace space with dash for Gitea/Git compatibility
+        sb.write('-');
       } else {
         sb.write(String.fromCharCode(charCode));
       }
