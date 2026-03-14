@@ -1838,13 +1838,8 @@ Future<void> saveTrackingProject(String currentPackagePath,
   if (newPackagePath != null && newPackagePath.trim().isNotEmpty) {
     targetPath = _sanitizeFsPath(newPackagePath);
 
-    // Get current ID
-    String? currentId;
-    try {
-        final f = File(p.join(workspaceDir, kWorkspaceMetaFile));
-        final j = jsonDecode(await f.readAsString());
-        currentId = j['workspaceId'];
-    } catch (_) {}
+    // Use package name as workspaceId (encoded for safety)
+    final currentId = Branch.encodeName(_trackingBaseName(targetPath));
 
     // Update metadata
     await _writeWorkspaceMeta(workspaceDir, targetPath, workspaceId: currentId);
@@ -2625,8 +2620,8 @@ Future<Map<String, dynamic>> createTrackingProject(
   print('[createTrackingProject] 开始创建项目，name=$name, docxPath=$docxPath');
   final packagePath = _sanitizeFsPath(name);
   
-  // Custom logic for new project creation to ensure random ID
-  final workspaceId = Uuid().v4().replaceAll('-', '');
+  // Use package name as workspaceId (encoded for safety)
+  final workspaceId = Branch.encodeName(_trackingBaseName(packagePath));
   final projDir = _workspaceDirForId(workspaceId);
   
   final dir = Directory(projDir);
@@ -3301,6 +3296,7 @@ Future<Map<String, dynamic>?> getTrackingInfo(String repoPath) async {
     'packagePath': resolvedPackagePath,
     'trackingRoot': trackingRoot,
     'workspaceId': workspaceId,
+    'workspaceDisplayName': workspaceId != null ? Branch.decodeName(workspaceId) : null,
     'workspacePath': root,
   };
 }

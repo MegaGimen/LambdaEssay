@@ -3444,12 +3444,14 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
 
   Future<List<String>> _fetchProjectList() async {
     try {
-      final resp =
-          await getJson('/track/list');
+      final resp = await getJson('/track/list');
       if (resp != null) {
         final body = resp;
         final list = (body['projects'] as List).cast<String>();
-        return list.where((p) => p != 'cache' && p != 'preview').toList();
+        return list
+            .where((p) => p != 'cache' && p != 'preview')
+            .map((p) => Branch.decodeName(p))
+            .toList();
       }
     } catch (_) {}
     return [];
