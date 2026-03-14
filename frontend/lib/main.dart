@@ -4286,17 +4286,101 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     
     final relPath = p.relative(submodulePath, from: root.path);
     setState(() => loading = true);
+
+    // Sanitize .gitmodules before update to handle non-ASCII URLs and credentials
+    try {
+      final gmFile = File(p.join(root.path, '.gitmodules'));
+      if (gmFile.existsSync()) {
+        final gmContent = await gmFile.readAsString();
+        LogService.log('Current .gitmodules content:\n$gmContent');
+        final gmLines = LineSplitter.split(gmContent).toList();
+        bool gmChanged = false;
+        final newGmLines = <String>[];
+        for (var line in gmLines) {
+          if (line.trim().startsWith('url = ')) {
+            var urlPart = line.substring(line.indexOf('=') + 1).trim();
+            
+            // 1. Remove existing credentials if any
+            if (urlPart.contains('@')) {
+               final atIdx = urlPart.indexOf('@');
+               final slashIdx = urlPart.lastIndexOf('/', atIdx);
+               if (slashIdx != -1) {
+                 urlPart = urlPart.substring(0, slashIdx + 1) + urlPart.substring(atIdx + 1);
+               } else {
+                 urlPart = urlPart.substring(atIdx + 1);
+               }
+            }
+
+            // 2. Encode non-ASCII using Branch.encodeName
+            if (urlPart.runes.any((r) => r > 127)) {
+              final parts = urlPart.split('/');
+              final encodedParts = parts.map((seg) {
+                if (seg == '..' || seg == '.') return seg;
+                return Branch.encodeName(seg);
+              }).toList();
+              urlPart = encodedParts.join('/');
+            }
+
+            // 3. Inject current credentials for submodules to bypass broken helpers
+            String finalUrl = urlPart;
+            if (_username != null && _token != null) {
+               if (urlPart.startsWith('../')) {
+                  // If relative, resolve to absolute URL for Gitea
+                  finalUrl = 'http://$_username:$_token@47.242.109.145:3000/$_username/${urlPart.substring(3)}';
+               } else if (urlPart.startsWith('http')) {
+                  finalUrl = urlPart.replaceFirst('://', '://$_username:$_token@');
+               }
+            }
+
+            if (finalUrl != urlPart || line.contains(_token ?? 'NEVER_MATCH')) {
+              LogService.log('Sanitizing URL in .gitmodules: $urlPart -> [REDACTED_WITH_TOKEN]');
+              newGmLines.add(line.replaceFirst(line.substring(line.indexOf('=') + 1).trim(), finalUrl));
+              gmChanged = true;
+              continue;
+            }
+          }
+          newGmLines.add(line);
+        }
+        if (gmChanged) {
+          await gmFile.writeAsString(newGmLines.join('\n') + '\n');
+          LogService.log('[Sanitize] Updated .gitmodules with encoded URLs and credentials');
+        }
+      }
+    } catch (e) {
+      LogService.log('Warning: .gitmodules sanitization failed: $e');
+    }
     
     final env = {
       'GIT_TERMINAL_PROMPT': '0',
-      'GCM_INTERACTIVE': 'never'
+      'GCM_INTERACTIVE': 'never',
+      'LC_ALL': 'C.UTF-8',
+      'LANG': 'C.UTF-8',
+      'GIT_CP_UTF8': '1',
     };
     if (_username != null && _token != null) {
-       final helperConfig = "'credential.helper=' 'credential.helper=!f() { echo \"username=$_username\"; echo \"password=$_token\"; }; f' 'credential.useHttpPath=true' 'credential.interactive=never' 'core.quotepath=false' 'i18n.logOutputEncoding=UTF-8'";
-       env['GIT_CONFIG_PARAMETERS'] = helperConfig;
-     }
+        final helperConfig = "'credential.helper=' 'credential.helper=!f() { echo \"username=$_username\"; echo \"password=$_token\"; }; f' 'credential.useHttpPath=true' 'credential.interactive=never' 'core.quotepath=false' 'i18n.logOutputEncoding=UTF-8'";
+        env['GIT_CONFIG_PARAMETERS'] = helperConfig;
+        env['GIT_ASKPASS'] = 'echo';
+      }
 
     try {
+      final resultSync = await Process.run(
+          'git', 
+          ['submodule', 'sync', '--recursive', relPath],
+          workingDirectory: root.path,
+          environment: env
+      );
+      LogService.log('Git submodule sync exitCode: ${resultSync.exitCode}');
+      if (resultSync.exitCode != 0) {
+        LogService.log('Git submodule sync stderr: ${resultSync.stderr}');
+      }
+      
+      // Check .git/config after sync
+      try {
+        final configContent = await File(p.join(root.path, '.git', 'config')).readAsString();
+        LogService.log('Local .git/config content (partial):\n${configContent.split('\n').where((l) => l.contains('submodule') || l.contains('url')).join('\n')}');
+      } catch (_) {}
+      
       final result = await Process.run(
           'git', 
           [
@@ -4313,6 +4397,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             'submodule', 'update', '--init', '--recursive', relPath
           ],
           workingDirectory: root.path,
+          stdoutEncoding: utf8,
+          stderrEncoding: utf8,
           environment: env // Use the enhanced environment
       );
       
@@ -4559,12 +4645,16 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
       
       final env = {
         'GIT_TERMINAL_PROMPT': '0',
-        'GCM_INTERACTIVE': 'never'
+        'GCM_INTERACTIVE': 'never',
+        'LC_ALL': 'C.UTF-8',
+        'LANG': 'C.UTF-8',
+        'GIT_CP_UTF8': '1',
       };
       if (_username != null && _token != null) {
-        final helperConfig = "'credential.helper=' 'credential.helper=!f() { echo \"username=$_username\"; echo \"password=$_token\"; }; f' 'credential.useHttpPath=true' 'credential.interactive=never' 'core.quotepath=false' 'i18n.logOutputEncoding=UTF-8'";
-        env['GIT_CONFIG_PARAMETERS'] = helperConfig;
-      }
+       final helperConfig = "'credential.helper=' 'credential.helper=!f() { echo \"username=$_username\"; echo \"password=$_token\"; }; f' 'credential.useHttpPath=true' 'credential.interactive=never' 'core.quotepath=false' 'i18n.logOutputEncoding=UTF-8'";
+       env['GIT_CONFIG_PARAMETERS'] = helperConfig;
+       env['GIT_ASKPASS'] = 'echo';
+     }
 
       // 1. Silent fetch to update remote refs
       final fetchRes = await Process.run(
@@ -4583,6 +4673,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             'fetch'
           ],
           workingDirectory: repoPath,
+          stdoutEncoding: utf8,
+          stderrEncoding: utf8,
           environment: env);
       if (fetchRes.exitCode != 0) {
         LogService.log('[BgFetch] Fetch failed for $repoPath: ${fetchRes.stderr}');
@@ -5598,6 +5690,15 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                         ),
                       ],
                     ),
+                    const SizedBox(width: 12),
+                    Text(
+                      'v13F7Q', // 版本随机验证码
+                      style: TextStyle(
+                        color: Colors.grey.withOpacity(0.5),
+                        fontSize: 10,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
                     const SizedBox(width: 16),
                   ],
                 ),
@@ -5776,6 +5877,17 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                               const Text('终端日志', style: TextStyle(color: Colors.white, fontSize: 12)),
                               const Spacer(),
                               IconButton(
+                                icon: const Icon(Icons.copy, color: Colors.white70, size: 18),
+                                tooltip: '复制全部日志',
+                                onPressed: () {
+                                  final allText = LogService.currentLogs.join('\n');
+                                  Clipboard.setData(ClipboardData(text: allText));
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(content: Text('日志已复制到剪贴板')),
+                                  );
+                                },
+                              ),
+                              IconButton(
                                 icon: const Icon(Icons.delete_sweep, color: Colors.white70, size: 18),
                                 tooltip: '清空日志',
                                 onPressed: () => LogService.clear(),
@@ -5799,23 +5911,17 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                                   _terminalScrollController.jumpTo(_terminalScrollController.position.maxScrollExtent);
                                 }
                               });
-                              return ListView.builder(
+                              return SingleChildScrollView(
                                 controller: _terminalScrollController,
                                 padding: const EdgeInsets.all(8),
-                                itemCount: logs.length,
-                                itemBuilder: (context, index) {
-                                  return Padding(
-                                    padding: const EdgeInsets.symmetric(vertical: 2),
-                                    child: SelectableText(
-                                      logs[index],
-                                      style: const TextStyle(
-                                        color: Colors.lightGreenAccent,
-                                        fontFamily: 'monospace',
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                  );
-                                },
+                                child: SelectableText(
+                                  logs.join('\n'),
+                                  style: const TextStyle(
+                                    color: Colors.lightGreenAccent,
+                                    fontFamily: 'monospace',
+                                    fontSize: 12,
+                                  ),
+                                ),
                               );
                             },
                           ),

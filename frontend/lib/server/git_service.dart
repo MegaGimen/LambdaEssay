@@ -459,13 +459,25 @@ Future<List<String>> _runGit(List<String> args, String repoPath,
     'GIT_TERMINAL_PROMPT': '0',
     'GCM_INTERACTIVE': 'never', // Disable GCM GUI
     'GIT_SSL_NO_VERIFY': 'true', // Optional: avoid SSL popups if any
+    'LC_ALL': 'C.UTF-8',
+    'LANG': 'C.UTF-8',
+    'GIT_CP_UTF8': '1',
   };
 
   // Inject credentials via environment variables for all child processes (including submodules)
-   if (_gitUsername != null && _gitToken != null) {
-     final helperConfig = "'credential.helper=' 'credential.helper=!f() { echo \"username=$_gitUsername\"; echo \"password=$_gitToken\"; }; f' 'credential.useHttpPath=true' 'credential.interactive=never' 'core.quotepath=false' 'i18n.logOutputEncoding=UTF-8'";
-     env['GIT_CONFIG_PARAMETERS'] = helperConfig;
-   }
+  if (_gitUsername != null && _gitToken != null) {
+    // Use the !f() helper but with absolute URL matching
+    final helperConfig = "'credential.helper=' 'credential.helper=!f() { echo \"username=$_gitUsername\"; echo \"password=$_gitToken\"; }; f' 'credential.useHttpPath=true' 'credential.interactive=never' 'core.quotepath=false' 'i18n.logOutputEncoding=UTF-8'";
+    env['GIT_CONFIG_PARAMETERS'] = helperConfig;
+    
+    // Fallback: also try to inject via direct URL for submodules if they are initialized from .gitmodules
+    // Git sometimes ignores environment config for initial submodule clone if not passed explicitly
+    env['GIT_ASKPASS'] = 'echo'; // Disable askpass popups
+    env['GIT_TERMINAL_PROMPT'] = '0';
+  }
+
+  LogService.log('Executing git command: git ${fullArgs.join(' ')}');
+  LogService.log('Working directory: $repoPath');
 
   try {
     final res = await Process.run(
@@ -2817,6 +2829,77 @@ Future<void> _initSingleRepo(String repoPath, String? sourceDocxPath) async {
   await _runGit(['commit', '-m', 'Initial commit'], repoPath);
 }
 
+Future<void> _sanitizeGitModules(String projDir) async {
+  final gitModulesFile = File(p.join(projDir, '.gitmodules'));
+  if (!gitModulesFile.existsSync()) return;
+
+  try {
+    final content = await gitModulesFile.readAsString();
+    final lines = LineSplitter.split(content).toList();
+    bool changed = false;
+    final newLines = <String>[];
+
+    for (var line in lines) {
+      if (line.trim().startsWith('url = ')) {
+        var urlPart = line.substring(line.indexOf('=') + 1).trim();
+        
+        // 1. Remove existing credentials if any to avoid nesting like user:token@user:token@...
+        if (urlPart.contains('@')) {
+           final atIdx = urlPart.indexOf('@');
+           final slashIdx = urlPart.lastIndexOf('/', atIdx);
+           if (slashIdx != -1) {
+             urlPart = urlPart.substring(0, slashIdx + 1) + urlPart.substring(atIdx + 1);
+           } else {
+             urlPart = urlPart.substring(atIdx + 1);
+           }
+        }
+
+        // 2. Encode non-ASCII characters using Branch.encodeName
+        if (urlPart.runes.any((r) => r > 127)) {
+          final parts = urlPart.split('/');
+          final encodedParts = parts.map((seg) {
+            if (seg == '..' || seg == '.') return seg;
+            // Use project specific encoding _uXXXX
+            return Branch.encodeName(seg);
+          }).toList();
+          urlPart = encodedParts.join('/');
+        }
+
+        // 3. Inject current credentials if available
+        String finalUrl = urlPart;
+        if (_gitUsername != null && _gitToken != null) {
+           if (urlPart.startsWith('../')) {
+              // Relative URL: ../repo.git -> ../username:token@repo.git
+              // But Git submodules handle relative URLs by resolving against parent.
+              // If we want to force credentials, we might need to convert to absolute OR use a trick.
+              // However, the best way for submodules is to use the helper.
+              // IF the helper is failing, it's often because the URL in .gitmodules doesn't match the one in config.
+              finalUrl = urlPart; 
+           } else if (urlPart.startsWith('http')) {
+              // Absolute URL: http://host/repo.git -> http://user:token@host/repo.git
+              finalUrl = urlPart.replaceFirst('://', '://$_gitUsername:$_gitToken@');
+           }
+        }
+
+        if (finalUrl != urlPart || line.contains(_gitToken ?? 'NEVER_MATCH')) {
+          // Check if it already has the current token, if so don't mark as changed unless needed
+          newLines.add(line.replaceFirst(line.substring(line.indexOf('=') + 1).trim(), finalUrl));
+          changed = true;
+          continue;
+        }
+      }
+      newLines.add(line);
+    }
+
+    if (changed) {
+      await gitModulesFile.writeAsString(newLines.join('\n') + '\n');
+      LogService.log('[Sanitize] Updated .gitmodules with encoded URLs in $projDir');
+    }
+  } catch (e) {
+    LogService.log('[Sanitize] Failed to sanitize .gitmodules: $e');
+  }
+}
+
 Future<List<Map<String, dynamic>>> listProjectRepos(String name) async {
   final projDir = await _projectDir(name);
   final tracking = await _readTracking(name);
@@ -3872,6 +3955,7 @@ Future<void> _ensureUniqueRemote(
 Future<void> pushToRemote(String repoPath, String username, String token,
     {bool force = false, String? branch, bool skipBackup = false}) async {
   return _withRepoLock(repoPath, () async {
+    await _sanitizeGitModules(repoPath);
     final repoName = p.basename(repoPath);
     final parentFolder = await _findParentFolderProject(repoPath);
     final effectiveRemoteRepoName = await _calculateEffectiveRemoteRepoName(repoPath);
@@ -4087,6 +4171,7 @@ Future<Map<String, dynamic>> pullFromRemote(
     repoPath = p.isAbsolute(nameOrPath) ? nameOrPath : await _projectDir(nameOrPath);
   }
   return _withRepoLock(repoPath, () async {
+    await _sanitizeGitModules(repoPath);
     final effectiveRemoteRepoName = await _calculateEffectiveRemoteRepoName(repoPath, targetRepoName: targetRepoName);
     print('Debug: pullFromRemote - Calculated effectiveRemoteRepoName: $effectiveRemoteRepoName');
 
