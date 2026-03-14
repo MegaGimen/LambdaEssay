@@ -2752,7 +2752,7 @@ Future<void> _addDocxSubmodule(
 
   // Fix: Use encoded <rootName>-<relativePath> for remote repo name
   final remoteRepoName = await _calculateEffectiveRemoteRepoName(fullSubmodulePath);
-  final remoteUrl = '../$remoteRepoName.git';
+  final remoteUrl = '../$remoteRepoName';
 
   final localUrl = './$submodulePath';
   await _runGit(['submodule', 'add', localUrl, submodulePath], rootPath);
@@ -2855,24 +2855,44 @@ Future<void> _sanitizeGitModules(String projDir) async {
         }
 
         // 2. Encode non-ASCII characters using Branch.encodeName
-        // Also fix any corrupted _git suffix (should be .git)
-        bool needsFix = urlPart.runes.any((r) => r > 127) || urlPart.contains('_git');
-        if (needsFix) {
+        // Robust URL processing to avoid encoding protocol/host
+        final decodedUrl = Branch.decodeName(urlPart);
+        if (decodedUrl.startsWith('http')) {
+          try {
+            final uri = Uri.parse(decodedUrl);
+            // Reconstruct path with encoding
+            final pathSegments = uri.pathSegments.map((seg) {
+              String decodedSeg = Branch.decodeName(seg);
+              if (decodedSeg.endsWith('_git')) {
+                decodedSeg = decodedSeg.substring(0, decodedSeg.length - 4);
+              } else if (decodedSeg.endsWith('.git')) {
+                decodedSeg = decodedSeg.substring(0, decodedSeg.length - 4);
+              }
+              return Branch.encodeName(decodedSeg);
+            }).toList();
+            
+            // Rebuild absolute URL: http://host:port/owner/repo
+            urlPart = '${uri.scheme}://${uri.host}${uri.hasPort ? ":${uri.port}" : ""}/${pathSegments.join('/')}';
+          } catch (e) {
+            // Fallback for malformed URL
+            LogService.log('Warning: Uri.parse failed for $decodedUrl: $e');
+          }
+        } else {
+          // Relative path: ../repo.git
           final parts = urlPart.split('/');
           final encodedParts = parts.map((seg) {
             if (seg == '..' || seg == '.') return seg;
-            // First decode to restore any _uXXXX characters
-            String decoded = Branch.decodeName(seg);
-            // If it ends with _git, change to .git
-            if (decoded.endsWith('_git')) {
-              decoded = decoded.substring(0, decoded.length - 4) + '.git';
+            String decodedSeg = Branch.decodeName(seg);
+            if (decodedSeg.endsWith('_git')) {
+              decodedSeg = decodedSeg.substring(0, decodedSeg.length - 4);
+            } else if (decodedSeg.endsWith('.git')) {
+              decodedSeg = decodedSeg.substring(0, decodedSeg.length - 4);
             }
-            // Use project specific encoding _uXXXX
-            return Branch.encodeName(decoded);
+            return Branch.encodeName(decodedSeg);
           }).toList();
           urlPart = encodedParts.join('/');
-          LogService.log('[Sanitize] Repaired/Encoded URL: $urlPart');
         }
+        LogService.log('[Sanitize] Processed URL: $urlPart');
 
         // 3. Inject current credentials if available
         String finalUrl = urlPart;
@@ -3895,25 +3915,30 @@ Future<String> _resolveRepoOwner(String repoName, String token) async {
 }
 
 Future<String> _calculateEffectiveRemoteRepoName(String repoPath, {String? targetRepoName}) async {
+  String baseName;
   if (targetRepoName != null && targetRepoName.isNotEmpty) {
-    return Branch.encodeName(targetRepoName);
-  }
-  
-  final parentFolder = await _findParentFolderProject(repoPath);
-  String effectiveName;
-  if (parentFolder == null || p.equals(p.normalize(parentFolder), p.normalize(repoPath))) {
-    effectiveName = p.basename(repoPath);
+    baseName = targetRepoName;
   } else {
-    final relativePath = p.relative(repoPath, from: parentFolder);
-    final normalizedRelPath = relativePath.replaceAll(r'\', '/');
-    final rootName = p.basename(parentFolder);
-    final relName = normalizedRelPath.replaceAll('/', '-');
-    effectiveName = '$rootName-$relName';
+    final parentFolder = await _findParentFolderProject(repoPath);
+    if (parentFolder == null || p.equals(p.normalize(parentFolder), p.normalize(repoPath))) {
+      baseName = p.basename(repoPath);
+    } else {
+      final relativePath = p.relative(repoPath, from: parentFolder);
+      final normalizedRelPath = relativePath.replaceAll(r'\', '/');
+      final rootName = p.basename(parentFolder);
+      final relName = normalizedRelPath.replaceAll('/', '-');
+      baseName = '$rootName-$relName';
+    }
+  }
+
+  // Remove .git if present (the user wants to remove the extension from repo name)
+  if (baseName.toLowerCase().endsWith('.git')) {
+    baseName = baseName.substring(0, baseName.length - 4);
   }
   
   // Apply Branch.encodeName to ensure only valid characters (AlphaDashDot) for Gitea
-  final result = Branch.encodeName(effectiveName);
-  LogService.log('[EffectiveRepoName] Input: $effectiveName -> Output: $result');
+  final result = Branch.encodeName(baseName);
+  LogService.log('[EffectiveRepoName] Input: $baseName -> Output: $result');
   return result;
 }
 
@@ -3982,7 +4007,7 @@ Future<void> pushToRemote(String repoPath, String username, String token,
     }
 
     final remoteUrl =
-        'http://$username:$token@47.242.109.145:3000/$owner/$effectiveRemoteRepoName.git';
+        'http://$username:$token@47.242.109.145:3000/$owner/$effectiveRemoteRepoName';
     LogService.log('[Push] Calculated Remote URL: ${remoteUrl.replaceFirst(token, "****")}');
 
     // Ensure unique remote logic
@@ -4193,7 +4218,8 @@ Future<Map<String, dynamic>> pullFromRemote(
 
     final owner = await _resolveRepoOwner(effectiveRemoteRepoName, token);
     final remoteUrl =
-        'http://$username:$token@47.242.109.145:3000/$owner/$effectiveRemoteRepoName.git';
+        'http://$username:$token@47.242.109.145:3000/$owner/$effectiveRemoteRepoName';
+    LogService.log('[Pull] Calculated Remote URL: ${remoteUrl.replaceFirst(token, "****")}');
 
     // Map<String, dynamic>? savedTracking;
     // Map<String, dynamic>? savedTracking;
@@ -4511,7 +4537,8 @@ Future<Map<String, dynamic>> checkPullStatus(
     final remoteName = effectiveRemoteRepoName.toLowerCase();
     final owner = await _resolveRepoOwner(effectiveRemoteRepoName, token);
     final remoteUrl =
-        'http://$username:$token@47.242.109.145:3000/$owner/$effectiveRemoteRepoName.git';
+        'http://$username:$token@47.242.109.145:3000/$owner/$effectiveRemoteRepoName';
+    LogService.log('[Clone] Calculated Remote URL: ${remoteUrl.replaceFirst(token, "****")}');
 
     try {
       await addRemote(projDir, remoteName, remoteUrl);
@@ -4622,7 +4649,8 @@ Future<void> rebasePull(String repoName, String username, String token) async {
   final remoteName = effectiveRemoteRepoName.toLowerCase();
   final owner = await _resolveRepoOwner(effectiveRemoteRepoName, token);
   final remoteUrl =
-      'http://$username:$token@47.242.109.145:3000/$owner/$effectiveRemoteRepoName.git';
+      'http://$username:$token@47.242.109.145:3000/$owner/$effectiveRemoteRepoName';
+    LogService.log('[Submodule] Calculated Remote URL: ${remoteUrl.replaceFirst(token, "****")}');
 
   await addRemote(projDir, remoteName, remoteUrl);
   final current = await getCurrentBranch(projDir);
@@ -4689,7 +4717,8 @@ Future<PullPreviewResult> previewPull(
     final remoteName = effectiveRemoteRepoName.toLowerCase();
     final owner = await _resolveRepoOwner(effectiveRemoteRepoName, token);
     final remoteUrl =
-        'http://$username:$token@47.242.109.145:3000/$owner/$effectiveRemoteRepoName.git';
+        'http://$username:$token@47.242.109.145:3000/$owner/$effectiveRemoteRepoName';
+    LogService.log('[Sync] Calculated Remote URL: ${remoteUrl.replaceFirst(token, "****")}');
 
     // Ensure remote exists in preview repo
     await addRemote(previewDir, remoteName, remoteUrl);

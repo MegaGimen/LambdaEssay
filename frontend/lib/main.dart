@@ -4312,23 +4312,44 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             }
 
             // 2. Encode non-ASCII using Branch.encodeName
-            // Also fix any corrupted _git suffix (should be .git)
-            bool needsFix = urlPart.runes.any((r) => r > 127) || urlPart.contains('_git');
-            if (needsFix) {
+            // Robust URL processing to avoid encoding protocol/host
+            final decodedUrl = Branch.decodeName(urlPart);
+            if (decodedUrl.startsWith('http')) {
+              try {
+                final uri = Uri.parse(decodedUrl);
+                // Reconstruct path with encoding
+                final pathSegments = uri.pathSegments.map((seg) {
+                  String decodedSeg = Branch.decodeName(seg);
+                  if (decodedSeg.endsWith('_git')) {
+                    decodedSeg = decodedSeg.substring(0, decodedSeg.length - 4);
+                  } else if (decodedSeg.endsWith('.git')) {
+                    decodedSeg = decodedSeg.substring(0, decodedSeg.length - 4);
+                  }
+                  return Branch.encodeName(decodedSeg);
+                }).toList();
+                
+                // Rebuild absolute URL: http://host:port/owner/repo
+                urlPart = '${uri.scheme}://${uri.host}${uri.hasPort ? ":${uri.port}" : ""}/${pathSegments.join('/')}';
+              } catch (e) {
+                // Fallback for malformed URL
+                LogService.log('Warning: Uri.parse failed for $decodedUrl: $e');
+              }
+            } else {
+              // Relative path: ../repo.git
               final parts = urlPart.split('/');
               final encodedParts = parts.map((seg) {
                 if (seg == '..' || seg == '.') return seg;
-                // First decode to restore any _uXXXX characters
-                String decoded = Branch.decodeName(seg);
-                // If it ends with _git, change to .git
-                if (decoded.endsWith('_git')) {
-                  decoded = decoded.substring(0, decoded.length - 4) + '.git';
+                String decodedSeg = Branch.decodeName(seg);
+                if (decodedSeg.endsWith('_git')) {
+                  decodedSeg = decodedSeg.substring(0, decodedSeg.length - 4);
+                } else if (decodedSeg.endsWith('.git')) {
+                  decodedSeg = decodedSeg.substring(0, decodedSeg.length - 4);
                 }
-                // Use project specific encoding _uXXXX
-                return Branch.encodeName(decoded);
+                return Branch.encodeName(decodedSeg);
               }).toList();
               urlPart = encodedParts.join('/');
             }
+            LogService.log('[Sanitize] Processed URL: $urlPart');
 
             // 3. Inject current credentials for submodules to bypass broken helpers
             String finalUrl = urlPart;
@@ -5701,7 +5722,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                     ),
                     const SizedBox(width: 12),
                     Text(
-                      'v14G9S', // 版本随机验证码
+                      'v14H2V', // 版本随机验证码
                       style: TextStyle(
                         color: Colors.grey.withOpacity(0.5),
                         fontSize: 10,
