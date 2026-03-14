@@ -4361,6 +4361,14 @@ Future<Map<String, dynamic>> pullFromRemote(
             } else {
                // Standard pull (fetch already done)
                await _runGit(['pull', remoteName, current], projDir);
+               
+               // Ensure upstream is set
+               try {
+                 await setUpstream(projDir, current, '$remoteName/$current');
+                 print('[FolderPull] Set upstream for $current to $remoteName/$current');
+               } catch (e) {
+                 print('[FolderPull] Failed to set upstream for $current: $e');
+               }
             }
           } else {
             // Detached head?
@@ -4452,6 +4460,14 @@ Future<Map<String, dynamic>> pullFromRemote(
                  } else {
                    // If pulling current branch, reset hard to match remote (as per original logic)
                    await _runGit(['reset', '--hard', '$remoteName/$current'], projDir);
+                   
+                   // Ensure upstream is set (especially for Chinese branches)
+                   try {
+                     await setUpstream(projDir, current, '$remoteName/$current');
+                     print('[Pull] Set upstream for $current to $remoteName/$current');
+                   } catch (e) {
+                     print('[Pull] Failed to set upstream for $current: $e');
+                   }
                  }
               } else {
                  // Detached?
@@ -4555,7 +4571,7 @@ Future<Map<String, dynamic>> pullFromRemote(
     try {
       final lines = await _runGit(['branch', '-r'], projDir);
       final localBranches = await getBranches(projDir);
-      final localBranchNames = localBranches.map((b) => b.name).toSet();
+      final Map<String, Branch> localBranchMap = {for (var b in localBranches) b.name: b};
       final currentBranch = await getCurrentBranch(projDir);
 
       for (final line in lines) {
@@ -4567,18 +4583,32 @@ Future<Map<String, dynamic>> pullFromRemote(
         if (parts[0] != remoteName) continue;
         final branchName = parts.sublist(1).join('/');
 
-        if (!localBranchNames.contains(branchName)) {
+        if (!localBranchMap.containsKey(branchName)) {
           try {
             await _runGit(['branch', '--track', branchName, trimmed], projDir);
+            print('[SyncBranches] Created new local tracking branch: $branchName');
           } catch (e) {
             print('Track branch failed: $e');
           }
-        } else if (force) {
-          if (branchName != currentBranch) {
-            try {
-              await _runGit(['branch', '-f', branchName, trimmed], projDir);
-            } catch (e) {
-              print('Force update branch failed: $e');
+        } else {
+          // Local branch exists. Check if it has an upstream.
+          final localBranch = localBranchMap[branchName]!;
+          if (localBranch.upstream == null || localBranch.upstream!.isEmpty) {
+             try {
+                await setUpstream(projDir, branchName, trimmed);
+                print('[SyncBranches] Fixed missing upstream for $branchName -> $trimmed');
+             } catch (e) {
+                print('Fix upstream failed for $branchName: $e');
+             }
+          }
+          
+          if (force) {
+            if (branchName != currentBranch) {
+              try {
+                await _runGit(['branch', '-f', branchName, trimmed], projDir);
+              } catch (e) {
+                print('Force update branch failed: $e');
+              }
             }
           }
         }
