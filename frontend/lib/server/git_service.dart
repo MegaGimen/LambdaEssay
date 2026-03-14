@@ -446,25 +446,34 @@ Future<List<String>> _runGit(List<String> args, String repoPath,
     '-c', 'core.quotepath=false',
     if (_gitUsername != null && _gitToken != null) ...[
       '-c', 'credential.helper=', // Clear existing helpers
-      '-c', 'credential.helper=!f() { echo username=$_gitUsername; echo password=$_gitToken; }; f',
+      '-c', 'credential.helper=!f() { echo "username=$_gitUsername"; echo "password=$_gitToken"; }; f',
+      '-c', 'credential.useHttpPath=true', // Match full URL including path
     ] else ...[
-      '-c', 'credential.helper=manager', // Fallback to manager if no internal token
+      '-c', 'credential.helper=manager',
     ],
     '-c', 'credential.interactive=never', // Disable credential interactive mode
     '-C', repoPath,
     ...args,
   ];
+  final env = {
+    'GIT_TERMINAL_PROMPT': '0',
+    'GCM_INTERACTIVE': 'never', // Disable GCM GUI
+    'GIT_SSL_NO_VERIFY': 'true', // Optional: avoid SSL popups if any
+  };
+
+  // Inject credentials via environment variables for all child processes (including submodules)
+   if (_gitUsername != null && _gitToken != null) {
+     final helperConfig = "'credential.helper=' 'credential.helper=!f() { echo \"username=$_gitUsername\"; echo \"password=$_gitToken\"; }; f' 'credential.useHttpPath=true' 'credential.interactive=never' 'core.quotepath=false' 'i18n.logOutputEncoding=UTF-8'";
+     env['GIT_CONFIG_PARAMETERS'] = helperConfig;
+   }
+
   try {
     final res = await Process.run(
       'git',
       fullArgs,
       stdoutEncoding: utf8,
       stderrEncoding: utf8,
-      environment: {
-        'GIT_TERMINAL_PROMPT': '0',
-        'GCM_INTERACTIVE': 'never', // Disable GCM GUI
-        'GIT_SSL_NO_VERIFY': 'true', // Optional: avoid SSL popups if any
-      }, // Prevent interactive prompts
+      environment: env, // Use the enhanced environment
     );
     if (res.exitCode != 0) {
       if (printError) {

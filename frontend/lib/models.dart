@@ -70,16 +70,31 @@ class Branch {
     StringBuffer sb = StringBuffer();
     for (int i = 0; i < text.runes.length; i++) {
       int charCode = text.runes.elementAt(i);
-      if (charCode > 127) {
-        sb.write('_u${charCode.toRadixString(16).padLeft(4, '0')}');
-      } else if (charCode == 32) {
-        // Replace space with dash for Gitea/Git compatibility
-        sb.write('-');
+      // Gitea only allows a-z, A-Z, 0-9, ., -, _
+      // We encode anything else to _uXXXX
+      bool isSafe = (charCode >= 48 && charCode <= 57) || // 0-9
+          (charCode >= 65 && charCode <= 90) || // A-Z
+          (charCode >= 97 && charCode <= 122) || // a-z
+          charCode == 46 || // .
+          charCode == 45 || // -
+          charCode == 95; // _
+
+      if (!isSafe) {
+        if (charCode == 32) {
+          sb.write('-'); // Space to dash
+        } else {
+          sb.write('_u${charCode.toRadixString(16).padLeft(4, '0')}');
+        }
       } else {
         sb.write(String.fromCharCode(charCode));
       }
     }
-    return sb.toString();
+    // Ensure it doesn't end with .git to avoid confusion with the extension
+    String result = sb.toString();
+    if (result.endsWith('.git')) {
+      result = result.substring(0, result.length - 4) + '_git';
+    }
+    return result;
   }
 
   static String decodeName(String text) {

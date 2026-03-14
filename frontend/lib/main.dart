@@ -4287,6 +4287,15 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     final relPath = p.relative(submodulePath, from: root.path);
     setState(() => loading = true);
     
+    final env = {
+      'GIT_TERMINAL_PROMPT': '0',
+      'GCM_INTERACTIVE': 'never'
+    };
+    if (_username != null && _token != null) {
+       final helperConfig = "'credential.helper=' 'credential.helper=!f() { echo \"username=$_username\"; echo \"password=$_token\"; }; f' 'credential.useHttpPath=true' 'credential.interactive=never' 'core.quotepath=false' 'i18n.logOutputEncoding=UTF-8'";
+       env['GIT_CONFIG_PARAMETERS'] = helperConfig;
+     }
+
     try {
       final result = await Process.run(
           'git', 
@@ -4295,7 +4304,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             '-c', 'core.quotepath=false',
             if (_username != null && _token != null) ...[
               '-c', 'credential.helper=', // Clear existing helpers
-              '-c', 'credential.helper=!f() { echo username=$_username; echo password=$_token; }; f',
+              '-c', 'credential.helper=!f() { echo "username=$_username"; echo "password=$_token"; }; f',
+              '-c', 'credential.useHttpPath=true',
             ] else ...[
               '-c', 'credential.helper=manager',
             ],
@@ -4303,10 +4313,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             'submodule', 'update', '--init', '--recursive', relPath
           ],
           workingDirectory: root.path,
-          environment: {
-            'GIT_TERMINAL_PROMPT': '0',
-            'GCM_INTERACTIVE': 'never'
-          } // Prevent terminal/GUI prompts
+          environment: env // Use the enhanced environment
       );
       
       if (result.exitCode != 0) {
@@ -4549,6 +4556,16 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
   Future<void> _fetchRepoBackground(String repoPath) async {
     try {
       LogService.log('[BgFetch] Checking repo: $repoPath');
+      
+      final env = {
+        'GIT_TERMINAL_PROMPT': '0',
+        'GCM_INTERACTIVE': 'never'
+      };
+      if (_username != null && _token != null) {
+        final helperConfig = "'credential.helper=' 'credential.helper=!f() { echo \"username=$_username\"; echo \"password=$_token\"; }; f' 'credential.useHttpPath=true' 'credential.interactive=never' 'core.quotepath=false' 'i18n.logOutputEncoding=UTF-8'";
+        env['GIT_CONFIG_PARAMETERS'] = helperConfig;
+      }
+
       // 1. Silent fetch to update remote refs
       final fetchRes = await Process.run(
           'git',
@@ -4557,7 +4574,8 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             '-c', 'core.quotepath=false',
             if (_username != null && _token != null) ...[
               '-c', 'credential.helper=',
-              '-c', 'credential.helper=!f() { echo username=$_username; echo password=$_token; }; f',
+              '-c', 'credential.helper=!f() { echo "username=$_username"; echo "password=$_token"; }; f',
+              '-c', 'credential.useHttpPath=true',
             ] else ...[
               '-c', 'credential.helper=manager',
             ],
@@ -4565,10 +4583,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             'fetch'
           ],
           workingDirectory: repoPath,
-          environment: {
-            'GIT_TERMINAL_PROMPT': '0',
-            'GCM_INTERACTIVE': 'never'
-          });
+          environment: env);
       if (fetchRes.exitCode != 0) {
         LogService.log('[BgFetch] Fetch failed for $repoPath: ${fetchRes.stderr}');
         return;
