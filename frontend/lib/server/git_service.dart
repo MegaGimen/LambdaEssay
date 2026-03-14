@@ -2855,14 +2855,23 @@ Future<void> _sanitizeGitModules(String projDir) async {
         }
 
         // 2. Encode non-ASCII characters using Branch.encodeName
-        if (urlPart.runes.any((r) => r > 127)) {
+        // Also fix any corrupted _git suffix (should be .git)
+        bool needsFix = urlPart.runes.any((r) => r > 127) || urlPart.contains('_git');
+        if (needsFix) {
           final parts = urlPart.split('/');
           final encodedParts = parts.map((seg) {
             if (seg == '..' || seg == '.') return seg;
+            // First decode to restore any _uXXXX characters
+            String decoded = Branch.decodeName(seg);
+            // If it ends with _git, change to .git
+            if (decoded.endsWith('_git')) {
+              decoded = decoded.substring(0, decoded.length - 4) + '.git';
+            }
             // Use project specific encoding _uXXXX
-            return Branch.encodeName(seg);
+            return Branch.encodeName(decoded);
           }).toList();
           urlPart = encodedParts.join('/');
+          LogService.log('[Sanitize] Repaired/Encoded URL: $urlPart');
         }
 
         // 3. Inject current credentials if available
@@ -3903,7 +3912,9 @@ Future<String> _calculateEffectiveRemoteRepoName(String repoPath, {String? targe
   }
   
   // Apply Branch.encodeName to ensure only valid characters (AlphaDashDot) for Gitea
-  return Branch.encodeName(effectiveName);
+  final result = Branch.encodeName(effectiveName);
+  LogService.log('[EffectiveRepoName] Input: $effectiveName -> Output: $result');
+  return result;
 }
 
 
@@ -3972,6 +3983,7 @@ Future<void> pushToRemote(String repoPath, String username, String token,
 
     final remoteUrl =
         'http://$username:$token@47.242.109.145:3000/$owner/$effectiveRemoteRepoName.git';
+    LogService.log('[Push] Calculated Remote URL: ${remoteUrl.replaceFirst(token, "****")}');
 
     // Ensure unique remote logic
     final remoteName = effectiveRemoteRepoName.toLowerCase();

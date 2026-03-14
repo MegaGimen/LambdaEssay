@@ -4312,11 +4312,20 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
             }
 
             // 2. Encode non-ASCII using Branch.encodeName
-            if (urlPart.runes.any((r) => r > 127)) {
+            // Also fix any corrupted _git suffix (should be .git)
+            bool needsFix = urlPart.runes.any((r) => r > 127) || urlPart.contains('_git');
+            if (needsFix) {
               final parts = urlPart.split('/');
               final encodedParts = parts.map((seg) {
                 if (seg == '..' || seg == '.') return seg;
-                return Branch.encodeName(seg);
+                // First decode to restore any _uXXXX characters
+                String decoded = Branch.decodeName(seg);
+                // If it ends with _git, change to .git
+                if (decoded.endsWith('_git')) {
+                  decoded = decoded.substring(0, decoded.length - 4) + '.git';
+                }
+                // Use project specific encoding _uXXXX
+                return Branch.encodeName(decoded);
               }).toList();
               urlPart = encodedParts.join('/');
             }
@@ -5692,7 +5701,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                     ),
                     const SizedBox(width: 12),
                     Text(
-                      'v13F7Q', // 版本随机验证码
+                      'v14G9S', // 版本随机验证码
                       style: TextStyle(
                         color: Colors.grey.withOpacity(0.5),
                         fontSize: 10,

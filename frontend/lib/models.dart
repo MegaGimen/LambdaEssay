@@ -89,12 +89,7 @@ class Branch {
         sb.write(String.fromCharCode(charCode));
       }
     }
-    // Ensure it doesn't end with .git to avoid confusion with the extension
-    String result = sb.toString();
-    if (result.endsWith('.git')) {
-      result = result.substring(0, result.length - 4) + '_git';
-    }
-    return result;
+    return sb.toString();
   }
 
   static String decodeName(String text) {
