@@ -688,17 +688,17 @@ Future<GraphResponse> getGraph(String repoPath,
 
 Future<GraphResponse> _getGraphUnlocked(String repoPath,
     {int? limit, bool includeLocal = true, List<String>? remoteNames}) async {
-  // Check if it's a folder project. If so, do not return graph (or return empty).
-  // Because we only want to load graph for leaf nodes (DocxRepo).
-  if (await _isFolderProject(repoPath)) {
-    print('Skipping graph for folder project: $repoPath');
-    return GraphResponse(
-        commits: [],
-        branches: [],
-        chains: {},
-        currentBranch: await getCurrentBranch(repoPath),
-        customEdges: []);
-  }
+  // Check if it's a folder project. If so, we still want to see its graph (structure history).
+  // Previously we were skipping this, but it's better to show history than a blank screen.
+  // if (await _isFolderProject(repoPath)) {
+  //   print('Skipping graph for folder project: $repoPath');
+  //   return GraphResponse(
+  //       commits: [],
+  //       branches: [],
+  //       chains: {},
+  //       currentBranch: await getCurrentBranch(repoPath),
+  //       customEdges: []);
+  // }
 
   final key = '${repoPath}|${limit ?? 0}|$includeLocal|$remoteNames';
   // final cached = _graphCache[key];
@@ -856,31 +856,37 @@ bool isGitRepo(String path) {
 }
 
 Future<bool> _isFolderProject(String repoPath) async {
-  // Check if it is a folder project (has .gitmodules)
-  // We prefer .gitmodules over legacy folder_meta.json
+  // If it has .gitmodules, it is definitely a folder project
   if (File(p.join(repoPath, '.gitmodules')).existsSync()) {
     print('[Debug][_isFolderProject] $repoPath is FOLDER (has .gitmodules)');
     return true;
   }
 
-  // Legacy check (deprecated, but keep for now until fully migrated)
-  // if (File(p.join(repoPath, 'folder_meta.json')).existsSync()) {
-  //   return true;
-  // }
   // If it has content.docx or doc_content, it is a leaf (document) project
   if (File(p.join(repoPath, kRepoDocxName)).existsSync()) return false;
   if (Directory(p.join(repoPath, kContentDirName)).existsSync()) return false;
 
-  // If it has neither, assume it's a folder project (e.g. empty root)
-  // unless it ends with .tracking.zip which we treat as container
+  // If it is the workspace root (.tracking_workspace.json), it is a container
+  if (File(p.join(repoPath, '.tracking_workspace.json')).existsSync()) {
+    print('[Debug][_isFolderProject] $repoPath is FOLDER (has .tracking_workspace.json)');
+    return true;
+  }
+
+  // If it's a git repo and doesn't have .gitmodules, treat as a leaf node by default.
+  // This allows seeing the graph even for empty or freshly pulled doc repos.
+  if (isGitRepo(repoPath)) {
+    print('[Debug][_isFolderProject] $repoPath is LEAF (git repo fallback)');
+    return false;
+  }
+
+  // If it's not a git repo, but ends with .tracking.zip, it's a container
   if (p.basename(repoPath).toLowerCase().endsWith(kTrackingExt)) {
     print('[Debug][_isFolderProject] $repoPath is FOLDER (is .tracking.zip)');
     return true;
   }
 
-  // Fallback: Check if it's inside another git repo?
-  // But for now, lack of content implies folder.
-  print('[Debug][_isFolderProject] $repoPath is FOLDER (fallback: no content)');
+  // Fallback: lack of any identifying files/folders implies container
+  print('[Debug][_isFolderProject] $repoPath is FOLDER (final fallback)');
   return true;
 }
 

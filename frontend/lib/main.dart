@@ -3002,13 +3002,14 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
     }
 
     // Check if it is a folder project (root/intermediate)
-    // We only want to load graph for leaf nodes (DocxRepo)
-    if (File(p.join(dir.path, 'folder_meta.json')).existsSync()) {
-      return;
-    }
+    // We now allow loading graph for folder projects too (structure history)
+    // if (File(p.join(dir.path, 'folder_meta.json')).existsSync()) {
+    //   return;
+    // }
 
     // If it is a git repo, open it as a sub-project
-    if (Directory(p.join(dir.path, '.git')).existsSync()) {
+    final gitPath = p.join(dir.path, '.git');
+    if (Directory(gitPath).existsSync() || File(gitPath).existsSync()) {
       setState(() {
         pathCtrl.text = dir.path;
       });
@@ -5732,7 +5733,7 @@ class _GraphPageState extends State<GraphPage> with TickerProviderStateMixin {
                     ),
                     const SizedBox(width: 12),
                     Text(
-                      'v14H5T', // 版本随机验证码
+                      'v14H6U', // 版本随机验证码
                       style: TextStyle(
                         color: Colors.grey.withOpacity(0.5),
                         fontSize: 10,
